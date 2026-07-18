@@ -40,7 +40,7 @@ export function useOfflineSyncManager() {
         if (updatedImages.length > 0) {
           const { base64ToBlob, uploadImage } = await import('@/lib/storage');
           updatedImages = await Promise.all(updatedImages.map(async (img: any) => {
-            if (img.storage_path?.startsWith('local_pending') && img.url?.startsWith('data:image/')) {
+            if (img.url?.startsWith('data:image/')) {
               console.log(`[SyncManager] Upload de l'image locale pour phase: ${img.phase}`);
               const blob = base64ToBlob(img.url);
               const cleanFileName = `offline_sync_${img.phase}_${img.context}_${Date.now()}.jpg`;
@@ -131,8 +131,9 @@ export function useOfflineSyncManager() {
 
   }, [queue, retirerDeLaFile, queryClient]);
 
-  // Fonction pour copier les données annexes (Stratégies, Raisons, Catalogue) de Supabase vers le local
-  const syncSupplementaryData = useCallback(async () => {
+  // Fonction principale : copie TOUT Supabase vers la base locale
+  // Appelée au moment du login ou quand le réseau revient avec une session active
+  const syncAll = useCallback(async () => {
     if (!navigator.onLine) return;
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData?.session) return;
@@ -201,20 +202,22 @@ export function useOfflineSyncManager() {
   // Écoute les événements en ligne / hors ligne du navigateur (Capacitor Webview)
   useEffect(() => {
     window.addEventListener('online', synchroniserFileDAttente);
-    window.addEventListener('online', syncSupplementaryData);
+    // Quand le réseau revient, on vide la file d'attente + on resync si session active
+    window.addEventListener('online', syncAll);
     
-    // Tente de synchroniser au démarrage et toutes les 30 secondes
+    // Vérification de la file d'attente au démarrage et toutes les 30 secondes
     synchroniserFileDAttente();
-    syncSupplementaryData();
     const interval = setInterval(() => {
       synchroniserFileDAttente();
-      // On peut aussi resync les annexes périodiquement ou laisser tel quel
     }, 30000);
 
     return () => {
       window.removeEventListener('online', synchroniserFileDAttente);
-      window.removeEventListener('online', syncSupplementaryData);
+      window.removeEventListener('online', syncAll);
       clearInterval(interval);
     };
-  }, [synchroniserFileDAttente, syncSupplementaryData]);
+  }, [synchroniserFileDAttente, syncAll]);
+
+  // Retourner syncAll pour que App.tsx puisse l'appeler au moment du login
+  return { syncAll };
 }

@@ -35,7 +35,7 @@ if (themeEnregistre === 'light') {
 export function AppContent() {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
 
-  // Initialiser la synchronisation hors-ligne
+  // Initialiser la synchronisation hors-ligne (file d'attente)
   useOfflineSyncManager()
 
   // Écouter les changements d'authentification Supabase

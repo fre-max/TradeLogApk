@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react'
 import { useTelegram } from '@/hooks/useTelegram'
-import { uploadImage, buildImagePath } from '@/lib/storage'
+import { compresserEtConvertirEnBase64 } from '@/lib/storage'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
-import { file } from 'zod'
 
 interface ImageFieldProps {
   tradeId: string
@@ -17,22 +16,20 @@ export function ImageField({ tradeId, stepId, onUpload }: ImageFieldProps) {
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Confirme une image depuis Telegram → conversion en Base64 locale
   const handleConfirmTelegram = async () => {
     if (!preview) return
     setUploading(true)
     try {
-      // Fetch the image blob via our Supabase Edge Function proxy
-      const { data, error } = await supabase.functions.invoke('telegram', {
-        body: { proxy_image_url: preview }
-      })
+      if (!navigator.onLine) {
+        // En hors-ligne : on ne peut pas appeler l'Edge Function Telegram
+        // On utilise directement l'URL de preview (URL publique Telegram temporaire)
+        onUpload(preview)
+        clearPreview()
+        return
+      }
 
-      if (error) throw error
-
-      // Note: supabase.functions.invoke parse le JSON par défaut.
-      // Pour forcer la lecture en tant que Blob, on utilise une autre méthode ou 
-      // on convertit la réponse. En l'occurrence, le client Supabase supporte 
-      // de retourner des Blobs, mais il faut s'assurer du bon fonctionnement.
-      // Une approche plus sûre pour un Blob est d'utiliser fetch avec l'URL de la fonction.
+      // En ligne : récupère l'image via la fonction Supabase et la convertit en Base64
       const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram`
       const res = await fetch(functionUrl, {
         method: 'POST',
@@ -42,25 +39,36 @@ export function ImageField({ tradeId, stepId, onUpload }: ImageFieldProps) {
         },
         body: JSON.stringify({ proxy_image_url: preview })
       })
-      if (!res.ok) throw new Error('Erreur téléchargement image')
+      if (!res.ok) throw new Error('Erreur téléchargement image Telegram')
       const blob = await res.blob()
-      const path = buildImagePath(tradeId, stepId, `telegram-${Date.now()}.jpg`)
-      const publicUrl = await uploadImage(blob, path)
-      onUpload(publicUrl)
+      // Conversion en Base64 compressé → visible immédiatement, upload réel fait par SyncManager
+      const base64Url = await compresserEtConvertirEnBase64(blob)
+      onUpload(base64Url)
       clearPreview()
     } catch (e) {
-      console.error(e)
+      console.error('Erreur handleConfirmTelegram:', e)
+      // En cas d'erreur, on passe quand même la preview si disponible
+      if (preview) {
+        onUpload(preview)
+        clearPreview()
+      }
     }
     setUploading(false)
   }
 
+  // Upload d'un fichier local → conversion en Base64 immédiate (Offline-First)
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true)
-    const path = buildImagePath(tradeId, stepId, `${Date.now()}-${file.name}`)
-    const publicUrl = await uploadImage(file, path)
-    onUpload(publicUrl)
+    try {
+      // Compression et conversion en Base64 pour stockage local immédiat
+      // L'upload vers Supabase Storage sera fait par le SyncManager quand le réseau est dispo
+      const base64Url = await compresserEtConvertirEnBase64(file)
+      onUpload(base64Url)
+    } catch (e) {
+      console.error('Erreur compression image:', e)
+    }
     setUploading(false)
   }
 

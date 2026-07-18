@@ -289,9 +289,9 @@ export function TradeDrawer({
 
       // Images Structurées
       const imagesPourSauvegarde = [
-        ...(formData.biais_images || []).map((img) => ({ id: img.id, trade_id: tradeIdActuel, url: img.url, source: img.source, phase: img.phase, context: 'superieur' as const })),
-        ...(formData.poi_images || []).map((img) => ({ id: img.id, trade_id: tradeIdActuel, url: img.url, source: img.source, phase: img.phase, context: 'intermediaire' as const })),
-        ...(formData.entry_images || []).map((img) => ({ id: img.id, trade_id: tradeIdActuel, url: img.url, source: img.source, phase: img.phase, context: 'inferieur' as const })),
+        ...(formData.biais_images || []).map((img) => ({ id: img.id, trade_id: tradeIdActuel, url: img.url, source: img.source, phase: img.phase, context: 'superieur' as const, storage_path: img.storage_path })),
+        ...(formData.poi_images || []).map((img) => ({ id: img.id, trade_id: tradeIdActuel, url: img.url, source: img.source, phase: img.phase, context: 'intermediaire' as const, storage_path: img.storage_path })),
+        ...(formData.entry_images || []).map((img) => ({ id: img.id, trade_id: tradeIdActuel, url: img.url, source: img.source, phase: img.phase, context: 'inferieur' as const, storage_path: img.storage_path })),
       ]
 
       // 1️⃣ Sauvegarde ou création du Trade

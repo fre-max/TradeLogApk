@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { supabase } from '@/lib/supabase'
 import { useNavigate } from 'react-router-dom'
@@ -7,8 +7,8 @@ import { useUIStore } from '@/store'
 import { usePinStore } from '@/store/usePinStore'
 import { cn } from '@/lib/utils'
 import { exportCsv } from '@/lib/exportCsv'
-import { useEffect } from 'react'
 import type { Session } from '@supabase/supabase-js'
+import { useOfflineSyncManager } from '@/hooks/useOfflineSyncManager'
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -17,6 +17,10 @@ export default function Settings() {
   const { pin, setPin } = usePinStore()
   const [session, setSession] = useState<Session | null>(null)
   const [newPin, setNewPin] = useState('')
+  const [syncEnCours, setSyncEnCours] = useState(false)
+
+  // Récupère la fonction syncAll du SyncManager pour déclencher manuellement
+  const { syncAll } = useOfflineSyncManager()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -86,6 +90,27 @@ export default function Settings() {
     addToast('Code PIN supprimé', 'success')
     if (session) {
       await supabase.auth.updateUser({ data: { pin_code: null } })
+    }
+  }
+
+  // ─── Synchronisation manuelle Cloud → Local ─────────────────
+  const handleSyncCloud = async () => {
+    if (!session) {
+      addToast('Vous devez être connecté au cloud pour récupérer vos données', 'error')
+      return
+    }
+    if (!navigator.onLine) {
+      addToast('Pas de connexion internet disponible', 'error')
+      return
+    }
+    setSyncEnCours(true)
+    try {
+      await syncAll()
+      addToast('Toutes vos données ont été téléchargées et sauvegardées en local !', 'success')
+    } catch (e) {
+      addToast('Erreur lors de la récupération des données', 'error')
+    } finally {
+      setSyncEnCours(false)
     }
   }
 
@@ -207,18 +232,52 @@ export default function Settings() {
         {/* Section Compte */}
         <Section title="☁️ Cloud & Synchronisation">
           {session ? (
-            <SettingRow
-              label="Connecté au Cloud"
-              description={`Synchronisation active (${session.user.email})`}
-              action={
-                <button
-                  onClick={handleLogout}
-                  className="px-4 py-2 bg-surface2 text-txt rounded-md text-[13px] font-medium hover:bg-border transition-colors"
-                >
-                  Se déconnecter
-                </button>
-              }
-            />
+            <div className="space-y-3">
+              <SettingRow
+                label="Connecté au Cloud"
+                description={`Synchronisation active (${session.user.email})`}
+                action={
+                  <button
+                    onClick={handleLogout}
+                    className="px-4 py-2 bg-surface2 text-txt rounded-md text-[13px] font-medium hover:bg-border transition-colors"
+                  >
+                    Se déconnecter
+                  </button>
+                }
+              />
+              {/* Bouton de récupération manuelle des données cloud */}
+              <div className="border-t border-border pt-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-txt text-[13.5px] font-medium">Récupérer les données du cloud</p>
+                    <p className="text-txt3 text-[12px] mt-0.5">
+                      Télécharge tous vos trades, raisons et stratégies depuis Supabase et les sauvegarde sur cet appareil pour une utilisation hors-ligne.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleSyncCloud}
+                    disabled={syncEnCours}
+                    className={cn(
+                      'flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-all',
+                      syncEnCours
+                        ? 'bg-surface2 text-txt3 cursor-not-allowed'
+                        : 'bg-accent text-white hover:bg-accent/90 active:scale-95'
+                    )}
+                  >
+                    {syncEnCours ? (
+                      <>
+                        <span className="animate-spin text-[16px]">⟳</span>
+                        En cours...
+                      </>
+                    ) : (
+                      <>
+                        ⬇️ Télécharger
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
           ) : (
             <SettingRow
               label="Mode Hors-ligne"

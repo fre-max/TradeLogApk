@@ -7,7 +7,7 @@ import { useUIStore } from '@/store';
 import { TradeDrawer } from '@/components/trade/TradeDrawer';
 import type { PositionSimulee } from '@/store/backtestStore';
 import { supabase } from '@/lib/supabase';
-import { uploadImage } from '@/lib/storage';
+import { uploadImage, compresserEtConvertirEnBase64 } from '@/lib/storage';
 
 // ─── Définition de tous les outils de la barre latérale ───────────────────────
 // Chaque outil correspond exactement au type string attendu par getToolRegistry().createDrawing()
@@ -427,16 +427,21 @@ export function BacktestWorkspace() {
 
   // Capture le graphique et upload vers Supabase — utilisée automatiquement ET manuellement
   // Retourne l'objet image prêt à insérer dans le formulaire, ou null si erreur
-  const capturerGraphique = useCallback(async (phase: 'avant' | 'apres'): Promise<{ id: string; url: string; source: 'upload'; phase: 'avant' | 'apres' } | null> => {
+  const capturerGraphique = useCallback(async (phase: 'avant' | 'apres'): Promise<{ id: string; url: string; source: 'upload'; phase: 'avant' | 'apres'; storage_path?: string } | null> => {
     try {
       if (!chartRef.current) return null;
       const blob = await chartRef.current.takeScreenshot();
       if (!blob) return null;
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return null;
-      const path = `trade_images/${user.id}/${Date.now()}-backtest-${phase}.jpg`;
-      const url = await uploadImage(blob, path);
-      return { id: crypto.randomUUID(), url, source: 'upload' as const, phase };
+      
+      // On convertit le screenshot en base64 pour que ce soit instantané/offline-first
+      const base64Url = await compresserEtConvertirEnBase64(blob);
+      return { 
+        id: crypto.randomUUID(), 
+        url: base64Url, 
+        source: 'upload' as const, 
+        phase,
+        storage_path: 'local_pending'
+      };
     } catch (err) {
       console.error('❌ [Backtest] Échec de la capture :', err);
       return null;
@@ -837,8 +842,6 @@ export function BacktestWorkspace() {
   }, [anneeMinimumChargee, paireCloud, donneesM1Chargees, timeframe, addToast]);
 
   // ─── Export d'un trade simulé vers le formulaire du Journal ─────────────────
-  // Prend automatiquement une capture d'écran combinée (graphique + overlay)
-  // et l'associe directement à l'étape correspondante du journal choisi.
   const exporterVersJournal = async (trade: PositionSimulee) => {
     const tradeUid = `${trade.dateEntree}-${trade.prixEntree}`;
     console.log('🚀 [Backtest] Début de l\'exportation du trade vers le journal :', journalDest);
@@ -849,18 +852,14 @@ export function BacktestWorkspace() {
       if (chartRef.current) {
         const blob = await chartRef.current.takeScreenshot();
         if (blob) {
-          console.log('📡 [Backtest] Upload de la capture d\'écran vers Supabase Storage...');
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) throw new Error('Utilisateur non connecté');
-
-          const path = `trade_images/${user.id}/${Date.now()}-backtest.jpg`;
-          imageUrlPublic = await uploadImage(blob, path);
-          console.log('✅ [Backtest] Capture d\'écran uploadée ! URL :', imageUrlPublic);
+          console.log('📡 [Backtest] Conversion de la capture en Base64 locale...');
+          imageUrlPublic = await compresserEtConvertirEnBase64(blob);
+          console.log('✅ [Backtest] Capture d\'écran convertie !');
         }
       }
     } catch (err) {
-      console.error('❌ [Backtest] Échec de la génération ou de l\'upload de la capture :', err);
-      addToast('Impossible de générer ou d\'uploader la capture du graphique. Le trade sera pré-rempli sans image.', 'info');
+      console.error('❌ [Backtest] Échec de la génération de la capture Base64 :', err);
+      addToast('Impossible de générer la capture du graphique. Le trade sera pré-rempli sans image.', 'info');
     } finally {
       setExportantTradeId(null);
     }
@@ -879,7 +878,8 @@ export function BacktestWorkspace() {
       id: crypto.randomUUID(),
       url: imageUrlPublic,
       source: 'upload' as const,
-      phase: 'avant' as const
+      phase: 'avant' as const,
+      storage_path: 'local_pending'
     } : null;
 
     // Prépare l'objet de pré-remplissage selon le type de journal
@@ -947,15 +947,9 @@ export function BacktestWorkspace() {
         const blob = await chartRef.current.takeScreenshot();
         console.log('🚀 [Workspace] ④ blob =', blob ? `OK (${blob.size} octets)` : 'NULL ❌');
         if (blob) {
-          console.log('🚀 [Workspace] ⑤ Récupération user Supabase...');
-          const { data: { user }, error: userError } = await supabase.auth.getUser();
-          console.log('🚀 [Workspace] ⑥ user =', user?.id ?? 'NULL ❌', '| error =', userError);
-          if (!user) throw new Error('Utilisateur non connecté');
-
-          const path = `trade_images/${user.id}/${Date.now()}-backtest.jpg`;
-          console.log('🚀 [Workspace] ⑦ Upload vers path :', path);
-          imageUrlPublic = await uploadImage(blob, path);
-          console.log('🚀 [Workspace] ⑧ Upload terminé ! URL :', imageUrlPublic);
+          console.log('🚀 [Workspace] ⑤ Conversion en Base64 local...');
+          imageUrlPublic = await compresserEtConvertirEnBase64(blob);
+          console.log('🚀 [Workspace] ⑥ Capture d\'écran convertie !');
         } else {
           console.warn('⚠️ [Workspace] blob null → on continue SANS image');
         }
@@ -963,8 +957,8 @@ export function BacktestWorkspace() {
         console.warn('⚠️ [Workspace] chartRef.current NULL → pas de capture');
       }
     } catch (err) {
-      console.error('❌ [Backtest] Échec de la capture manuelle :', err);
-      addToast('Impossible de générer ou d\'uploader la capture.', 'error');
+      console.error('❌ [Backtest] Échec de la capture manuelle Base64 :', err);
+      addToast('Impossible de générer la capture.', 'error');
       setCapturantManuel(false);
       return;
     }
@@ -997,6 +991,7 @@ export function BacktestWorkspace() {
       url: imageUrlPublic,
       source: 'upload' as const,
       phase: (cible === 'entry_apres' ? 'apres' as const : 'avant' as const),
+      storage_path: 'local_pending'
     };
 
     // Selon la cible choisie, on injecte l'image dans le bon tableau et configure le type de journal

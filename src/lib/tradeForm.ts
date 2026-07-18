@@ -46,9 +46,9 @@ export const INITIAL_FORM_STATE = {
   review_bad: '', // Déprécié, gardé pour compatibilité de compilation
 
   // Listes d'images associées à chaque étape du formulaire avec leur phase (avant/apres)
-  biais_images: [] as { id: string; url: string; source: 'telegram' | 'upload' | 'url'; phase: 'avant' | 'apres' }[],
-  poi_images: [] as { id: string; url: string; source: 'telegram' | 'upload' | 'url'; phase: 'avant' | 'apres' }[],
-  entry_images: [] as { id: string; url: string; source: 'telegram' | 'upload' | 'url'; phase: 'avant' | 'apres' }[],
+  biais_images: [] as { id: string; url: string; source: 'telegram' | 'upload' | 'url'; phase: 'avant' | 'apres'; storage_path?: string | null }[],
+  poi_images: [] as { id: string; url: string; source: 'telegram' | 'upload' | 'url'; phase: 'avant' | 'apres'; storage_path?: string | null }[],
+  entry_images: [] as { id: string; url: string; source: 'telegram' | 'upload' | 'url'; phase: 'avant' | 'apres'; storage_path?: string | null }[],
   
   // Raisons techniques issues du catalogue (liées aux étapes, conservé pour mapping interne)
   biais_catalog_reasons: [] as { reason_id: string; variant_name: string }[],
