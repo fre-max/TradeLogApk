@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-bg text-txt font-sans;
+    /* Transition douce lors du changement de thème */
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-border2 rounded-full; }
+}
+
+/* ─── Thème CLAIR ─────────────────────────────────────────────────────────────
+   Activé quand <html> a la classe .light.
+   On surcharge les couleurs Tailwind directement via les custom properties CSS.
+   IMPORTANT : Tailwind v3 avec des couleurs custom nécessite cette approche directe
+   plutôt que var() dans la config (incompatible avec les modificateurs d'opacité /10 /20).
+   
+   On cible tous les éléments qui utilisent ces couleurs Tailwind via leurs classes CSS générées.
+*/
+html.light body,
+html.light {
+  background-color: #F4F5F7 !important;
+  color: #111827 !important;
+}
+
+/* Surcharge des classes Tailwind bg-bg, bg-surface, etc. en thème clair */
+html.light .bg-bg          { background-color: #F4F5F7 !important; }
+html.light .bg-surface     { background-color: #FFFFFF !important; }
+html.light .bg-surface2    { background-color: #F0F1F3 !important; }
+html.light .border-border  { border-color: #D8DCE6 !important; }
+html.light .border-border2 { border-color: #C5CAD6 !important; }
+html.light .text-txt       { color: #111827 !important; }
+html.light .text-txt2      { color: #374151 !important; }
+html.light .text-txt3      { color: #6B7280 !important; }
+
+/* Inputs, selects, textareas en thème clair */
+html.light input,
+html.light select,
+html.light textarea {
+  background-color: #FFFFFF !important;
+  color: #111827 !important;
+  border-color: #C5CAD6 !important;
+}
+
+/* Éléments bg-bg utilisés comme fond d'input */
+html.light .bg-bg {
+  background-color: #F4F5F7 !important;
+}
+
+/* Animation pour les toasts */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Cache les barres de défilement tout en gardant le défilement actif */
+.scrollbar-none::-webkit-scrollbar {
+  display: none !important;
+}
+.scrollbar-none {
+  -ms-overflow-style: none !important;  /* IE et Edge */
+  scrollbar-width: none !important;  /* Firefox */
+}
