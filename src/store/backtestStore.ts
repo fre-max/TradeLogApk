@@ -42,6 +42,7 @@ interface BacktestState {
   paireCloud: string;    // Ex: 'EURUSD', 'GBPUSD'...
   anneeCloud: string;    // Ex: '2024', '2025'...
   timeframeSauvegarde: string; // Ex: 'H1', 'H4', 'D1'...
+  journalDest: 'global' | 'bias' | 'poi' | 'confirmation'; // Choix persistant du journal de destination
 
   // Contrôles du Replay
   estEnLecture: boolean;
@@ -62,6 +63,7 @@ interface BacktestState {
   setPaireCloud: (paire: string) => void;
   setAnneeCloud: (annee: string) => void;
   setTimeframeSauvegarde: (tf: string) => void;
+  setJournalDest: (dest: 'global' | 'bias' | 'poi' | 'confirmation') => void;
   ouvrirPosition: (
     direction: 'long' | 'short',
     prixEntree: number,
@@ -105,6 +107,9 @@ export const useBacktestStore = create<BacktestState>()(
   paireCloud: 'EURUSD',
   anneeCloud: '2025',
   timeframeSauvegarde: 'H1',
+  journalDest: 'global', // Par défaut 'global', puis persistant selon le choix utilisateur
+
+  setJournalDest: (dest) => set({ journalDest: dest }),
 
   // Contexte de restauration de replay (clic depuis le journal)
   contexteRestauration: null as { pair: string; annee: string; timeframe: string; timestamp: number } | null,
@@ -515,6 +520,7 @@ export const useBacktestStore = create<BacktestState>()(
     paireCloud: state.paireCloud,
     anneeCloud: state.anneeCloud,
     timeframeSauvegarde: state.timeframeSauvegarde,
+    journalDest: state.journalDest,
     contexteRestauration: state.contexteRestauration,
     // donneesCompletes : volontairement EXCLU
   }),

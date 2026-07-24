@@ -7,13 +7,26 @@ export function useTradeImages(tradeId: string | undefined) {
     queryKey: ['trade_images', tradeId],
     queryFn: async () => {
       if (!tradeId) return []
-      const { data, error } = await supabase
-        .from('trade_images')
-        .select('*')
-        .eq('trade_id', tradeId)
-        
-      if (error) throw error
-      return data as TradeImage[]
+      // En mode hors-ligne, lire la base locale Zustand/IndexedDB
+      if (!navigator.onLine) {
+        const { useLocalDatabase } = await import('@/store/useLocalDatabase')
+        const trade = useLocalDatabase.getState().trades.find(t => t.id === tradeId)
+        return trade?.images || []
+      }
+      try {
+        const { data, error } = await supabase
+          .from('trade_images')
+          .select('*')
+          .eq('trade_id', tradeId)
+          
+        if (error) throw error
+        return data as TradeImage[]
+      } catch (err) {
+        console.warn('⚠️ [useTradeImages] Erreur réseau/Supabase, repli sur le cache local :', err)
+        const { useLocalDatabase } = await import('@/store/useLocalDatabase')
+        const trade = useLocalDatabase.getState().trades.find(t => t.id === tradeId)
+        return trade?.images || []
+      }
     },
     enabled: !!tradeId
   })

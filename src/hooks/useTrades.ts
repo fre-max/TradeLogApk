@@ -147,42 +147,44 @@ export function useUpdateTrade() {
 
       updateTrade(tradeId, fullTrade)
 
-      // 2. Mise à jour asynchrone sur Supabase (non-bloquant)
-      supabase.from('trades').update(tradePayload).eq('id', tradeId).then(async ({ error: tradeError }) => {
-        if (tradeError) {
-          console.error('Erreur de mise à jour du trade sur Supabase:', tradeError)
-          return
-        }
-
-        for (const step of stepsPayload) {
-          if (step.id) {
-            const { id, ...stepData } = step
-            const { error: stepError } = await supabase.from('steps').upsert({ id, ...stepData })
-            if (stepError) console.error('Erreur upsert step sur Supabase:', stepError)
+      // 2. Mise à jour asynchrone sur Supabase (uniquement si connecté au réseau)
+      if (navigator.onLine) {
+        supabase.from('trades').update(tradePayload).eq('id', tradeId).then(async ({ error: tradeError }) => {
+          if (tradeError) {
+            console.error('Erreur de mise à jour du trade sur Supabase:', tradeError)
+            return
           }
-        }
 
-        // Détection des news asynchrone
-        if (fullTrade.date_backtested && fullTrade.entry_time && fullTrade.exit_time) {
-          supabase.auth.getSession().then(({ data: { session } }) => {
-            const token = session?.access_token
-            if (!token) return;
-            
-            supabase.functions.invoke('detect-news', {
-              body: {
-                trade_id: fullTrade.id,
-                pair: fullTrade.pair,
-                date: fullTrade.date_backtested,
-                entry_time: fullTrade.entry_time,
-                exit_time: fullTrade.exit_time,
-              },
-              headers: { Authorization: `Bearer ${token}` }
+          for (const step of stepsPayload) {
+            if (step.id) {
+              const { id, ...stepData } = step
+              const { error: stepError } = await supabase.from('steps').upsert({ id, ...stepData })
+              if (stepError) console.error('Erreur upsert step sur Supabase:', stepError)
+            }
+          }
+
+          // Détection des news asynchrone
+          if (fullTrade.date_backtested && fullTrade.entry_time && fullTrade.exit_time) {
+            supabase.auth.getSession().then(({ data: { session } }) => {
+              const token = session?.access_token
+              if (!token) return;
+              
+              supabase.functions.invoke('detect-news', {
+                body: {
+                  trade_id: fullTrade.id,
+                  pair: fullTrade.pair,
+                  date: fullTrade.date_backtested,
+                  entry_time: fullTrade.entry_time,
+                  exit_time: fullTrade.exit_time,
+                },
+                headers: { Authorization: `Bearer ${token}` }
+              })
+              .then(() => queryClient.invalidateQueries({ queryKey: QUERY_KEY }))
+              .catch(err => console.error('Erreur detect-news:', err))
             })
-            .then(() => queryClient.invalidateQueries({ queryKey: QUERY_KEY }))
-            .catch(err => console.error('Erreur detect-news:', err))
-          })
-        }
-      })
+          }
+        })
+      }
 
       return fullTrade
     },

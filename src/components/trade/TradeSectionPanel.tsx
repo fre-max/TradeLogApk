@@ -18,6 +18,7 @@ interface TradeSectionPanelProps {
   selectedReasons: SelectedTradeReason[]
   setSelectedReasons: React.Dispatch<React.SetStateAction<SelectedTradeReason[]>>
   masquerApres?: boolean
+  masquerAvant?: boolean
   // Fonction de capture manuelle du graphique (disponible uniquement en mode backtest)
   // Si undefined, le bouton de capture n'est pas affiché
   onCaptureGraphique?: (phase: 'avant' | 'apres') => Promise<{ id: string; url: string; source: 'upload'; phase: 'avant' | 'apres' } | null>
@@ -54,6 +55,7 @@ export function TradeSectionPanel({
   selectedReasons,
   setSelectedReasons,
   masquerApres = false,
+  masquerAvant = false,
   onCaptureGraphique,
 }: TradeSectionPanelProps) {
   const [open, setOpen] = useState(defaultOpen)
@@ -126,160 +128,162 @@ export function TradeSectionPanel({
           {/* ──────────────────────────────────────────────────────── */}
           {/* 🟢 PHASE 1 : AVANT LA POSITION                          */}
           {/* ──────────────────────────────────────────────────────── */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 border-b border-border/40 pb-2">
-              <span className="text-emerald-500 text-xs">🟢</span>
-              <h3 className="text-xs font-bold text-txt uppercase tracking-wider">Planification (Avant Position)</h3>
-            </div>
+          {!masquerAvant && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 border-b border-border/40 pb-2">
+                <span className="text-emerald-500 text-xs">🟢</span>
+                <h3 className="text-xs font-bold text-txt uppercase tracking-wider">Planification (Avant Position)</h3>
+              </div>
 
-            {/* Champs spécifiques selon le type de section */}
-            {sectionKey === 'biais' && (
-              <FieldGrid>
-                <Field label="Timeframe du Biais">
-                  <Select
-                    value={formData.biais_timeframe}
-                    onChange={(e) => updateField('biais_timeframe', e.target.value)}
-                  >
-                    {/* Monthly et W1 ajoutés pour les analyses sur grands timeframes */}
-                    {['Monthly', 'W1', 'D1', 'H4', 'H1', 'M30', 'M15'].map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Orientation du Biais">
-                  <Select
-                    value={formData.biais_direction}
-                    onChange={(e) => updateField('biais_direction', e.target.value)}
-                  >
-                    <option value="Haussier">🐂 Haussier (Bullish)</option>
-                    <option value="Baissier">🐻 Baissier (Bearish)</option>
-                    <option value="Neutre">⚖️ Neutre (Ranging)</option>
-                  </Select>
-                </Field>
-              </FieldGrid>
-            )}
-
-            {sectionKey === 'poi' && (
-              <FieldGrid>
-                <Field label="Timeframe du POI">
-                  <Select
-                    value={formData.poi_timeframe}
-                    onChange={(e) => updateField('poi_timeframe', e.target.value)}
-                  >
-                    {['D1', 'H4', 'H1', 'M30', 'M15', 'M5'].map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Type de Zone / POI">
-                  <Select
-                    value={formData.poi_type}
-                    onChange={(e) => updateField('poi_type', e.target.value)}
-                  >
-                    {['Order Block', 'FVG / Inbalance', 'Liquidity Pool', 'S&R / Support', 'Breaker Block', 'Autre'].map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </Select>
-                </Field>
-              </FieldGrid>
-            )}
-
-            {sectionKey === 'entry' && (
-              <div className="space-y-3">
+              {/* Champs spécifiques selon le type de section */}
+              {sectionKey === 'biais' && (
                 <FieldGrid>
-                  <Field label="Timeframe d'Entrée">
+                  <Field label="Timeframe du Biais">
                     <Select
-                      value={formData.entry_timeframe}
-                      onChange={(e) => updateField('entry_timeframe', e.target.value)}
+                      value={formData.biais_timeframe}
+                      onChange={(e) => updateField('biais_timeframe', e.target.value)}
                     >
-                      {/* H1, H4 et D1 ajoutés pour les confirmations sur grands timeframes */}
-                      {['D1', 'H4', 'H1', 'M30', 'M15', 'M5', 'M3', 'M1'].map((t) => (
+                      {/* Monthly et W1 ajoutés pour les analyses sur grands timeframes */}
+                      {['Monthly', 'W1', 'D1', 'H4', 'H1', 'M30', 'M15'].map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
                     </Select>
                   </Field>
-                  <Field label="Setup / Modèle d'Entrée">
-                    <Input
-                      type="text"
-                      placeholder="Ex: CHoCH, BOS, Flip..."
-                      value={formData.entry_setup}
-                      onChange={(e) => updateField('entry_setup', e.target.value)}
-                    />
+                  <Field label="Orientation du Biais">
+                    <Select
+                      value={formData.biais_direction}
+                      onChange={(e) => updateField('biais_direction', e.target.value)}
+                    >
+                      <option value="Haussier">🐂 Haussier (Bullish)</option>
+                      <option value="Baissier">🐻 Baissier (Bearish)</option>
+                      <option value="Neutre">⚖️ Neutre (Ranging)</option>
+                    </Select>
                   </Field>
                 </FieldGrid>
+              )}
 
+              {sectionKey === 'poi' && (
                 <FieldGrid>
-                  <Field label="Prix d'Entrée">
-                    <Input
-                      type="number"
-                      step="0.00001"
-                      placeholder="0.00000"
-                      value={formData.entry_price}
-                      onChange={(e) => updateField('entry_price', e.target.value)}
-                    />
+                  <Field label="Timeframe du POI">
+                    <Select
+                      value={formData.poi_timeframe}
+                      onChange={(e) => updateField('poi_timeframe', e.target.value)}
+                    >
+                      {['D1', 'H4', 'H1', 'M30', 'M15', 'M5'].map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </Select>
                   </Field>
-                  <Field label="Stop Loss (SL)">
-                    <Input
-                      type="number"
-                      step="0.00001"
-                      placeholder="0.00000"
-                      value={formData.entry_sl}
-                      onChange={(e) => updateField('entry_sl', e.target.value)}
-                    />
+                  <Field label="Type de Zone / POI">
+                    <Select
+                      value={formData.poi_type}
+                      onChange={(e) => updateField('poi_type', e.target.value)}
+                    >
+                      {['Order Block', 'FVG / Inbalance', 'Liquidity Pool', 'S&R / Support', 'Breaker Block', 'Autre'].map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </Select>
                   </Field>
                 </FieldGrid>
+              )}
 
-                <FieldGrid>
-                  <Field label="Take Profit (TP)">
-                    <Input
-                      type="number"
-                      step="0.00001"
-                      placeholder="0.00000"
-                      value={formData.entry_tp}
-                      onChange={(e) => updateField('entry_tp', e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Trailing Stop (Pips)">
-                    <Input
-                      type="text"
-                      placeholder="Ex: 15 pips"
-                      value={formData.entry_trailing}
-                      onChange={(e) => updateField('entry_trailing', e.target.value)}
-                    />
-                  </Field>
-                </FieldGrid>
+              {sectionKey === 'entry' && (
+                <div className="space-y-3">
+                  <FieldGrid>
+                    <Field label="Timeframe d'Entrée">
+                      <Select
+                        value={formData.entry_timeframe}
+                        onChange={(e) => updateField('entry_timeframe', e.target.value)}
+                      >
+                        {/* H1, H4 et D1 ajoutés pour les confirmations sur grands timeframes */}
+                        {['D1', 'H4', 'H1', 'M30', 'M15', 'M5', 'M3', 'M1'].map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Setup / Modèle d'Entrée">
+                      <Input
+                        type="text"
+                        placeholder="Ex: CHoCH, BOS, Flip..."
+                        value={formData.entry_setup}
+                        onChange={(e) => updateField('entry_setup', e.target.value)}
+                      />
+                    </Field>
+                  </FieldGrid>
+
+                  <FieldGrid>
+                    <Field label="Prix d'Entrée">
+                      <Input
+                        type="number"
+                        step="0.00001"
+                        placeholder="0.00000"
+                        value={formData.entry_price}
+                        onChange={(e) => updateField('entry_price', e.target.value)}
+                      />
+                    </Field>
+                    <Field label="Stop Loss (SL)">
+                      <Input
+                        type="number"
+                        step="0.00001"
+                        placeholder="0.00000"
+                        value={formData.entry_sl}
+                        onChange={(e) => updateField('entry_sl', e.target.value)}
+                      />
+                    </Field>
+                  </FieldGrid>
+
+                  <FieldGrid>
+                    <Field label="Take Profit (TP)">
+                      <Input
+                        type="number"
+                        step="0.00001"
+                        placeholder="0.00000"
+                        value={formData.entry_tp}
+                        onChange={(e) => updateField('entry_tp', e.target.value)}
+                      />
+                    </Field>
+                    <Field label="Trailing Stop (Pips)">
+                      <Input
+                        type="text"
+                        placeholder="Ex: 15 pips"
+                        value={formData.entry_trailing}
+                        onChange={(e) => updateField('entry_trailing', e.target.value)}
+                      />
+                    </Field>
+                  </FieldGrid>
+                </div>
+              )}
+
+              {/* Catalogue de Raisons - Avant */}
+              <div className="space-y-1">
+                <label className="text-txt3 text-[10px] font-bold uppercase tracking-wider">Concepts Validés (Avant)</label>
+                <TradeReasonsAccordions
+                  selectedReasonIds={selectedReasons.map((r) => r.reason_id)}
+                  onChange={(_ids) => {
+                    // Met à jour les IDs (géré par onChangeReasons)
+                  }}
+                  selectedReasons={selectedReasons}
+                  onChangeReasons={setSelectedReasons}
+                  familySlug={`${sectionKey}_avant`}
+                />
               </div>
-            )}
 
-            {/* Catalogue de Raisons - Avant */}
-            <div className="space-y-1">
-              <label className="text-txt3 text-[10px] font-bold uppercase tracking-wider">Concepts Validés (Avant)</label>
-              <TradeReasonsAccordions
-                selectedReasonIds={selectedReasons.map((r) => r.reason_id)}
-                onChange={(_ids) => {
-                  // Met à jour les IDs (géré par onChangeReasons)
-                }}
-                selectedReasons={selectedReasons}
-                onChangeReasons={setSelectedReasons}
-                familySlug={`${sectionKey}_avant`}
-              />
+              {/* Captures d'Écran - Avant */}
+              <div className="space-y-2">
+                <label className="text-txt3 text-[10px] font-bold uppercase tracking-wider block">Captures Graphiques (Avant)</label>
+                <StepImagePanel
+                  phase="avant"
+                  tradeId={tradeId}
+                  stepId={stepId}
+                  images={stepImages}
+                  onAddImage={handleAddImage}
+                  onRemoveImage={handleRemoveImage}
+                  imagesReutilisables={imagesReutilisables}
+                  onCaptureGraphique={onCaptureGraphique}
+                />
+              </div>
             </div>
-
-            {/* Captures d'Écran - Avant */}
-            <div className="space-y-2">
-              <label className="text-txt3 text-[10px] font-bold uppercase tracking-wider block">Captures Graphiques (Avant)</label>
-              <StepImagePanel
-                phase="avant"
-                tradeId={tradeId}
-                stepId={stepId}
-                images={stepImages}
-                onAddImage={handleAddImage}
-                onRemoveImage={handleRemoveImage}
-                imagesReutilisables={imagesReutilisables}
-                onCaptureGraphique={onCaptureGraphique}
-              />
-            </div>
-          </div>
+          )}
 
           {/* ──────────────────────────────────────────────────────── */}
           {/* 🔴 PHASE 2 : APRÈS LE DÉNOUEMENT                         */}

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, StateStorage, createJSONStorage } from 'zustand/middleware';
+import { get, set, del } from 'idb-keyval';
 
 export type SyncActionType = 'INSERT' | 'UPDATE' | 'DELETE';
 
@@ -21,9 +22,22 @@ interface OfflineSyncState {
   viderLaFile: () => void;
 }
 
+// Adaptateur IndexedDB asynchrone pour éviter tout freeze du thread UI synchrone
+const storage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    return (await get(name)) || null;
+  },
+  setItem: async (name: string, value: string): Promise<void> => {
+    await set(name, value);
+  },
+  removeItem: async (name: string): Promise<void> => {
+    await del(name);
+  },
+};
+
 /**
  * Store Zustand pour gérer la file d'attente des trades pris en mode hors-ligne.
- * Utilise localStorage (natif web/Capacitor) pour sauvegarder les données entre les sessions.
+ * Utilise IndexedDB (via idb-keyval) pour stocker les données sans bloquer le thread principal.
  */
 export const useOfflineSyncStore = create<OfflineSyncState>()(
   persist(
@@ -49,7 +63,8 @@ export const useOfflineSyncStore = create<OfflineSyncState>()(
       viderLaFile: () => set({ queue: [] }),
     }),
     {
-      name: 'trading-journal-offline-queue', // Clé dans le localStorage
+      name: 'trading-journal-offline-queue',
+      storage: createJSONStorage(() => storage),
     }
   )
 );

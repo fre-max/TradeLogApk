@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, useImperativeHandle } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo, useImperativeHandle } from 'react';
 import {
   createChart,
   ColorType,
@@ -93,6 +93,11 @@ const CONFIG_OUTILS: Record<string, {
     ancres: 2,
     instructions: ['Sommet/creux : cliquez ici', 'Bas/haut opposé : tracez les niveaux Fibonacci'],
     couleurPreview: '#ff9800',
+  },
+  'text-annotation': {
+    ancres: 1,
+    instructions: ['Cliquez sur le graphique pour placer une annotation texte'],
+    couleurPreview: '#2962ff',
   },
   // Nos outils custom de position
   'pos-long': {
@@ -592,13 +597,25 @@ export const BacktestChart = React.forwardRef<
   // Helper pour récupérer le nombre de minutes dans une bougie selon l'UT
   const getMinutesParBougie = (tf: string): number => {
     switch (tf) {
-      case '1m':  return 1;
-      case '5m':  return 5;
-      case '15m': return 15;
-      case '30m': return 30;
-      case '1h':  return 60;
-      case '4h':  return 240;
-      case '1d':  return 1440;
+      case '1m':
+      case 'M1':  return 1;
+      case '5m':
+      case 'M5':  return 5;
+      case '15m':
+      case 'M15': return 15;
+      case '30m':
+      case 'M30': return 30;
+      case '1h':
+      case 'H1':  return 60;
+      case '4h':
+      case 'H4':  return 240;
+      case '1d':
+      case 'D1':  return 1440;
+      case '1w':
+      case 'W1':  return 10080;
+      case '1M':
+      case 'Monthly':
+      case 'MN':  return 43200;
     }
     return 60;
   };
@@ -1013,25 +1030,124 @@ export const BacktestChart = React.forwardRef<
 
 
 
-  // Suppression clavier (dessins bibliothèque ET positions canvas)
+  // ─── Duplication et édition de texte sur le graphique ────────────────────────
+  const dupliquerDessinSelectionne = useCallback(() => {
+    if (!managerRef.current && !positionSelectionneeId) return;
+
+    // 1. Duplication d'une position canvas (Short / Long custom)
+    if (positionSelectionneeId) {
+      const posOriginale = positionsCanvas.find((p) => p.id === positionSelectionneeId);
+      if (posOriginale) {
+        const nouvellePos: PositionCanvas = {
+          ...posOriginale,
+          id: `pos-${Date.now()}`,
+          indexEntree: posOriginale.indexEntree + 2, // Légèrement décalée de 2 bougies
+          prixEntree: posOriginale.prixEntree * 1.0005,
+          prixSL: posOriginale.prixSL * 1.0005,
+          prixTP: posOriginale.prixTP * 1.0005,
+        };
+        setPositionsCanvas((prev) => [...prev, nouvellePos]);
+        setPositionSelectionneeId(nouvellePos.id);
+        useUIStore.getState().addToast('Position dupliquée !', 'success');
+        redessinerOverlay();
+        return;
+      }
+    }
+
+    // 2. Duplication d'un dessin de bibliothèque (TextAnnotation, TrendLine, Rectangle...)
+    if (idDessinSelectionne && managerRef.current) {
+      const manager = managerRef.current as any;
+      const listDrawings: any[] = manager._drawings ? Array.from(manager._drawings.values()) : [];
+      const dessinOrigine = listDrawings.find((d) => d.id === idDessinSelectionne || d._id === idDessinSelectionne);
+
+      if (dessinOrigine) {
+        const typeOutil = dessinOrigine.type;
+        const ancresOriginelles = dessinOrigine.anchors || dessinOrigine._anchors || [];
+
+        // Décaler légèrement la hauteur/prix de l'ancre pour rendre la duplication directement saisissable
+        const nouvellesAncres = ancresOriginelles.map((a: any) => ({
+          time: a.time,
+          price: typeof a.price === 'number' ? a.price * 1.0008 : a.price,
+        }));
+
+        const newId = `${typeOutil}-${Date.now()}`;
+        const optionsExtra: any = {};
+
+        if (typeOutil === 'text-annotation' && typeof dessinOrigine.getText === 'function') {
+          optionsExtra.text = dessinOrigine.getText();
+        }
+
+        const cloneDessin = getToolRegistry().createDrawing(
+          typeOutil,
+          newId,
+          nouvellesAncres,
+          dessinOrigine.style || {},
+          optionsExtra
+        );
+
+        if (cloneDessin) {
+          manager.addDrawing(cloneDessin);
+          setIdDessinSelectionne(newId);
+          useUIStore.getState().addToast('Élément dupliqué avec succès !', 'success');
+          redessinerOverlay();
+        }
+      }
+    }
+  }, [idDessinSelectionne, positionSelectionneeId, positionsCanvas, redessinerOverlay]);
+
+  const editerTexteSelectionne = useCallback(() => {
+    if (!idDessinSelectionne || !managerRef.current) return;
+    const manager = managerRef.current as any;
+    const listDrawings: any[] = manager._drawings ? Array.from(manager._drawings.values()) : [];
+    const dessinOrigine = listDrawings.find((d) => d.id === idDessinSelectionne || d._id === idDessinSelectionne);
+
+    if (dessinOrigine && typeof dessinOrigine.setText === 'function') {
+      const texteActuel = dessinOrigine.getText ? dessinOrigine.getText() : '';
+      const nouveauTexte = window.prompt('Modifier le texte :', texteActuel);
+      if (nouveauTexte !== null && nouveauTexte.trim()) {
+        dessinOrigine.setText(nouveauTexte.trim());
+        redessinerOverlay();
+        useUIStore.getState().addToast('Texte mis à jour !', 'success');
+      }
+    }
+  }, [idDessinSelectionne, redessinerOverlay]);
+
+  const estTexteSelectionne = useMemo(() => {
+    if (!idDessinSelectionne || !managerRef.current) return false;
+    const manager = managerRef.current as any;
+    const listDrawings: any[] = manager._drawings ? Array.from(manager._drawings.values()) : [];
+    const dessinOrigine = listDrawings.find((d) => d.id === idDessinSelectionne || d._id === idDessinSelectionne);
+    return dessinOrigine?.type === 'text-annotation' || typeof dessinOrigine?.setText === 'function';
+  }, [idDessinSelectionne]);
+
+  // Clavier : Raccourcis pour Duplication (Ctrl+D / D) et Suppression (Delete)
   useEffect(() => {
     const gererTouche = (e: KeyboardEvent) => {
       if (activeTool !== null) return;
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-      e.preventDefault();
 
-      if (positionSelectionneeId) {
-        setPositionsCanvas((prev) => prev.filter((p) => p.id !== positionSelectionneeId));
-        setPositionSelectionneeId(null);
-      } else if (idDessinSelectionne) {
-        managerRef.current?.removeDrawing(idDessinSelectionne);
-        setIdDessinSelectionne(null);
+      // Duplication : Ctrl+D ou touche 'd' quand un élément est sélectionné
+      if ((idDessinSelectionne || positionSelectionneeId) && ((e.ctrlKey && e.key.toLowerCase() === 'd') || e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        dupliquerDessinSelectionne();
+        return;
+      }
+
+      // Suppression : Delete ou Backspace
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        if (positionSelectionneeId) {
+          setPositionsCanvas((prev) => prev.filter((p) => p.id !== positionSelectionneeId));
+          setPositionSelectionneeId(null);
+        } else if (idDessinSelectionne) {
+          managerRef.current?.removeDrawing(idDessinSelectionne);
+          setIdDessinSelectionne(null);
+        }
       }
     };
     window.addEventListener('keydown', gererTouche);
     return () => window.removeEventListener('keydown', gererTouche);
-  }, [activeTool, idDessinSelectionne, positionSelectionneeId]);
+  }, [activeTool, idDessinSelectionne, positionSelectionneeId, dupliquerDessinSelectionne]);
 
   // ─── Gestion outil de dessin actif ───────────────────────────────────────────
   useEffect(() => {
@@ -1169,7 +1285,19 @@ export const BacktestChart = React.forwardRef<
           // ─ Outil bibliothèque ─
           const ancresLibrairie = ancresFinales.map((a) => ({ time: a.time, price: a.price }));
           const idUnique = `${activeTool}-${Date.now()}`;
-          const dessin = getToolRegistry().createDrawing(activeTool, idUnique, ancresLibrairie, {}, {});
+          
+          let optionsExtra: any = {};
+          if (activeTool === 'text-annotation') {
+            const texteSaisi = window.prompt("Entrez le texte à afficher sur le graphique :", "Mon Annotation");
+            if (!texteSaisi || !texteSaisi.trim()) {
+              ancresEnCoursRef.current = [];
+              setEtapeActuelle(0);
+              return;
+            }
+            optionsExtra.text = texteSaisi.trim();
+          }
+
+          const dessin = getToolRegistry().createDrawing(activeTool, idUnique, ancresLibrairie, {}, optionsExtra);
           if (dessin) manager.addDrawing(dessin);
         }
 
@@ -1278,9 +1406,30 @@ export const BacktestChart = React.forwardRef<
           style={{ zIndex: 10 }}
         />
 
-        {/* Bouton de suppression flottant (dessin bibliothèque OU position canvas) */}
+        {/* Barre d'outils d'actions flottante (dessin sélectionné OU position canvas) */}
         {(idDessinSelectionne || positionSelectionneeId) && activeTool === null && (
-          <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2">
+          <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 flex-wrap bg-[#1e222d]/90 p-1.5 rounded-lg border border-[#2a2e39] shadow-xl backdrop-blur-sm">
+            {/* Bouton Dupliquer */}
+            <button
+              onClick={dupliquerDessinSelectionne}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2962ff] hover:bg-[#1e4bd8] text-white text-[11px] font-bold rounded shadow transition-colors"
+              title="Dupliquer l'élément sélectionné (Raccourci : Ctrl+D)"
+            >
+              <span>📋</span> Dupliquer
+            </button>
+
+            {/* Bouton Éditer Texte (si c'est une annotation texte) */}
+            {estTexteSelectionne && (
+              <button
+                onClick={editerTexteSelectionne}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f59e0b] hover:bg-[#d97706] text-white text-[11px] font-bold rounded shadow transition-colors"
+                title="Modifier le texte de cette annotation"
+              >
+                <span>✏️</span> Éditer texte
+              </button>
+            )}
+
+            {/* Bouton Supprimer */}
             <button
               onClick={() => {
                 if (positionSelectionneeId) {
@@ -1291,15 +1440,16 @@ export const BacktestChart = React.forwardRef<
                   setIdDessinSelectionne(null);
                 }
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ef5350] hover:bg-[#e53935] text-white text-[11px] font-bold rounded shadow-lg transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ef5350] hover:bg-[#e53935] text-white text-[11px] font-bold rounded shadow transition-colors"
             >
               <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor">
                 <path d="M6 2a1 1 0 0 0-1 1v.5H3.5a.5.5 0 0 0 0 1H4v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-8h.5a.5.5 0 0 0 0-1H11V3a1 1 0 0 0-1-1H6zm1 1h2v.5H7V3zm-2 2h6v7.5H5V5z"/>
               </svg>
               Supprimer
             </button>
-            <span className={`text-[9px] px-1.5 py-0.5 rounded ${theme === 'dark' ? 'bg-[#2a2e39] text-[#787b86]' : 'bg-[#e0e3eb] text-[#434651]'}`}>
-              ou <kbd>Del</kbd>
+
+            <span className={`text-[9.5px] px-2 py-1 rounded font-mono ${theme === 'dark' ? 'bg-[#2a2e39] text-[#787b86]' : 'bg-[#e0e3eb] text-[#434651]'}`}>
+              <kbd className="font-bold text-txt">Ctrl+D</kbd> dupliquer · <kbd className="font-bold text-txt">Del</kbd> supprimer
             </span>
           </div>
         )}

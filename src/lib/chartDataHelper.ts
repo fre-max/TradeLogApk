@@ -223,38 +223,65 @@ export function parserCsvPrix(contenuTextuel: string): Bougie[] {
  * Agrège des bougies M1 en bougies d'une unité de temps supérieure (ex: 5m, 15m, 1h, 1d)
  */
 export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): Bougie[] {
-  let minutes = 1;
-  switch (timeframeSuperior) {
-    case '1m': minutes = 1; break;
-    case '5m': minutes = 5; break;
-    case '15m': minutes = 15; break;
-    case '30m': minutes = 30; break;
-    case '1h': minutes = 60; break;
-    case '4h': minutes = 240; break;
-    case '1d': minutes = 1440; break;
-    default: return bougiesM1;
+  // 1 minute : pas d'agrégation nécessaire
+  if (timeframeSuperior === '1m' || timeframeSuperior === 'M1') {
+    return bougiesM1;
   }
 
-  if (minutes === 1) return bougiesM1;
+  console.log(`⏱️ [MTF Aggregator] Agrégation de ${bougiesM1.length} bougies M1 en format ${timeframeSuperior}...`);
 
-  console.log(`⏱️ [MTF Aggregator] Agrégation de ${bougiesM1.length} bougies M1 en format ${timeframeSuperior} (${minutes} minutes)...`);
-  const secondesParBucket = minutes * 60;
+  const isMonthly = timeframeSuperior === '1M' || timeframeSuperior === 'Monthly' || timeframeSuperior === 'MN' || timeframeSuperior === 'monthly';
+  const isWeekly = timeframeSuperior === '1w' || timeframeSuperior === 'W1' || timeframeSuperior === '1W' || timeframeSuperior === 'weekly';
+  const isDaily = timeframeSuperior === '1d' || timeframeSuperior === 'D1' || timeframeSuperior === 'daily';
+  const isH4 = timeframeSuperior === '4h' || timeframeSuperior === 'H4';
+  const isH1 = timeframeSuperior === '1h' || timeframeSuperior === 'H1';
+  const isM30 = timeframeSuperior === '30m' || timeframeSuperior === 'M30';
+  const isM15 = timeframeSuperior === '15m' || timeframeSuperior === 'M15';
+  const isM5 = timeframeSuperior === '5m' || timeframeSuperior === 'M5';
+
+  const getBucketStart = (timestampSec: number): number => {
+    if (isM5) {
+      return Math.floor(timestampSec / 300) * 300;
+    } else if (isM15) {
+      return Math.floor(timestampSec / 900) * 900;
+    } else if (isM30) {
+      return Math.floor(timestampSec / 1800) * 1800;
+    } else if (isH1) {
+      return Math.floor(timestampSec / 3600) * 3600;
+    } else if (isH4) {
+      return Math.floor(timestampSec / 14400) * 14400;
+    } else if (isDaily) {
+      return Math.floor(timestampSec / 86400) * 86400;
+    } else if (isWeekly) {
+      const d = new Date(timestampSec * 1000);
+      const day = d.getUTCDay(); // 0 = Dimanche, 1 = Lundi, ..., 6 = Samedi
+      const diffToMonday = (day + 6) % 7;
+      const mondayDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - diffToMonday));
+      return Math.floor(mondayDate.getTime() / 1000);
+    } else if (isMonthly) {
+      const d = new Date(timestampSec * 1000);
+      const firstOfMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+      return Math.floor(firstOfMonth.getTime() / 1000);
+    }
+
+    return Math.floor(timestampSec / 3600) * 3600;
+  };
+
   const groupes = new Map<number, Bougie[]>();
 
   // Regrouper les bougies M1 par intervalle de temps
   for (const b of bougiesM1) {
-    const timestampSec = typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time) / 1000);
+    const timestampSec = typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time as string) / 1000);
     if (isNaN(timestampSec)) continue;
 
-    // Déterminer le début du bucket de temps supérieur
-    const bucketStart = Math.floor(timestampSec / secondesParBucket) * secondesParBucket;
+    const bucketStart = getBucketStart(timestampSec);
 
     if (!groupes.has(bucketStart)) {
       groupes.set(bucketStart, []);
     }
     groupes.get(bucketStart)!.push({
       ...b,
-      time: timestampSec // Conserver le timestamp réel pour le tri interne
+      time: timestampSec
     });
   }
 
@@ -262,7 +289,6 @@ export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): 
 
   // Agrégation de chaque bucket
   for (const [bucketTime, listeM1] of groupes.entries()) {
-    // Trier les M1 dans le bucket pour être sûr de l'ordre chronologique
     listeM1.sort((a, b) => (a.time as number) - (b.time as number));
 
     const open = listeM1[0].open;
@@ -279,7 +305,6 @@ export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): 
     });
   }
 
-  // Trier le résultat final chronologiquement
   const finalAggregated = resultats.sort((a, b) => (a.time as number) - (b.time as number));
   console.log(`✅ [MTF Aggregator] Agrégation terminée. ${finalAggregated.length} bougies ${timeframeSuperior} générées.`);
   return finalAggregated;

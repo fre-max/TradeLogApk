@@ -13,6 +13,7 @@ import { TradeTypeSelector } from './TradeTypeSelector'
 import { GlobalInfosPanel } from './GlobalInfosPanel'
 import { TradeSectionPanel } from './TradeSectionPanel'
 import { IAAnalysisPanel } from './IAAnalysisPanel'
+import { StrategyHeaderSelector } from './StrategyHeaderSelector'
 import {
   buildStepPayloads,
   buildTradePayload,
@@ -68,6 +69,7 @@ export function TradeDrawer({
   const [analysantIA, setAnalysantIA] = useState(false)
   const [globalInfosParDefaut, setGlobalInfosParDefaut] = useState(true)
   const [showRappelDialog, setShowRappelDialog] = useState(false)
+  const [afficherPlanEtape1, setAfficherPlanEtape1] = useState(false)
 
   // UUIDs temporaires pour la création d'un nouveau trade et de ses étapes
   const [tempIds, setTempIds] = useState(() => ({
@@ -108,20 +110,33 @@ export function TradeDrawer({
     }
   }, [existingReasons, existingImages, isEditMode, editingTrade])
 
+  // Handler pour changer la stratégie et la mémoriser dans localStorage
+  const handleSelectStrategy = (strategyId: string) => {
+    setFormData((prev) => ({ ...prev, strategy_id: strategyId }))
+    if (strategyId) {
+      localStorage.setItem('journal_last_strategy_id', strategyId)
+    }
+  }
+
   // Réinitialise l'état à l'ouverture pour un nouveau trade
   useEffect(() => {
     if (!isNewTradeOpen) return
 
     if (!editingTrade) {
+      const lastStrategyId = localStorage.getItem('journal_last_strategy_id') || ''
       if (prefillData) {
         setFormData({
           ...INITIAL_FORM_STATE,
+          strategy_id: lastStrategyId,
           ...prefillData,
         })
         setManualMode(true)
         setSelectedStartType('bias') // Ouvre directement le formulaire pre-rempli
       } else {
-        setFormData(INITIAL_FORM_STATE)
+        setFormData({
+          ...INITIAL_FORM_STATE,
+          strategy_id: lastStrategyId,
+        })
         setManualMode(false)
         setSelectedStartType(null)
       }
@@ -276,10 +291,29 @@ export function TradeDrawer({
     setSaving(true)
 
     try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser()
-      if (userError || !user) {
-        throw new Error('Utilisateur non connecté ou session expirée')
+      // Récupère l'utilisateur uniquement si en ligne pour éviter tout timeout réseau bloquant
+      let user = null
+      if (navigator.onLine) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          user = session?.user || null
+        } catch (sessionErr) {
+          console.warn('⚠️ [TradeDrawer] Impossible de récupérer la session locale :', sessionErr)
+        }
+
+        // Si pas de session locale en cache et en ligne, on tente d'appeler getUser()
+        if (!user) {
+          try {
+            const { data: { user: fetchedUser } } = await supabase.auth.getUser()
+            user = fetchedUser
+          } catch (userErr) {
+            console.warn('⚠️ [TradeDrawer] Impossible de contacter Supabase pour getUser() :', userErr)
+          }
+        }
       }
+
+      // En mode offline, on utilise 'local-user' si aucun utilisateur n'est connecté
+      const userId = user?.id || 'local-user'
 
       const { useLocalDatabase } = await import('@/store/useLocalDatabase')
       const { useOfflineSyncStore } = await import('@/store/offlineSyncStore')
@@ -362,7 +396,7 @@ export function TradeDrawer({
         const status = computeTradeStatus(formData, backtestMode ? 'in_progress' : 'in_progress')
         const tradeData = {
           id: tempIds.tradeId,
-          user_id: user.id,
+          user_id: userId,
           created_at: new Date().toISOString(),
           ...buildTradePayload(formData, status),
         }
@@ -509,6 +543,12 @@ export function TradeDrawer({
         {/* Zone de contenu principale scrollable */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           
+          {/* Composant tout en haut : Sélection et mémorisation de la stratégie (Playbook) */}
+          <StrategyHeaderSelector
+            selectedStrategyId={formData.strategy_id}
+            onSelectStrategy={handleSelectStrategy}
+          />
+          
           {/* Phase 0A : Drag/Drop d'images initial (Quick entry) */}
           {!isEditMode && !manualMode && (
             <ImageAnalysisUpload
@@ -551,6 +591,20 @@ export function TradeDrawer({
                 />
               )}
 
+              {/* En mode Backtest Étape 2 (Résolution) : option pour revoir si besoin le plan initial de l'Étape 1 */}
+              {backtestMode && positionActive?.estCloturee && (
+                <div className="flex items-center justify-between p-3 bg-surface2 border border-border2 rounded-lg text-xs">
+                  <span className="text-txt3">Les informations d'avant-position (Étape 1) sont masquées.</span>
+                  <button
+                    type="button"
+                    onClick={() => setAfficherPlanEtape1(!afficherPlanEtape1)}
+                    className="text-accent font-semibold hover:underline flex items-center gap-1"
+                  >
+                    {afficherPlanEtape1 ? '🙈 Masquer le plan initial' : '👁️ Voir le plan initial (Étape 1)'}
+                  </button>
+                </div>
+              )}
+
               {/* 2. Les 3 Panels de section (Biais, POI, Entrée) */}
               <TradeSectionPanel
                 sectionKey="biais"
@@ -564,6 +618,7 @@ export function TradeDrawer({
                 selectedReasons={selectedReasons}
                 setSelectedReasons={setSelectedReasons}
                 masquerApres={backtestMode && !positionActive?.estCloturee}
+                masquerAvant={backtestMode && positionActive?.estCloturee && !afficherPlanEtape1}
                 onCaptureGraphique={onCaptureGraphique}
               />
 
@@ -579,6 +634,7 @@ export function TradeDrawer({
                 selectedReasons={selectedReasons}
                 setSelectedReasons={setSelectedReasons}
                 masquerApres={backtestMode && !positionActive?.estCloturee}
+                masquerAvant={backtestMode && positionActive?.estCloturee && !afficherPlanEtape1}
                 onCaptureGraphique={onCaptureGraphique}
               />
 
@@ -594,6 +650,7 @@ export function TradeDrawer({
                 selectedReasons={selectedReasons}
                 setSelectedReasons={setSelectedReasons}
                 masquerApres={backtestMode && !positionActive?.estCloturee}
+                masquerAvant={backtestMode && positionActive?.estCloturee && !afficherPlanEtape1}
                 onCaptureGraphique={onCaptureGraphique}
               />
 

@@ -9,7 +9,7 @@ const BUCKET = 'trade-images'
  * Exemple :
  * const blobCompresse = await compresserImage(monFichierImage);
  */
-export async function compresserImage(fileOrBlob: File | Blob): Promise<Blob> {
+export async function compresserImage(fileOrBlob: File | Blob, maxWidth = 1200, maxQuality = 0.7): Promise<Blob> {
   // Ignorer la compression si ce n'est pas une image ou si c'est un format animé/vectoriel
   if (!fileOrBlob.type.startsWith('image/') || fileOrBlob.type === 'image/svg+xml' || fileOrBlob.type === 'image/gif') {
     return fileOrBlob
@@ -20,21 +20,19 @@ export async function compresserImage(fileOrBlob: File | Blob): Promise<Blob> {
     reader.onload = (event) => {
       const img = new Image()
       img.onload = () => {
-        const MAX_WIDTH = 1600
-        const MAX_HEIGHT = 1600
         let width = img.width
         let height = img.height
 
         // Calcul des dimensions en préservant le ratio d'aspect
         if (width > height) {
-          if (width > MAX_WIDTH) {
-            height = Math.round((height * MAX_WIDTH) / width)
-            width = MAX_WIDTH
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width)
+            width = maxWidth
           }
         } else {
-          if (height > MAX_HEIGHT) {
-            width = Math.round((width * MAX_HEIGHT) / height)
-            height = MAX_HEIGHT
+          if (height > maxWidth) {
+            width = Math.round((width * maxWidth) / height)
+            height = maxWidth
           }
         }
 
@@ -52,7 +50,7 @@ export async function compresserImage(fileOrBlob: File | Blob): Promise<Blob> {
 
         ctx.drawImage(img, 0, 0, width, height)
 
-        // Compression JPEG qualité 80% (200-300ko de moyenne)
+        // Compression JPEG optimisée pour la légèreté
         canvas.toBlob(
           (blob) => {
             if (blob) {
@@ -62,7 +60,7 @@ export async function compresserImage(fileOrBlob: File | Blob): Promise<Blob> {
             }
           },
           'image/jpeg',
-          0.8
+          maxQuality
         )
       }
       img.onerror = () => resolve(fileOrBlob)
@@ -86,11 +84,15 @@ export async function fileToBase64(file: File | Blob): Promise<string> {
 }
 
 /**
- * Compresse une image et la retourne directement en Base64 pour le stockage local (IndexedDB)
+ * Compresse une image/capture d'écran et la retourne rapidement en Base64 léger (~80-150ko)
+ * 
+ * Exemple :
+ * const base64 = await compresserEtConvertirEnBase64(blob);
  */
 export async function compresserEtConvertirEnBase64(file: File | Blob): Promise<string> {
   try {
-    const compressedBlob = await compresserImage(file)
+    // 1. Compression rapide (1000px max, qualité 0.65) idéale pour les captures de graphiques
+    const compressedBlob = await compresserImage(file, 1000, 0.65)
     return await fileToBase64(compressedBlob)
   } catch (err) {
     console.error('❌ [Storage] Échec compression, conversion base64 directe :', err)

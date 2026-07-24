@@ -12,7 +12,15 @@ export function useOfflineSyncManager() {
     if (queue.length === 0 || !navigator.onLine) return;
 
     // Vérifier si l'utilisateur est connecté à Supabase
-    const { data: sessionData } = await supabase.auth.getSession();
+    let sessionData = null;
+    try {
+      const res = await supabase.auth.getSession();
+      sessionData = res.data;
+    } catch (e) {
+      console.warn('🔄 [SyncManager] Erreur récupération session Supabase (hors-ligne):', e);
+      return;
+    }
+
     if (!sessionData?.session) {
       console.log('🔄 [SyncManager] Pas de session Supabase active. Synchronisation reportée.');
       return;
@@ -34,6 +42,11 @@ export function useOfflineSyncManager() {
 
         // Pour INSERT et UPDATE
         let tradeDataToInsert = { ...item.tradeData };
+
+        // Si le trade a été créé hors-ligne avec un ID temporaire, on lui attribue l'ID de l'utilisateur connecté
+        if (tradeDataToInsert.user_id === 'local-user' || !tradeDataToInsert.user_id) {
+          tradeDataToInsert.user_id = sessionData.session.user.id;
+        }
 
         // 1. Upload des images locales (Base64) vers Supabase Storage
         let updatedImages = item.images || [];

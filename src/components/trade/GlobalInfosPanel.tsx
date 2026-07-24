@@ -155,7 +155,13 @@ export function GlobalInfosPanel({
             <Field label="Stratégie (Playbook)">
               <Select
                 value={formData.strategy_id}
-                onChange={(e) => updateField('strategy_id', e.target.value)}
+                onChange={(e) => {
+                  const stratId = e.target.value
+                  updateField('strategy_id', stratId)
+                  if (stratId) {
+                    localStorage.setItem('journal_last_strategy_id', stratId)
+                  }
+                }}
               >
                 <option value="">Aucune stratégie</option>
                 {strategies?.map((strat) => (

@@ -169,6 +169,7 @@ export const ReasonCatalogSchema = z.object({
 export type ReasonCatalogItem = z.infer<typeof ReasonCatalogSchema> & {
   variants: ReasonVariant[]
   type?: string
+  family?: ReasonFamily | null
 }
 export type ReasonCatalogInsert = Omit<z.infer<typeof ReasonCatalogSchema>, 'id' | 'user_id' | 'created_at'>
 

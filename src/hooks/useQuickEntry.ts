@@ -64,19 +64,30 @@ export function useQuickEntry() {
     }): Promise<QuickEntryResult> => {
       console.log('🚀 [useQuickEntry] Début création trade rapide...')
 
-      // 1️⃣ Récupérer l'utilisateur connecté via Supabase Auth
-      const { data: { user }, error: userError } = await supabase.auth.getUser()
-      if (userError || !user) {
-        throw new Error('Utilisateur non connecté ou session expirée')
+      // 1️⃣ Récupérer l'utilisateur connecté via la session locale si possible (évite timeout hors-ligne)
+      let user = null
+      if (navigator.onLine) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          user = session?.user || null
+          if (!user) {
+            const { data: { user: fetchedUser } } = await supabase.auth.getUser()
+            user = fetchedUser
+          }
+        } catch (e) {
+          console.warn('⚠️ [useQuickEntry] Impossible de récupérer l\'utilisateur Supabase:', e)
+        }
       }
-      console.log('👤 [useQuickEntry] Utilisateur connecté :', user.id)
+      
+      const userId = user?.id || 'local-user'
+      console.log('👤 [useQuickEntry] ID Utilisateur pour l\'entrée :', userId)
 
       // Auto-déduire exit_type
       const autoExitType = analysis.result === 'win' ? 'tp' : (analysis.result === 'loss' ? 'sl' : (analysis.result === 'breakeven' ? 'breakeven' : null))
 
       // 2️⃣ Créer le trade principal avec status 'quick'
       const tradeData = {
-        user_id: user.id,
+        user_id: userId,
         pair: analysis.pair || 'XAUUSD',
         direction: (analysis.direction || 'long') as 'long' | 'short',
         session: analysis.session || 'London',

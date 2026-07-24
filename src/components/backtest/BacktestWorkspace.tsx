@@ -8,6 +8,7 @@ import { TradeDrawer } from '@/components/trade/TradeDrawer';
 import type { PositionSimulee } from '@/store/backtestStore';
 import { supabase } from '@/lib/supabase';
 import { uploadImage, compresserEtConvertirEnBase64 } from '@/lib/storage';
+import { sauvegarderBougiesM1Cache, recupererBougiesM1Cache } from '@/lib/backtestCache';
 
 // ─── Définition de tous les outils de la barre latérale ───────────────────────
 // Chaque outil correspond exactement au type string attendu par getToolRegistry().createDrawing()
@@ -26,6 +27,9 @@ const OUTILS_TRACAGE = [
   ]},
   { group: 'Formes', items: [
     { id: 'rectangle',       label: 'RECT',  title: 'Rectangle / Zone POI — 2 clics : coin supérieur puis inférieur' },
+  ]},
+  { group: 'Annotations', items: [
+    { id: 'text-annotation', label: 'TEXT',  title: 'Annotation Texte 📝 — 1 clic pour ajouter du texte sur le graphique' },
   ]},
   { group: 'Fibonacci', items: [
     { id: 'fib-retracement', label: 'FIB',   title: 'Fibonacci Retracement — 2 clics : sommet puis creux (ou inverse)' },
@@ -107,10 +111,6 @@ export function BacktestWorkspace() {
   const [donneesM1Chargees, setDonneesM1Chargees] = useState<Bougie[]>([]);
   const [anneeMinimumChargee, setAnneeMinimumChargee] = useState<number>(2025);
   const isFetchingPrevYear = useRef(false);
-
-  // Type de journal de destination choisi dans l'en-tête pour l'export des trades
-  const [journalDest, setJournalDest] = useState<'global' | 'bias' | 'poi' | 'confirmation'>('global');
-
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Positionnement dynamique des widgets par rapport au parent
@@ -336,13 +336,14 @@ export function BacktestWorkspace() {
     fermerPositionManuellement,
     supprimerTradeHistorique,
     mettreAJourDonneesMtf,
-    // Paramètres de session persistés
     paireCloud,
     anneeCloud,
     timeframeSauvegarde,
+    journalDest,
     setPaireCloud,
     setAnneeCloud,
     setTimeframeSauvegarde,
+    setJournalDest,
     contexteRestauration,
     nettoyerRestaurationContexte,
   } = useBacktestStore();
@@ -362,15 +363,14 @@ export function BacktestWorkspace() {
   const isNewTradeOpen = useUIStore((s) => s.isNewTradeOpen);
   const addToast = useUIStore((s) => s.addToast);
 
-  // Chargement automatique au premier montage OU si les données ont été perdues
-  // (ex: retour depuis une autre page après une réactualisation)
-  // Si donneesCompletes est vide MAIS que paireCloud est connu (persisté), on recharge automatiquement
+  // Chargement automatique au premier montage OU si les données M1 ont été perdues après navigation
+  // Si donneesCompletes ou donneesM1Chargees est vide, on recharge depuis IndexedDB ou le Cloud
   useEffect(() => {
     // Si on a une restauration en cours, on laisse le useEffect dédié gérer
     if (contexteRestauration) return;
 
-    if (donneesCompletes.length === 0) {
-      // Recharge la paire/année mémorisée dans le store (par défaut EURUSD 2025)
+    if (donneesCompletes.length === 0 || donneesM1Chargees.length === 0) {
+      // Recharge la paire/année mémorisée dans le store depuis le cache IndexedDB ou le Cloud
       chargerDonneesCloud(paireCloud, anneeCloud);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -485,9 +485,11 @@ export function BacktestWorkspace() {
   };
 
   const initialiserPlanificationTrade = useCallback(async (position: PositionSimulee) => {
-    setInitialisantPlanification(true);
-    // Capture automatique au moment de la pose de la position
+    // 1️⃣ Capture automatique du graphique EN PREMIER (pendant que le graphique est en plein cadre, avant que le drawer ne sort)
     const imageAvant = await capturerGraphique('avant');
+
+    // 2️⃣ Activation de l'état d'initialisation pour faire sortir le drawer
+    setInitialisantPlanification(true);
 
     const dateTexte = typeof position.dateEntree === 'number'
       ? new Date(position.dateEntree * 1000).toISOString().split('T')[0]
@@ -547,9 +549,11 @@ export function BacktestWorkspace() {
   }, [actif, paireCloud, journalDest, timeframe, openNewTradeWithPrefill, capturerGraphique]);
 
   const initialiserResolutionTrade = useCallback(async (position: PositionSimulee) => {
-    setInitialisantResolution(true);
-    // Capture automatique à la clôture du trade
+    // 1️⃣ Capture automatique du graphique EN PREMIER (pendant que le graphique est en plein cadre, avant que le drawer ne sort)
     const imageApres = await capturerGraphique('apres');
+
+    // 2️⃣ Activation de l'état d'initialisation pour faire sortir le drawer
+    setInitialisantResolution(true);
 
     const imageApres_obj = imageApres ?? null;
 
@@ -711,6 +715,10 @@ export function BacktestWorkspace() {
       setDonneesM1Chargees(toutesBougiesM1);
       setAnneeMinimumChargee(anneeStart);
       setPaireCloud(paireActuelle);
+      setAnneeCloud(String(anneeStart));
+
+      // Sauvegarde dans IndexedDB pour permettre l'utilisation et le replay 100% offline
+      await sauvegarderBougiesM1Cache(paireActuelle, String(anneeStart), toutesBougiesM1);
 
       // Agréger pour le timeframe actif
       const bougiesAgregees = agregerBougies(toutesBougiesM1, timeframe);
@@ -724,37 +732,47 @@ export function BacktestWorkspace() {
     }
   };
 
-  // ─── Chargement Cloud depuis le Dépôt GitHub public ────────────────────────
+  // ─── Chargement Cloud / Cache Local depuis IndexedDB ───────────────────────
   const chargerDonneesCloud = async (paireSel: string, anneeSel: string, targetTimestamp?: number, targetTimeframe?: string) => {
     setChargement(true);
     setErreur(null);
     try {
-      const nomFichier = `${paireSel.toUpperCase()}_M1_${anneeSel}.csv.gz`;
-      const url = `https://cdn.jsdelivr.net/gh/fre-max/Forex_Data@main/forex_data/${nomFichier}`;
-      
-      console.log(`📡 [Cloud Loader] Téléchargement de ${url}...`);
-      const reponse = await fetch(url);
-      if (!reponse.ok) {
-        throw new Error(
-          `Impossible de trouver le fichier ${nomFichier} sur GitHub.`
-        );
+      const activeTf = targetTimeframe || timeframe;
+      let bougiesM1: Bougie[] | null = null;
+
+      // 1️⃣ Tentative de lecture depuis le cache IndexedDB local (Mode Offline First)
+      bougiesM1 = await recupererBougiesM1Cache(paireSel, anneeSel);
+
+      // 2️⃣ Si les données ne sont pas en cache local, on essaie de les télécharger depuis le Cloud
+      if (!bougiesM1 || bougiesM1.length === 0) {
+        const nomFichier = `${paireSel.toUpperCase()}_M1_${anneeSel}.csv.gz`;
+        const url = `https://cdn.jsdelivr.net/gh/fre-max/Forex_Data@main/forex_data/${nomFichier}`;
+        
+        console.log(`📡 [Cloud Loader] Téléchargement de ${url}...`);
+        const reponse = await fetch(url);
+        if (!reponse.ok) {
+          throw new Error(`Impossible de trouver l'historique pour ${paireSel} (${anneeSel}) sur le serveur.`);
+        }
+        
+        const stream = reponse.body?.pipeThrough(new DecompressionStream('gzip'));
+        if (!stream) throw new Error("Impossible d'initialiser le flux de décompression.");
+        
+        const texteCsv = await new Response(stream).text();
+        bougiesM1 = parserCsvPrix(texteCsv);
+
+        // 3️⃣ Enregistrement dans IndexedDB pour les prochaines fois (et le mode offline)
+        await sauvegarderBougiesM1Cache(paireSel, anneeSel, bougiesM1);
+      } else {
+        console.log(`⚡ [Cloud Loader] Données M1 de ${paireSel} (${anneeSel}) chargées directement depuis le cache offline IndexedDB.`);
       }
-      
-      const stream = reponse.body?.pipeThrough(new DecompressionStream('gzip'));
-      if (!stream) throw new Error("Impossible d'initialiser le flux de décompression.");
-      
-      const texteCsv = await new Response(stream).text();
-      const bougiesM1 = parserCsvPrix(texteCsv);
-      
+
       setDonneesM1Chargees(bougiesM1);
       const anneeInt = parseInt(anneeSel);
       setAnneeMinimumChargee(anneeInt);
+
       // Mémoriser la paire et l'année dans le store (persisté en sessionStorage)
-      // Cela permet de recharger les bonnes données si l'utilisateur revient sur la page
       setPaireCloud(paireSel.toUpperCase());
       setAnneeCloud(anneeSel);
-
-      const activeTf = targetTimeframe || timeframe;
 
       // Agréger pour le timeframe actif
       const bougiesAgregees = agregerBougies(bougiesM1, activeTf);
@@ -789,8 +807,13 @@ export function BacktestWorkspace() {
       addToast(`${paireSel.toUpperCase()} (${anneeSel}) — Données chargées et agrégées en ${activeTf}`, 'success');
     } catch (err: any) {
       console.error(err);
-      setErreur(err.message || "Erreur lors du chargement des données depuis le Cloud.");
-      addToast(err.message || "Échec du chargement Cloud", "error");
+      const estHorsLigne = typeof navigator !== 'undefined' && !navigator.onLine;
+      const messageErreur = estHorsLigne
+        ? `Mode Hors-ligne : L'historique pour ${paireSel.toUpperCase()} (${anneeSel}) n'a pas encore été téléchargé sur cet appareil.`
+        : (err.message || "Erreur lors du chargement des données.");
+      
+      setErreur(messageErreur);
+      addToast(messageErreur, "error");
     } finally {
       setChargement(false);
     }
