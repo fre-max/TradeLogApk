@@ -21,6 +21,7 @@ import {
 } from '@/lib/lightweight-charts-drawing-custom';
 import { useBacktestStore, type PositionSimulee } from '@/store/backtestStore';
 import { useUIStore } from '@/store';
+import type { BoundingBoxYOLO } from '@/types/dataset';
 
 // ─── 🛠️ Seuils de détection tactile élargis ──────────────────────────────────
 // 30px de tolérance au lieu de 5px par défaut pour faciliter la sélection au doigt.
@@ -139,8 +140,22 @@ const THEMES = {
   light: { background: '#ffffff', text: '#131722', grid: '#f0f3fa' },
 };
 
+export interface BacktestChartHandle {
+  takeScreenshot: () => Promise<Blob | null>;
+  cadrerFenetreBougies: (nbBougies: number) => void;
+  capturerImageIA: (options: {
+    nbBougies: number;
+    cibleLargeur?: number;
+    cibleHauteur?: number;
+  }) => Promise<{
+    blobClean: Blob | null;
+    blobAnnotated: Blob | null;
+    boundingBoxes: BoundingBoxYOLO[];
+  }>;
+}
+
 export const BacktestChart = React.forwardRef<
-  { takeScreenshot: () => Promise<Blob | null> },
+  BacktestChartHandle,
   BacktestChartProps
 >(({ activeTool, onDrawingComplete, onScrollToLeft, height, theme, timeframe }, ref) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -151,6 +166,8 @@ export const BacktestChart = React.forwardRef<
   const ouvrirPosition = useBacktestStore((s) => s.ouvrirPosition);
   const positionActive = useBacktestStore((s) => s.positionActive);
   const estEnLecture = useBacktestStore((s) => s.estEnLecture);
+  const fundamentalModeEnabled = useBacktestStore((s) => s.fundamentalModeEnabled);
+  const macroEvents = useBacktestStore((s) => s.macroEvents);
 
   // Référence mutable pour éviter le stale closure du scroll handler
   const scrollRef = useRef(onScrollToLeft);
@@ -158,14 +175,251 @@ export const BacktestChart = React.forwardRef<
     scrollRef.current = onScrollToLeft;
   }, [onScrollToLeft]);
 
+  // ─── Effet : Affichage dynamique des marqueurs de news sur le graphique ─────
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    if (!fundamentalModeEnabled || macroEvents.length === 0 || donneesCompletes.length === 0) {
+      try {
+        (series as any).setMarkers([]);
+      } catch (err) {
+        // Ignorer si la série est en cours de destruction
+      }
+      return;
+    }
+
+    // Association des événements macro avec les bougies du graphique
+    const eventsByTime = new Map<Time, typeof macroEvents[0]>();
+
+    for (const ev of macroEvents) {
+      const bougieIndex = donneesCompletes.findIndex((b) => {
+        const t = typeof b.time === 'number'
+          ? b.time * (b.time < 10000000000 ? 1000 : 1)
+          : Date.parse((b.time as string).replace(' ', 'T'));
+        return t >= ev.timestamp;
+      });
+
+      if (bougieIndex !== -1 && bougieIndex < donneesCompletes.length) {
+        const bougieTime = donneesCompletes[bougieIndex].time as Time;
+        if (!eventsByTime.has(bougieTime)) {
+          eventsByTime.set(bougieTime, ev);
+        }
+      }
+    }
+
+    const markersArray: any[] = [];
+    eventsByTime.forEach((topEvent, time) => {
+      const isPositive = topEvent.score > 0;
+      const isNegative = topEvent.score < 0;
+
+      markersArray.push({
+        time,
+        position: isPositive ? 'belowBar' : 'aboveBar',
+        color: isPositive ? '#10b981' : isNegative ? '#f43f5e' : '#64748b',
+        shape: isPositive ? 'arrowUp' : isNegative ? 'arrowDown' : 'circle',
+        text: `⚡ ${topEvent.asset} ${topEvent.event}`,
+        id: topEvent.id,
+      });
+    });
+
+    try {
+      (series as any).setMarkers(markersArray);
+    } catch (err) {
+      console.warn('⚠️ [BacktestChart] Impossible de mettre à jour les markers macro:', err);
+    }
+  }, [fundamentalModeEnabled, macroEvents, donneesCompletes]);
+
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const managerRef = useRef<DrawingManager | null>(null);
 
-  // Expose la méthode de capture d'écran au composant parent (BacktestWorkspace)
-  // La capture fusionne le canvas natif lightweight-charts ET l'overlay HTML canvas
-  // pour que la position (lignes Entrée/SL/TP) soit bien visible dans la capture.
+  // Expose les méthodes de capture et de cadrage au composant parent (BacktestWorkspace)
   useImperativeHandle(ref, () => ({
+    // Cadre instantanément le graphique sur un nombre précis de bougies jusqu'à la bougie courante
+    cadrerFenetreBougies: (nbBougies: number) => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const currentIndex = stateRef.current.indexCourant;
+      const from = Math.max(0, currentIndex - nbBougies + 1);
+      const to = currentIndex;
+      chart.timeScale().setVisibleLogicalRange({ from, to });
+    },
+
+    // Capture standardisée pour le dataset d'apprentissage IA
+    // Génère l'image Clean (pour l'IA), l'image Annotée (pour l'humain) et calcule les coordonnées YOLO
+    capturerImageIA: (options: { nbBougies: number; cibleLargeur?: number; cibleHauteur?: number }): Promise<{
+      blobClean: Blob | null;
+      blobAnnotated: Blob | null;
+      boundingBoxes: BoundingBoxYOLO[];
+    }> => {
+      return new Promise((resolve) => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) {
+          resolve({ blobClean: null, blobAnnotated: null, boundingBoxes: [] });
+          return;
+        }
+
+        const currentIndex = stateRef.current.indexCourant;
+        const nbBougies = options.nbBougies || 80;
+        const from = Math.max(0, currentIndex - nbBougies + 1);
+        const to = currentIndex;
+
+        // 1. Cadrer exactement la fenêtre temporelle demandée (aucune bougie future visible)
+        chart.timeScale().setVisibleLogicalRange({ from, to });
+
+        const couleurs = THEMES[theme] ?? THEMES.dark;
+
+        // 2. Masquer temporairement la grille et les réticules pour obtenir une image 100% propre (sans artefact)
+        chart.applyOptions({
+          grid: {
+            vertLines: { visible: false },
+            horzLines: { visible: false },
+          },
+          crosshair: {
+            vertLine: { visible: false },
+            horzLine: { visible: false },
+          },
+        });
+
+        // Laisser 150ms au moteur de rendu canvas pour appliquer le cadrage et le masquage de grille
+        setTimeout(() => {
+          try {
+            // 3. Capture du canvas natif de Lightweight Charts (image brute "clean" pour l'entraînement IA)
+            const chartCanvas = chart.takeScreenshot();
+            if (!chartCanvas) {
+              chart.applyOptions({
+                grid: {
+                  vertLines: { color: couleurs.grid, visible: true },
+                  horzLines: { color: couleurs.grid, visible: true },
+                },
+                crosshair: {
+                  vertLine: { visible: true, labelBackgroundColor: couleurs.background },
+                  horzLine: { visible: true, labelBackgroundColor: couleurs.background },
+                },
+              });
+              resolve({ blobClean: null, blobAnnotated: null, boundingBoxes: [] });
+              return;
+            }
+
+            const canvasLargeur = chartCanvas.width;
+            const canvasHauteur = chartCanvas.height;
+
+            // 4. Calcul automatique des coordonnées normalisées YOLO pour la position active
+            const boxes: BoundingBoxYOLO[] = [];
+            const posActive = stateRef.current.positionActive;
+            const posCanvas = stateRef.current.positionsCanvas[0];
+            const posCible = posCanvas || (posActive ? {
+              direction: posActive.direction,
+              prixEntree: posActive.prixEntree,
+              prixSL: posActive.stopLoss,
+              prixTP: posActive.takeProfit,
+              indexEntree: posActive.indexEntree,
+              dureeEstimeeLargeur: posActive.dureeEstimeeLargeur || 25,
+            } : null);
+
+            if (posCible && typeof posCible.indexEntree === 'number') {
+              const xStart = chart.timeScale().logicalToCoordinate(posCible.indexEntree as any);
+              const yEntry = series.priceToCoordinate(posCible.prixEntree);
+              const ySL = series.priceToCoordinate(posCible.prixSL);
+              const yTP = series.priceToCoordinate(posCible.prixTP);
+
+              if (xStart !== null && yEntry !== null && ySL !== null && yTP !== null) {
+                // Déterminer la largeur en pixels d'une bougie à l'écran
+                let largeurBougie = 6;
+                if (currentIndex > 0) {
+                  const xCur = chart.timeScale().logicalToCoordinate(currentIndex as any);
+                  const xPrev = chart.timeScale().logicalToCoordinate((currentIndex - 1) as any);
+                  if (xCur !== null && xPrev !== null) {
+                    largeurBougie = Math.abs(xCur - xPrev);
+                  }
+                }
+
+                const largeurBlocPx = (posCible.dureeEstimeeLargeur || 25) * largeurBougie;
+                const xMinPx = Math.max(0, xStart);
+                const xMaxPx = Math.min(canvasLargeur, xStart + largeurBlocPx);
+                const yMinPx = Math.max(0, Math.min(yEntry, ySL, yTP));
+                const yMaxPx = Math.min(canvasHauteur, Math.max(yEntry, ySL, yTP));
+
+                const boxLargeurPx = xMaxPx - xMinPx;
+                const boxHauteurPx = yMaxPx - yMinPx;
+
+                // On ne retient la boîte que si elle a une taille minimale significative
+                if (boxLargeurPx > 4 && boxHauteurPx > 4) {
+                  const xCentre = (xMinPx + boxLargeurPx / 2) / canvasLargeur;
+                  const yCentre = (yMinPx + boxHauteurPx / 2) / canvasHauteur;
+                  const largeurNorm = boxLargeurPx / canvasLargeur;
+                  const hauteurNorm = boxHauteurPx / canvasHauteur;
+
+                  boxes.push({
+                    classeId: posCible.direction === 'long' ? 0 : 1,
+                    classeNom: posCible.direction,
+                    xCentre,
+                    yCentre,
+                    largeur: largeurNorm,
+                    hauteur: hauteurNorm,
+                  });
+                }
+              }
+            }
+
+            // 5. Création de l'image annotée (fusion de l'image clean avec l'overlay des positions)
+            const canvasAnnotated = document.createElement('canvas');
+            canvasAnnotated.width = canvasLargeur;
+            canvasAnnotated.height = canvasHauteur;
+            const ctxAnnotated = canvasAnnotated.getContext('2d');
+
+            if (ctxAnnotated) {
+              ctxAnnotated.drawImage(chartCanvas, 0, 0);
+              const overlayCanvas = overlayCanvasRef.current;
+              if (overlayCanvas && overlayCanvas.width > 0 && overlayCanvas.height > 0) {
+                ctxAnnotated.drawImage(overlayCanvas, 0, 0, canvasLargeur, canvasHauteur);
+              }
+            }
+
+            // 6. Restauration immédiate des options du graphique
+            chart.applyOptions({
+              grid: {
+                vertLines: { color: couleurs.grid, visible: true },
+                horzLines: { color: couleurs.grid, visible: true },
+              },
+              crosshair: {
+                vertLine: { visible: true, labelBackgroundColor: couleurs.background },
+                horzLine: { visible: true, labelBackgroundColor: couleurs.background },
+              },
+            });
+
+            // 7. Conversion des deux canvas en Blobs JPEG
+            chartCanvas.toBlob((blobClean) => {
+              canvasAnnotated.toBlob((blobAnnotated) => {
+                resolve({
+                  blobClean,
+                  blobAnnotated,
+                  boundingBoxes: boxes,
+                });
+              }, 'image/jpeg', 0.9);
+            }, 'image/jpeg', 0.9);
+          } catch (err) {
+            console.error('❌ [BacktestChart] Erreur lors de la capture IA :', err);
+            // Restauration de sécurité en cas d'erreur
+            chart.applyOptions({
+              grid: {
+                vertLines: { color: couleurs.grid, visible: true },
+                horzLines: { color: couleurs.grid, visible: true },
+              },
+              crosshair: {
+                vertLine: { visible: true, labelBackgroundColor: couleurs.background },
+                horzLine: { visible: true, labelBackgroundColor: couleurs.background },
+              },
+            });
+            resolve({ blobClean: null, blobAnnotated: null, boundingBoxes: [] });
+          }
+        }, 150);
+      });
+    },
+
+    // Capture standard classique pour le journal de trading
     takeScreenshot: (): Promise<Blob | null> => {
       return new Promise((resolve) => {
         const chart = chartRef.current;
@@ -174,41 +428,30 @@ export const BacktestChart = React.forwardRef<
           return;
         }
 
-        // Légère pause pour que le graphique ET l'overlay aient fini de se rendre
         setTimeout(() => {
           try {
-            // 1. Capture le canvas natif de lightweight-charts (bougies, axes, grille)
             const chartCanvas = chart.takeScreenshot();
             if (!chartCanvas) {
               resolve(null);
               return;
             }
 
-            // 2. Récupérer l'overlay canvas (positions, lignes E/SL/TP custom)
             const overlayCanvas = overlayCanvasRef.current;
-
-            // 3. Créer un canvas de fusion aux mêmes dimensions que le graphique
             const canvasFusion = document.createElement('canvas');
             canvasFusion.width = chartCanvas.width;
             canvasFusion.height = chartCanvas.height;
             const ctx = canvasFusion.getContext('2d');
 
             if (!ctx) {
-              // Fallback si le contexte 2D n'est pas disponible : graphique seul
               chartCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
               return;
             }
 
-            // 4. Dessiner d'abord le graphique (couche du bas)
             ctx.drawImage(chartCanvas, 0, 0);
-
-            // 5. Dessiner l'overlay par-dessus (couche du haut = positions, lignes)
-            // On redimensionne l'overlay pour qu'il corresponde aux dimensions du graphique
             if (overlayCanvas && overlayCanvas.width > 0 && overlayCanvas.height > 0) {
               ctx.drawImage(overlayCanvas, 0, 0, canvasFusion.width, canvasFusion.height);
             }
 
-            // 6. Convertir le canvas fusionné en JPEG blob
             canvasFusion.toBlob(
               (blob) => resolve(blob),
               'image/jpeg',

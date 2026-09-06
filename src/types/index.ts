@@ -173,4 +173,6 @@ export type ReasonCatalogItem = z.infer<typeof ReasonCatalogSchema> & {
 }
 export type ReasonCatalogInsert = Omit<z.infer<typeof ReasonCatalogSchema>, 'id' | 'user_id' | 'created_at'>
 
+export * from './fundamental'
+
 

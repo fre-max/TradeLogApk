@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { Bougie } from '@/lib/chartDataHelper'
+import type { MacroEvent, FundamentalSnapshot } from '@/types/fundamental'
+import { computeSnapshotAtTimestamp } from '@/lib/fundamentalEngine'
 
 /**
  * Représente un trade simulé pendant la session de backtesting.
@@ -85,6 +87,15 @@ interface BacktestState {
   injecterDonneesPrecedentes: (anciennesDonnees: Bougie[]) => void;
   mettreAJourDonneesMtf: (nouvellesDonnees: Bougie[]) => void;
   contexteRestauration: { pair: string; annee: string; timeframe: string; timestamp: number } | null;
+
+  // State et Actions pour l'Analyse Fondamentale
+  fundamentalModeEnabled: boolean;
+  macroEvents: MacroEvent[];
+  activeSnapshot: FundamentalSnapshot | null;
+  toggleFundamentalMode: () => void;
+  setMacroEvents: (events: MacroEvent[]) => void;
+  clearMacroEvents: () => void;
+  recalculerSnapshotMacro: () => void;
 }
 
 // Le store utilise le middleware 'persist' de Zustand pour sauvegarder l'état de session
@@ -114,6 +125,52 @@ export const useBacktestStore = create<BacktestState>()(
   // Contexte de restauration de replay (clic depuis le journal)
   contexteRestauration: null as { pair: string; annee: string; timeframe: string; timestamp: number } | null,
 
+  // Mode Analyse Fondamentale - État initial
+  fundamentalModeEnabled: false,
+  macroEvents: [],
+  activeSnapshot: null,
+
+  toggleFundamentalMode: () => {
+    const nouveauState = !get().fundamentalModeEnabled;
+    console.log(`💡 [Backtest Store] Mode Fondamental : ${nouveauState ? 'ACTIVÉ' : 'DÉSACTIVÉ'}`);
+    set({ fundamentalModeEnabled: nouveauState });
+    get().recalculerSnapshotMacro();
+  },
+
+  setMacroEvents: (events) => {
+    console.log(`📊 [Backtest Store] Importation de ${events.length} événements macroéconomiques.`);
+    set({ macroEvents: events });
+    get().recalculerSnapshotMacro();
+  },
+
+  clearMacroEvents: () => {
+    console.log(`🗑️ [Backtest Store] Réinitialisation des événements macro.`);
+    set({ macroEvents: [], activeSnapshot: null });
+  },
+
+  recalculerSnapshotMacro: () => {
+    const { macroEvents, donneesCompletes, indexCourant, paireCloud, fundamentalModeEnabled } = get();
+    if (!fundamentalModeEnabled || macroEvents.length === 0 || donneesCompletes.length === 0) {
+      set({ activeSnapshot: null });
+      return;
+    }
+
+    const bougieCourante = donneesCompletes[indexCourant];
+    if (!bougieCourante) return;
+
+    let tRef = 0;
+    if (typeof bougieCourante.time === 'number') {
+      tRef = bougieCourante.time < 10000000000 ? bougieCourante.time * 1000 : bougieCourante.time;
+    } else if (typeof bougieCourante.time === 'string') {
+      tRef = Date.parse(bougieCourante.time.replace(' ', 'T'));
+    }
+
+    if (!tRef || isNaN(tRef)) return;
+
+    const snapshot = computeSnapshotAtTimestamp(macroEvents, paireCloud, tRef);
+    set({ activeSnapshot: snapshot });
+  },
+
   // Initialise la session avec de nouvelles données
   // Par défaut, on affiche les 150 premières bougies pour donner du contexte au trader
   chargerDonnees: (donnees, nomActif) => {
@@ -127,6 +184,7 @@ export const useBacktestStore = create<BacktestState>()(
       positionActive: null,
       historiqueSimule: [],
     });
+    get().recalculerSnapshotMacro();
   },
 
   // Injecte des données plus anciennes au début de la série (défilement infini vers le passé)
@@ -313,6 +371,7 @@ export const useBacktestStore = create<BacktestState>()(
       indexCourant: prochainIndex,
       positionActive: positionMiseAJour,
     });
+    get().recalculerSnapshotMacro();
     return true;
   },
 
@@ -340,6 +399,7 @@ export const useBacktestStore = create<BacktestState>()(
       indexCourant: precedentIndex,
       positionActive: positionMiseAJour,
     });
+    get().recalculerSnapshotMacro();
     return true;
   },
 
@@ -522,6 +582,8 @@ export const useBacktestStore = create<BacktestState>()(
     timeframeSauvegarde: state.timeframeSauvegarde,
     journalDest: state.journalDest,
     contexteRestauration: state.contexteRestauration,
+    fundamentalModeEnabled: state.fundamentalModeEnabled,
+    macroEvents: state.macroEvents,
     // donneesCompletes : volontairement EXCLU
   }),
 }

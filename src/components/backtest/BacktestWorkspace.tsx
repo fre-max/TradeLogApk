@@ -2,7 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useBacktestStore } from '@/store/backtestStore';
 import { parserCsvPrix, agregerBougies } from '@/lib/chartDataHelper';
 import type { Bougie } from '@/lib/chartDataHelper';
-import { BacktestChart } from './BacktestChart';
+import { BacktestChart, type BacktestChartHandle } from './BacktestChart';
+import { FundamentalHeaderBadge } from './FundamentalHeaderBadge';
+import { MacroAccordionTable } from './MacroAccordionTable';
+import { MacroCSVUploader } from './MacroCSVUploader';
+import { AIDatasetModal } from './AIDatasetModal';
+import { sauvegarderEchantillon, recupererTousLesEchantillons } from '@/lib/datasetStorage';
+import type { EchantillonIA } from '@/types/dataset';
 import { useUIStore } from '@/store';
 import { TradeDrawer } from '@/components/trade/TradeDrawer';
 import type { PositionSimulee } from '@/store/backtestStore';
@@ -259,10 +265,90 @@ export function BacktestWorkspace() {
     }
   };
 
-  // Référence pour appeler les méthodes de capture du graphique
-  const chartRef = useRef<{ takeScreenshot: () => Promise<Blob | null> } | null>(null);
+  // Référence pour appeler les méthodes de capture et de cadrage du graphique
+  const chartRef = useRef<BacktestChartHandle | null>(null);
   // ID unique du trade en cours d'exportation pour afficher un spinner
   const [exportantTradeId, setExportantTradeId] = useState<string | null>(null);
+
+  // ─── États pour le Mode Studio Collecte IA ────────────────────────────────
+  const [modeStudioIA, setModeStudioIA] = useState(false);
+  const [nbBougiesIA, setNbBougiesIA] = useState(80);
+  const [modalAIDatasetOuverte, setModalAIDatasetOuverte] = useState(false);
+  const [nbEchantillonsIA, setNbEchantillonsIA] = useState(0);
+  const [capturantIA, setCapturantIA] = useState(false);
+  const [saisieLibreBougies, setSaisieLibreBougies] = useState('');
+
+  // Charge le nombre d'échantillons déjà présents dans le dataset local
+  useEffect(() => {
+    recupererTousLesEchantillons().then((items) => {
+      setNbEchantillonsIA(items.length);
+    }).catch((err) => {
+      console.warn('⚠️ [Workspace] Erreur lecture dataset IA:', err);
+    });
+  }, []);
+
+  // Capture un échantillon standardisé pour le dataset IA
+  const capturerSetupIA = async (typeEchantillon: 'positif' | 'negatif') => {
+    if (!chartRef.current) return;
+    setCapturantIA(true);
+    try {
+      console.log(`🚀 [Workspace] Début de la capture IA (${typeEchantillon})...`);
+      const resultat = await chartRef.current.capturerImageIA({ nbBougies: nbBougiesIA });
+      if (!resultat.blobClean || !resultat.blobAnnotated) {
+        addToast("Impossible de générer l'image IA du graphique", 'error');
+        return;
+      }
+
+      const [cleanBase64, annotatedBase64] = await Promise.all([
+        compresserEtConvertirEnBase64(resultat.blobClean),
+        compresserEtConvertirEnBase64(resultat.blobAnnotated),
+      ]);
+
+      const bougieCourante = donneesCompletes[indexCourant];
+      const dateDeclencheur = bougieCourante ? bougieCourante.time : Date.now();
+      const session = typeof dateDeclencheur === 'number' ? detecterSession(dateDeclencheur) : 'London';
+
+      const gain = positionActive ? Math.abs(positionActive.takeProfit - positionActive.prixEntree) : 0;
+      const risque = positionActive ? Math.abs(positionActive.prixEntree - positionActive.stopLoss) : 0;
+      const rr = risque > 0 ? Number((gain / risque).toFixed(2)) : undefined;
+
+      const nouvelEchantillon: EchantillonIA = {
+        id: crypto.randomUUID(),
+        dateCreation: new Date().toISOString(),
+        paire: actif !== 'Aucun actif' && actif ? actif : paireCloud,
+        timeframe: timeframeSauvegarde || 'M5',
+        typeEchantillon,
+        direction: typeEchantillon === 'positif' && positionActive ? positionActive.direction : 'neutre',
+        nbBougies: nbBougiesIA,
+        dateBougieDeclencheur: dateDeclencheur,
+        prixEntree: positionActive?.prixEntree,
+        stopLoss: positionActive?.stopLoss,
+        takeProfit: positionActive?.takeProfit,
+        ratioRR: rr,
+        resultatTrade: positionActive?.resultat || 'inconnu',
+        sessionTrading: session as any,
+        imageCleanBase64: cleanBase64,
+        imageAnnotatedBase64: annotatedBase64,
+        boundingBoxes: typeEchantillon === 'positif' ? resultat.boundingBoxes : [],
+      };
+
+      await sauvegarderEchantillon(nouvelEchantillon);
+      const tous = await recupererTousLesEchantillons();
+      setNbEchantillonsIA(tous.length);
+
+      addToast(
+        typeEchantillon === 'positif'
+          ? `✅ Setup IA capturé (${resultat.boundingBoxes.length} boîte YOLO calculée)`
+          : "✅ Échantillon négatif capturé pour l'IA (équilibrage dataset)",
+        'success'
+      );
+    } catch (err) {
+      console.error('❌ [Workspace] Erreur capture IA :', err);
+      addToast("Erreur lors de la capture de l'échantillon IA", 'error');
+    } finally {
+      setCapturantIA(false);
+    }
+  };
 
   // Gère l'affichage du menu déroulant de capture d'écran
   const [menuCaptureOuvert, setMenuCaptureOuvert] = useState(false);
@@ -318,6 +404,9 @@ export function BacktestWorkspace() {
   // Classes CSS calculées selon le thème courant
   const C = getThemeClasses(theme);
 
+  // Modale d'upload CSV Macro
+  const [showMacroUploaderModal, setShowMacroUploaderModal] = useState(false);
+
   // ─── Store de Backtesting (Zustand) ─────────────────────────────────────────
   const {
     actif,
@@ -346,6 +435,10 @@ export function BacktestWorkspace() {
     setJournalDest,
     contexteRestauration,
     nettoyerRestaurationContexte,
+    fundamentalModeEnabled,
+    toggleFundamentalMode,
+    activeSnapshot,
+    macroEvents,
   } = useBacktestStore();
 
   // Le timeframe local est initialisé depuis le store persisté (timeframeSauvegarde)
@@ -1271,6 +1364,58 @@ export function BacktestWorkspace() {
 
         <div className={`flex-shrink-0 h-5 w-px ${C.separator}`} />
 
+        {/* ── Toggle Mode Fondamental ── */}
+        <button
+          onClick={toggleFundamentalMode}
+          className={`flex-shrink-0 px-2.5 py-1 text-[12px] font-semibold rounded transition-all flex items-center gap-1.5 border ${
+            fundamentalModeEnabled
+              ? 'bg-purple-950/80 border-purple-600 text-purple-200 shadow-sm'
+              : C.btnBase
+          }`}
+          title="Activer/Désactiver l'Analyse Fondamentale"
+        >
+          <span className={fundamentalModeEnabled ? 'text-purple-400 font-bold' : 'text-slate-400'}>🌐 Macro</span>
+          <span className={`text-[10px] px-1 rounded font-bold ${fundamentalModeEnabled ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300'}`}>
+            {fundamentalModeEnabled ? 'ON' : 'OFF'}
+          </span>
+        </button>
+
+        {fundamentalModeEnabled && (
+          <button
+            onClick={() => setShowMacroUploaderModal(true)}
+            className="flex-shrink-0 px-2.5 py-1 text-[11px] font-medium rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex items-center gap-1"
+            title="Gérer ou importer les fichiers CSV d'événements économiques"
+          >
+            📊 CSV ({macroEvents.length})
+          </button>
+        )}
+
+        {/* ── Toggle Mode Studio IA ── */}
+        <button
+          onClick={() => {
+            const nouveauMode = !modeStudioIA;
+            setModeStudioIA(nouveauMode);
+            if (nouveauMode && chartRef.current) {
+              chartRef.current.cadrerFenetreBougies(nbBougiesIA);
+            }
+          }}
+          className={`flex-shrink-0 px-2.5 py-1 text-[12px] font-semibold rounded transition-all flex items-center gap-1.5 border ${
+            modeStudioIA
+              ? 'bg-indigo-950/80 border-indigo-500 text-indigo-200 shadow-sm'
+              : C.btnBase
+          }`}
+          title="Activer la barre d'outils de collecte de données et captures pour l'IA"
+        >
+          <span className={modeStudioIA ? 'text-indigo-400 font-bold' : 'text-slate-400'}>🤖 Mode IA</span>
+          {nbEchantillonsIA > 0 && (
+            <span className={`text-[10px] px-1 rounded font-bold font-mono ${modeStudioIA ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300'}`}>
+              {nbEchantillonsIA}
+            </span>
+          )}
+        </button>
+
+        <div className={`flex-shrink-0 h-5 w-px ${C.separator}`} />
+
         {/* ── Bouton Thème (Clair / Sombre) ── */}
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -1289,6 +1434,193 @@ export function BacktestWorkspace() {
           {estPleinEcran ? '⊡' : '⊞'}
         </button>
       </div>
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* BANDEAU ET ACCORDÉONS ANALYSE FONDAMENTALE (MODE SPLIT)     */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      {fundamentalModeEnabled && (
+        <div className="flex flex-col gap-2 p-2 bg-[#131722]/95 border-b border-[#2a2e39] flex-shrink-0">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <FundamentalHeaderBadge snapshot={activeSnapshot} />
+
+            <button
+              onClick={() => setShowMacroUploaderModal(true)}
+              className="px-2.5 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition-colors flex items-center gap-1"
+            >
+              📥 Importer Données CSV
+            </button>
+          </div>
+
+          {activeSnapshot && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto scrollbar-thin">
+              <MacroAccordionTable state={activeSnapshot.baseState} title={`Devise Base : ${activeSnapshot.baseAsset}`} defaultExpanded={true} />
+              <MacroAccordionTable state={activeSnapshot.quoteState} title={`Devise Contrepartie : ${activeSnapshot.quoteAsset}`} defaultExpanded={true} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modale d'importation CSV Macro */}
+      {showMacroUploaderModal && (
+        <div className="fixed inset-0 z-[300] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <MacroCSVUploader onClose={() => setShowMacroUploaderModal(false)} />
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* BANDEAU STUDIO COLLECTE IA (QUAND LE MODE IA EST ACTIF)  */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      {modeStudioIA && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2 bg-indigo-950/40 border-b border-indigo-500/30 flex-shrink-0 overflow-x-auto text-xs">
+          <div className="flex items-center gap-3">
+            <span className="font-bold text-indigo-400 flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-base">🤖</span>
+              <span>Studio IA :</span>
+            </span>
+
+            {/* Sélecteur de cadrage standardisé enrichi avec grandes options */}
+            <div className="flex items-center gap-1.5 bg-[#131722]/90 p-1 rounded-lg border border-indigo-500/30">
+              <span className="text-[11px] text-indigo-300 font-medium px-1 flex items-center gap-1">
+                <span>📐</span> Cadrage :
+              </span>
+
+              {/* Boutons rapides pour les échelles les plus courantes */}
+              <div className="flex items-center gap-1">
+                {[60, 100, 150, 200, 300, 500].map((nb) => (
+                  <button
+                    key={nb}
+                    onClick={() => {
+                      setNbBougiesIA(nb);
+                      setSaisieLibreBougies('');
+                      chartRef.current?.cadrerFenetreBougies(nb);
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-xs font-mono font-bold transition-all ${
+                      nbBougiesIA === nb
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
+                    }`}
+                    title={`Cadrer exactement ${nb} bougies`}
+                  >
+                    {nb}b
+                  </button>
+                ))}
+              </div>
+
+              {/* Menu déroulant pour toutes les échelles (notamment les plus grandes) */}
+              <select
+                value={nbBougiesIA}
+                onChange={(e) => {
+                  const nb = Number(e.target.value);
+                  setNbBougiesIA(nb);
+                  setSaisieLibreBougies('');
+                  chartRef.current?.cadrerFenetreBougies(nb);
+                }}
+                className="bg-[#1e222d] text-indigo-300 border border-indigo-500/40 rounded px-1.5 py-0.5 text-xs font-mono font-semibold outline-none cursor-pointer hover:border-indigo-400"
+                title="Toutes les options de cadrage (précision ou grand contexte)"
+              >
+                <optgroup label="Zoom précision">
+                  <option value={40}>40 bougies (Micro)</option>
+                  <option value={60}>60 bougies (Court terme)</option>
+                  <option value={80}>80 bougies (Standard)</option>
+                </optgroup>
+                <optgroup label="Contexte intermédiaire">
+                  <option value={100}>100 bougies</option>
+                  <option value={120}>120 bougies</option>
+                  <option value={150}>150 bougies</option>
+                  <option value={180}>180 bougies</option>
+                  <option value={200}>200 bougies</option>
+                </optgroup>
+                <optgroup label="Grand Contexte (Macro / Structure)">
+                  <option value={250}>250 bougies (Structure swing)</option>
+                  <option value={300}>300 bougies (Session étendue)</option>
+                  <option value={350}>350 bougies</option>
+                  <option value={400}>400 bougies (Grand swing)</option>
+                  <option value={500}>500 bougies (Multi-jours)</option>
+                  <option value={600}>600 bougies</option>
+                  <option value={800}>800 bougies (Vue globale)</option>
+                  <option value={1000}>1000 bougies (Historique macro)</option>
+                </optgroup>
+              </select>
+
+              {/* Champ de saisie manuelle libre */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const nb = Number(saisieLibreBougies);
+                  if (nb >= 10 && nb <= 5000) {
+                    setNbBougiesIA(nb);
+                    chartRef.current?.cadrerFenetreBougies(nb);
+                  }
+                }}
+                className="flex items-center gap-1 pl-1 border-l border-[#2a2e39]"
+              >
+                <input
+                  type="number"
+                  min="10"
+                  max="5000"
+                  placeholder="Autre..."
+                  value={saisieLibreBougies}
+                  onChange={(e) => setSaisieLibreBougies(e.target.value)}
+                  onBlur={() => {
+                    const nb = Number(saisieLibreBougies);
+                    if (nb >= 10 && nb <= 5000) {
+                      setNbBougiesIA(nb);
+                      chartRef.current?.cadrerFenetreBougies(nb);
+                    }
+                  }}
+                  className="w-16 bg-[#131722] text-white border border-[#2a2e39] focus:border-indigo-500 rounded px-1.5 py-0.5 text-xs font-mono outline-none"
+                  title="Saisir un nombre exact de bougies (ex: 350, 750)"
+                />
+                <button
+                  type="submit"
+                  className="px-1.5 py-0.5 bg-indigo-700/60 hover:bg-indigo-600 text-white rounded text-[10px] font-bold transition-colors"
+                  title="Appliquer ce nombre de bougies"
+                >
+                  OK
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Bouton de capture positive */}
+            <button
+              onClick={() => capturerSetupIA('positif')}
+              disabled={capturantIA}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50 whitespace-nowrap"
+              title="Capture le setup actuel (Clean + Annoté + Coordonnées YOLO)"
+            >
+              {capturantIA ? (
+                <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                '📸'
+              )}
+              <span>Capturer Setup (Positif)</span>
+            </button>
+
+            {/* Bouton de capture négative (faux signal) */}
+            <button
+              onClick={() => capturerSetupIA('negatif')}
+              disabled={capturantIA}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 font-semibold rounded-lg shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50 whitespace-nowrap"
+              title="Capture la fenêtre actuelle comme échantillon négatif pour éviter les faux positifs"
+            >
+              <span>🚫</span>
+              <span>Faux Signal (Négatif)</span>
+            </button>
+
+            {/* Bouton pour ouvrir la modale de gestion du Dataset */}
+            <button
+              onClick={() => setModalAIDatasetOuverte(true)}
+              className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 font-semibold rounded-lg flex items-center gap-1.5 transition-all whitespace-nowrap"
+              title="Voir les images collectées, vérifier les labels et exporter le dataset"
+            >
+              <span>📂</span>
+              <span>Dataset ({nbEchantillonsIA})</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════════ */}
       {/* CORPS PRINCIPAL : Toolbar Gauche + Graphique + Panel Droit */}
@@ -1482,6 +1814,12 @@ export function BacktestWorkspace() {
           </div>
         )}
       </div>
+
+      <AIDatasetModal
+        ouvert={modalAIDatasetOuverte}
+        onFermer={() => setModalAIDatasetOuverte(false)}
+        onNombreChange={(nb) => setNbEchantillonsIA(nb)}
+      />
     </div>
   );
 }
