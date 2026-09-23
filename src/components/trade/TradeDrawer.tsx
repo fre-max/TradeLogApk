@@ -177,7 +177,9 @@ export function TradeDrawer({
 
         const realizedDiff = Math.abs((positionActive.prixSortie || 0) - positionActive.prixEntree);
         const realizedRisk = Math.abs(positionActive.prixEntree - positionActive.stopLoss);
-        const rrR = positionActive.estCloturee && realizedRisk > 0 ? (realizedDiff / realizedRisk).toFixed(1) : '';
+        const rrR = positionActive.estCloturee && positionActive.resultat !== 'missed' && realizedRisk > 0
+          ? (realizedDiff / realizedRisk).toFixed(1)
+          : positionActive.resultat === 'missed' ? '0' : '';
 
         return {
           ...prev,

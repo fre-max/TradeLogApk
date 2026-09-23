@@ -841,7 +841,9 @@ export function BacktestWorkspace() {
     const rrP = plannedRisk > 0 ? (plannedDiff / plannedRisk).toFixed(2) : '1.00';
 
     const realizedDiff = Math.abs((position.prixSortie || 0) - position.prixEntree);
-    const rrR = plannedRisk > 0 ? (realizedDiff / plannedRisk).toFixed(2) : '0';
+    const rrR = position.resultat === 'missed'
+      ? '0.00'
+      : plannedRisk > 0 ? (realizedDiff / plannedRisk).toFixed(2) : '0';
 
     const timestampUnix = typeof position.dateEntree === 'number'
       ? position.dateEntree
@@ -885,7 +887,7 @@ export function BacktestWorkspace() {
       entry_tp: position.takeProfit.toFixed(5),
       rr_planned: rrP,
       rr_realized: rrR,
-      pnl: position.pnl !== undefined ? Number(position.pnl.toFixed(2)) : 0,
+      pnl: position.resultat === 'missed' ? 0 : (position.pnl !== undefined ? Number(position.pnl.toFixed(2)) : 0),
       duree_reelle_bougies: position.dureeReelleBougies !== undefined ? String(position.dureeReelleBougies) : '',
       
       // -- Enrichissements intelligents --
@@ -929,13 +931,25 @@ export function BacktestWorkspace() {
     }
   }, [positionActive]);
 
-  // Hook pour observer la clôture d'une position active (Étape 2) - Déclenchement auto désactivé
+  // Hook pour observer la clôture d'une position active (Étape 2) - Toast informatif
   const lastClotureRef = useRef<boolean>(false);
   useEffect(() => {
     if (!positionActive || !positionActive.estCloturee) {
       lastClotureRef.current = false;
+      return;
     }
-  }, [positionActive]);
+
+    if (positionActive.estCloturee && !lastClotureRef.current) {
+      lastClotureRef.current = true;
+      if (positionActive.resultat === 'missed') {
+        addToast("🟡 Position Manquée : Le cours a atteint l'objectif sans déclencher l'ordre d'entrée !", "info");
+      } else if (positionActive.resultat === 'win') {
+        addToast("🎯 Take Profit atteint !", "success");
+      } else if (positionActive.resultat === 'loss') {
+        addToast("❌ Stop Loss touché !", "error");
+      }
+    }
+  }, [positionActive, addToast]);
 
 
   // ─── Raccourcis clavier ─────────────────────────────────────────────────────

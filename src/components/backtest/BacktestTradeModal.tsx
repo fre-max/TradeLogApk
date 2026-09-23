@@ -90,7 +90,9 @@ export function BacktestTradeModal({
   const rrPrevu = plannedRisk > 0 ? (plannedDiff / plannedRisk).toFixed(2) : '1.00';
 
   const realizedDiff = Math.abs((position.prixSortie || 0) - position.prixEntree);
-  const rrRealise = plannedRisk > 0 ? (realizedDiff / plannedRisk).toFixed(2) : '0';
+  const rrRealise = position.resultat === 'missed'
+    ? '0.00'
+    : plannedRisk > 0 ? (realizedDiff / plannedRisk).toFixed(2) : '0';
 
   // Session de trading calculée
   const timestampUnix = typeof position.dateEntree === 'number'
@@ -391,10 +393,10 @@ export function BacktestTradeModal({
         {/* En-tête */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2e39] bg-[#1a1f2c]">
           <div className="flex items-center gap-2">
-            <span className="text-base">{estCloturee ? '🏁' : '📋'}</span>
+            <span className="text-base">{position.resultat === 'missed' ? '🟡' : estCloturee ? '🏁' : '📋'}</span>
             <div>
               <h2 className="text-sm font-bold text-white tracking-tight">
-                {estCloturee ? 'Résolution & Clôture' : 'Planification du Trade'}
+                {position.resultat === 'missed' ? 'Position Manquée (Non Déclenchée)' : estCloturee ? 'Résolution & Clôture' : 'Planification du Trade'}
               </h2>
               <span className="text-[10px] text-gray-400 font-mono">
                 {paire} · {timeframe.toUpperCase()} · {dateFormatee}
@@ -431,12 +433,14 @@ export function BacktestTradeModal({
                 <span
                   className={cn(
                     'text-xs font-bold font-mono px-2 py-0.5 rounded',
-                    (position.pnl || 0) >= 0
-                      ? 'text-emerald-400 bg-emerald-950/40'
-                      : 'text-rose-400 bg-rose-950/40'
+                    position.resultat === 'missed'
+                      ? 'text-amber-400 bg-amber-950/40 border border-amber-500/30'
+                      : (position.pnl || 0) >= 0
+                        ? 'text-emerald-400 bg-emerald-950/40'
+                        : 'text-rose-400 bg-rose-950/40'
                   )}
                 >
-                  {(position.pnl || 0) >= 0 ? '+' : ''}{(position.pnl || 0).toFixed(2)}% P&L
+                  {position.resultat === 'missed' ? '∅ Manqué (0.00% P&L)' : `${(position.pnl || 0) >= 0 ? '+' : ''}${(position.pnl || 0).toFixed(2)}% P&L`}
                 </span>
               ) : (
                 <span className="text-xs font-bold text-indigo-400 font-mono">
@@ -464,7 +468,7 @@ export function BacktestTradeModal({
             {estCloturee && (
               <div className="flex items-center justify-between pt-1 border-t border-white/5 text-xs text-gray-400">
                 <span>R:R Réalisé : <strong className="text-white font-mono">{rrRealise}R</strong></span>
-                <span>Résultat : <strong className="text-white uppercase">{position.resultat}</strong></span>
+                <span>Résultat : <strong className={cn("uppercase", position.resultat === 'missed' ? 'text-amber-400 font-bold' : 'text-white')}>{position.resultat === 'missed' ? '🟡 Missed (Non déclenché)' : position.resultat}</strong></span>
               </div>
             )}
           </div>

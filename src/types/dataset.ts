@@ -31,7 +31,7 @@ export interface EchantillonIA {
   stopLoss?: number;
   takeProfit?: number;
   ratioRR?: number;
-  resultatTrade?: 'win' | 'loss' | 'breakeven' | 'inconnu';
+  resultatTrade?: 'win' | 'loss' | 'breakeven' | 'missed' | 'inconnu';
   sessionTrading?: 'Asian' | 'London' | 'New York';
   scoreMacro?: number;
   

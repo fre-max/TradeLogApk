@@ -679,8 +679,8 @@ export const BacktestChart = React.forwardRef<
       dessinerPositionCanvas(ctx, chart, series, pos, selectedId === pos.id, currentData);
     }
 
-    // 2️⃣ Ombrage dynamique P&L de la position active du store
-    if (currentPos && currentIndex < currentData.length) {
+    // 2️⃣ Ombrage dynamique P&L de la position active du store (uniquement si déclenchée !)
+    if (currentPos && currentPos.estDeclenchee && currentIndex < currentData.length) {
       const bougieActuelle = currentData[currentIndex];
       if (bougieActuelle) {
         const xEntry = chart.timeScale().timeToCoordinate(currentPos.dateEntree as Time);
@@ -883,10 +883,25 @@ export const BacktestChart = React.forwardRef<
     const rr = risk > 0 ? (reward / risk).toFixed(1) : '—';
     ctx.fillText(`TP: ${pos.prixTP.toFixed(4)} (+${rewardPct}%) | R:R 1:${rr}`, xLabel, yTP);
 
-    // Tag LONG/SHORT
-    ctx.fillStyle = pos.direction === 'long' ? '#26a69a' : '#ef5350';
+    // Tag LONG/SHORT et état de déclenchement
+    const posActive = stateRef.current.positionActive;
+    const estMissed = posActive?.resultat === 'missed';
+    const estEnAttente = posActive && !posActive.estDeclenchee && !posActive.estCloturee;
+
+    let texteTag = pos.direction === 'long' ? '▲ LONG' : '▼ SHORT';
+    let couleurTag = pos.direction === 'long' ? '#26a69a' : '#ef5350';
+
+    if (estMissed) {
+      texteTag += ' ∅ POSITION MANQUÉE (MISSED)';
+      couleurTag = '#f59e0b';
+    } else if (estEnAttente) {
+      texteTag += ' (⏳ EN ATTENTE)';
+      couleurTag = '#f59e0b';
+    }
+
+    ctx.fillStyle = couleurTag;
     ctx.font = 'bold 11px Inter, system-ui, sans-serif';
-    ctx.fillText(pos.direction === 'long' ? '▲ LONG' : '▼ SHORT', xStart + 6, yEntry - 14);
+    ctx.fillText(texteTag, xStart + 6, yEntry - 14);
 
     // Poignées de sélection (les 6 ancres interactives)
     if (estSelectionnee) {

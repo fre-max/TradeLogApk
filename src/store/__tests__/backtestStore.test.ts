@@ -117,4 +117,67 @@ describe('useBacktestStore - Moteur de backtest et simulation de trades', () => 
     expect(historique).toHaveLength(1);
     expect(historique[0].direction).toBe('short');
   });
+
+  // 6️⃣ Ordre en attente (Limit) MANQUÉ quand le prix touche le TP sans toucher l'entrée
+  it('identifie un trade comme manqué (missed) si le Take Profit est atteint sans déclencher l ordre d entrée', () => {
+    // Bougies où le prix monte directement sans jamais redescendre à 1.0810
+    const bougiesLimit: Bougie[] = [
+      { time: 1700000000, open: 1.0830, high: 1.0860, low: 1.0830, close: 1.0850 }, // Bougie 0 : Cours actuel à 1.0850
+      { time: 1700003600, open: 1.0850, high: 1.0950, low: 1.0840, close: 1.0940 }, // Bougie 1 : Monte au TP (1.0920), Low à 1.0840 (ne touche JAMAIS 1.0810)
+    ];
+
+    useBacktestStore.getState().chargerDonnees(bougiesLimit, 'EURUSD');
+    useBacktestStore.setState({ indexCourant: 0 });
+
+    // On place un Buy Limit plus bas à 1.0810 (alors que le close actuel est 1.0850)
+    // SL = 1.0780, TP = 1.0920
+    useBacktestStore.getState().ouvrirPosition('long', 1.0810, 1.0780, 1.0920);
+
+    const posInitiale = useBacktestStore.getState().positionActive;
+    expect(posInitiale).not.toBeNull();
+    // L'ordre doit être EN ATTENTE et NON DÉCLENCHÉ au départ
+    expect(posInitiale?.estDeclenchee).toBe(false);
+
+    // On fait avancer le replay d'une bougie
+    useBacktestStore.getState().avancerBougie();
+
+    const posApres = useBacktestStore.getState().positionActive;
+    // Le prix est monté à 1.0950 (au-dessus du TP 1.0920) sans jamais toucher l'entrée 1.0810
+    // L'ordre DOIT être comptabilisé comme MANQUÉ ('missed'), avec un PnL de 0% (et non un Win !)
+    expect(posApres?.estCloturee).toBe(true);
+    expect(posApres?.resultat).toBe('missed');
+    expect(posApres?.pnl).toBe(0);
+    expect(posApres?.estDeclenchee).toBe(false);
+  });
+
+  // 7️⃣ Ordre en attente (Limit) correctement déclenché PUIS validé en gain (Win)
+  it('déclenche d abord l ordre limite quand le prix touche l entrée, puis valide le TP', () => {
+    const bougiesDeclenchement: Bougie[] = [
+      { time: 1700000000, open: 1.0830, high: 1.0860, low: 1.0830, close: 1.0850 }, // Bougie 0 : Cours actuel à 1.0850
+      { time: 1700003600, open: 1.0850, high: 1.0860, low: 1.0805, close: 1.0820 }, // Bougie 1 : Descend toucher l'entrée à 1.0810 (Low: 1.0805)
+      { time: 1700007200, open: 1.0820, high: 1.0930, low: 1.0820, close: 1.0925 }, // Bougie 2 : Monte au TP (1.0920)
+    ];
+
+    useBacktestStore.getState().chargerDonnees(bougiesDeclenchement, 'EURUSD');
+    useBacktestStore.setState({ indexCourant: 0 });
+
+    // Placement de l'ordre limite LONG à 1.0810
+    useBacktestStore.getState().ouvrirPosition('long', 1.0810, 1.0780, 1.0920);
+    expect(useBacktestStore.getState().positionActive?.estDeclenchee).toBe(false);
+
+    // Étape 1 : Avancer vers bougie 1 -> l'ordre est touché et devient déclenché
+    useBacktestStore.getState().avancerBougie();
+    const posDeclenchee = useBacktestStore.getState().positionActive;
+    expect(posDeclenchee?.estDeclenchee).toBe(true);
+    expect(posDeclenchee?.estCloturee).toBeFalsy();
+    expect(posDeclenchee?.resultat).toBeUndefined();
+
+    // Étape 2 : Avancer vers bougie 2 -> le TP est touché, trade clôturé en WIN
+    useBacktestStore.getState().avancerBougie();
+    const posGagnee = useBacktestStore.getState().positionActive;
+    expect(posGagnee?.estCloturee).toBe(true);
+    expect(posGagnee?.resultat).toBe('win');
+    expect(posGagnee?.pnl).toBeGreaterThan(0);
+  });
 });
+

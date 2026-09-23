@@ -23,8 +23,11 @@ export interface PositionSimulee {
   dateSortie?: string | number;
   indexSortie?: number;          // Index de la bougie de sortie
   dureeReelleBougies?: number;   // Calculé automatiquement à la clôture
-  resultat?: 'win' | 'loss' | 'breakeven';
+  resultat?: 'win' | 'loss' | 'breakeven' | 'missed';
   pnl?: number;
+  estDeclenchee?: boolean;       // Indique si l'ordre a été déclenché (au marché ou ordre limite touché)
+  indexDeclenchement?: number;   // Index de la bougie où l'ordre a été déclenché
+  dateDeclenchement?: string | number;
   tradeIdSupabase?: string;       // L'ID du trade associé dans Supabase (étapes 1 et 2)
   stepIdsSupabase?: {             // Les IDs des étapes associées dans Supabase
     biais: string;
@@ -506,52 +509,136 @@ export const useBacktestStore = create<BacktestState>()(
     let positionMiseAJour: PositionSimulee | null = positionActive ? { ...positionActive } : null;
     let historiqueMisAJour = [...historiqueSimule];
 
-    // Si une position est ouverte, on vérifie si la bougie actuelle touche le SL ou le TP
+    // Si une position est ouverte, on vérifie si la bougie actuelle touche l'entrée, le SL ou le TP
     if (positionMiseAJour && !positionMiseAJour.prixSortie) {
-      const { direction, stopLoss, takeProfit, prixEntree } = positionMiseAJour;
-      const { high, low } = bougie;
+      const { direction, stopLoss, takeProfit, prixEntree, estDeclenchee } = positionMiseAJour;
+      const { high, low, open } = bougie;
 
-      if (direction === 'long') {
-        // Scénario LONG :
-        // 1. Touche le Stop Loss
-        if (low <= stopLoss) {
-          console.log(`❌ [Backtest Store] Stop Loss touché à ${stopLoss} !`);
-          positionMiseAJour.prixSortie = stopLoss;
-          positionMiseAJour.dateSortie = bougie.time;
-          positionMiseAJour.resultat = 'loss';
-          positionMiseAJour.pnl = ((stopLoss - prixEntree) / prixEntree) * 100;
-        }
-        // 2. Touche le Take Profit (si le SL n'a pas été touché d'abord)
-        else if (high >= takeProfit) {
-          console.log(`🎯 [Backtest Store] Take Profit touché à ${takeProfit} !`);
-          positionMiseAJour.prixSortie = takeProfit;
-          positionMiseAJour.dateSortie = bougie.time;
-          positionMiseAJour.resultat = 'win';
-          positionMiseAJour.pnl = ((takeProfit - prixEntree) / prixEntree) * 100;
+      if (!estDeclenchee) {
+        // ── CAS 1 : L'ORDRE EST EN ATTENTE (PENDING / ORDRE LIMITE OU STOP) ──
+        // On vérifie si cette nouvelle bougie déclenche l'ordre en touchant ou traversant le prix d'entrée
+        const toucheEntree = (low <= prixEntree && high >= prixEntree)
+          || (direction === 'long' && open <= prixEntree)
+          || (direction === 'short' && open >= prixEntree);
+
+        if (toucheEntree) {
+          // L'ordre est déclenché par cette bougie !
+          positionMiseAJour.estDeclenchee = true;
+          positionMiseAJour.indexDeclenchement = prochainIndex;
+          positionMiseAJour.dateDeclenchement = bougie.time;
+          console.log(`🔔 [Backtest Store] Ordre ${direction.toUpperCase()} déclenché à ${prixEntree} sur la bougie ${prochainIndex} !`);
+
+          // Vérification si cette même bougie touche aussi le SL ou le TP APRÈS déclenchement
+          if (direction === 'long') {
+            if (low <= stopLoss) {
+              console.log(`❌ [Backtest Store] Stop Loss touché à ${stopLoss} !`);
+              positionMiseAJour.prixSortie = stopLoss;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'loss';
+              positionMiseAJour.pnl = ((stopLoss - prixEntree) / prixEntree) * 100;
+            } else if (high >= takeProfit) {
+              console.log(`🎯 [Backtest Store] Take Profit touché à ${takeProfit} !`);
+              positionMiseAJour.prixSortie = takeProfit;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'win';
+              positionMiseAJour.pnl = ((takeProfit - prixEntree) / prixEntree) * 100;
+            }
+          } else {
+            // short
+            if (high >= stopLoss) {
+              console.log(`❌ [Backtest Store] Stop Loss touché à ${stopLoss} !`);
+              positionMiseAJour.prixSortie = stopLoss;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'loss';
+              positionMiseAJour.pnl = ((prixEntree - stopLoss) / prixEntree) * 100;
+            } else if (low <= takeProfit) {
+              console.log(`🎯 [Backtest Store] Take Profit touché à ${takeProfit} !`);
+              positionMiseAJour.prixSortie = takeProfit;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'win';
+              positionMiseAJour.pnl = ((prixEntree - takeProfit) / prixEntree) * 100;
+            }
+          }
+        } else {
+          // L'ordre n'a PAS été touché par cette bougie.
+          // Vérification : le prix est-il allé au Take Profit (ou invalidé au SL) sans jamais déclencher l'ordre ?
+          if (direction === 'long') {
+            if (high >= takeProfit) {
+              // Take Profit atteint sans déclenchement -> POSITION MANQUÉE (Missed Trade)
+              console.log(`🟡 [Backtest Store] Take Profit atteint à ${takeProfit} sans que l'ordre LONG ne soit déclenché (${prixEntree}) -> Position Manquée !`);
+              positionMiseAJour.prixSortie = takeProfit;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'missed';
+              positionMiseAJour.pnl = 0; // Pas d'impact financier sur une position manquée
+            } else if (low <= stopLoss) {
+              // Stop Loss / Invalidation atteinte sans déclenchement
+              console.log(`🟡 [Backtest Store] Invalidation atteinte sous ${stopLoss} sans que l'ordre ne soit déclenché -> Position Manquée !`);
+              positionMiseAJour.prixSortie = stopLoss;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'missed';
+              positionMiseAJour.pnl = 0;
+            }
+          } else {
+            // short
+            if (low <= takeProfit) {
+              // Take Profit atteint sans déclenchement -> POSITION MANQUÉE (Missed Trade)
+              console.log(`🟡 [Backtest Store] Take Profit atteint à ${takeProfit} sans que l'ordre SHORT ne soit déclenché (${prixEntree}) -> Position Manquée !`);
+              positionMiseAJour.prixSortie = takeProfit;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'missed';
+              positionMiseAJour.pnl = 0;
+            } else if (high >= stopLoss) {
+              console.log(`🟡 [Backtest Store] Invalidation atteinte au-dessus de ${stopLoss} sans que l'ordre ne soit déclenché -> Position Manquée !`);
+              positionMiseAJour.prixSortie = stopLoss;
+              positionMiseAJour.dateSortie = bougie.time;
+              positionMiseAJour.resultat = 'missed';
+              positionMiseAJour.pnl = 0;
+            }
+          }
         }
       } else {
-        // Scénario SHORT :
-        // 1. Touche le Stop Loss (hausse du prix)
-        if (high >= stopLoss) {
-          console.log(`❌ [Backtest Store] Stop Loss touché à ${stopLoss} !`);
-          positionMiseAJour.prixSortie = stopLoss;
-          positionMiseAJour.dateSortie = bougie.time;
-          positionMiseAJour.resultat = 'loss';
-          positionMiseAJour.pnl = ((prixEntree - stopLoss) / prixEntree) * 100;
-        }
-        // 2. Touche le Take Profit (baisse du prix)
-        else if (low <= takeProfit) {
-          console.log(`🎯 [Backtest Store] Take Profit touché à ${takeProfit} !`);
-          positionMiseAJour.prixSortie = takeProfit;
-          positionMiseAJour.dateSortie = bougie.time;
-          positionMiseAJour.resultat = 'win';
-          positionMiseAJour.pnl = ((prixEntree - takeProfit) / prixEntree) * 100;
+        // ── CAS 2 : L'ORDRE ÉTAIT DÉJÀ DÉCLENCHÉ ──
+        if (direction === 'long') {
+          // 1. Touche le Stop Loss
+          if (low <= stopLoss) {
+            console.log(`❌ [Backtest Store] Stop Loss touché à ${stopLoss} !`);
+            positionMiseAJour.prixSortie = stopLoss;
+            positionMiseAJour.dateSortie = bougie.time;
+            positionMiseAJour.resultat = 'loss';
+            positionMiseAJour.pnl = ((stopLoss - prixEntree) / prixEntree) * 100;
+          }
+          // 2. Touche le Take Profit (si le SL n'a pas été touché d'abord)
+          else if (high >= takeProfit) {
+            console.log(`🎯 [Backtest Store] Take Profit touché à ${takeProfit} !`);
+            positionMiseAJour.prixSortie = takeProfit;
+            positionMiseAJour.dateSortie = bougie.time;
+            positionMiseAJour.resultat = 'win';
+            positionMiseAJour.pnl = ((takeProfit - prixEntree) / prixEntree) * 100;
+          }
+        } else {
+          // Scénario SHORT :
+          // 1. Touche le Stop Loss (hausse du prix)
+          if (high >= stopLoss) {
+            console.log(`❌ [Backtest Store] Stop Loss touché à ${stopLoss} !`);
+            positionMiseAJour.prixSortie = stopLoss;
+            positionMiseAJour.dateSortie = bougie.time;
+            positionMiseAJour.resultat = 'loss';
+            positionMiseAJour.pnl = ((prixEntree - stopLoss) / prixEntree) * 100;
+          }
+          // 2. Touche le Take Profit (baisse du prix)
+          else if (low <= takeProfit) {
+            console.log(`🎯 [Backtest Store] Take Profit touché à ${takeProfit} !`);
+            positionMiseAJour.prixSortie = takeProfit;
+            positionMiseAJour.dateSortie = bougie.time;
+            positionMiseAJour.resultat = 'win';
+            positionMiseAJour.pnl = ((prixEntree - takeProfit) / prixEntree) * 100;
+          }
         }
       }
 
       // Si le trade s'est fermé sur cette bougie, on calcule la durée réelle et on le passe en mode clôturé
-      if (positionMiseAJour.prixSortie) {
-        if (Math.abs(positionMiseAJour.pnl || 0) < 0.05) {
+      if (positionMiseAJour.prixSortie !== undefined) {
+        if (positionMiseAJour.resultat !== 'missed' && Math.abs(positionMiseAJour.pnl || 0) < 0.05) {
           positionMiseAJour.resultat = 'breakeven';
         }
         // Calcul automatique de la durée réelle en bougies
@@ -561,7 +648,7 @@ export const useBacktestStore = create<BacktestState>()(
         
         // On stoppe le Replay automatiquement pour donner le temps de valider la fermeture
         set({ estEnLecture: false });
-        console.log("⏱️ [Backtest Store] Replay mis en pause automatique car la position active a été touchée.");
+        console.log(`⏱️ [Backtest Store] Replay mis en pause automatique car la position active a été fermée (${positionMiseAJour.resultat}).`);
       }
     }
 
@@ -591,6 +678,14 @@ export const useBacktestStore = create<BacktestState>()(
       positionMiseAJour.pnl = undefined;
       positionMiseAJour.estCloturee = false;
       console.log("🔓 [Backtest Store] Réouverture de la position active (retour dans le passé).");
+    }
+
+    // Si l'ordre avait été déclenché sur une bougie postérieure, il redevient en attente
+    if (positionMiseAJour && positionMiseAJour.indexDeclenchement !== undefined && positionMiseAJour.indexDeclenchement > precedentIndex) {
+      positionMiseAJour.estDeclenchee = false;
+      positionMiseAJour.indexDeclenchement = undefined;
+      positionMiseAJour.dateDeclenchement = undefined;
+      console.log("⏳ [Backtest Store] L'ordre redevient en attente (retour arrière).");
     }
 
     set({
@@ -632,6 +727,13 @@ export const useBacktestStore = create<BacktestState>()(
     }
 
     const bougieActuelle = donneesCompletes[indexCourant];
+    if (!bougieActuelle) return;
+
+    // Détermine si l'ordre est exécuté immédiatement (au marché) ou placé en attente (ordre limite/stop)
+    // Tolérance d'entrée au marché : si l'écart relatif est inférieur à 0.01% (ou 0.0001)
+    const tolerance = Math.max(0.0001, bougieActuelle.close * 0.0001);
+    const estAuMarche = Math.abs(prixEntree - bougieActuelle.close) <= tolerance;
+
     const nouvellePosition: PositionSimulee = {
       direction,
       prixEntree,
@@ -642,6 +744,10 @@ export const useBacktestStore = create<BacktestState>()(
       dureeEstimeeHeures,
       dureeEstimeeBougies,
       dureeEstimeeLargeur: dureeEstimeeLargeur || 30, // Largeur par défaut de 30 bougies
+      // Statut de déclenchement : actif immédiatement si au marché, sinon en attente d'être touché
+      estDeclenchee: estAuMarche,
+      indexDeclenchement: estAuMarche ? indexCourant : undefined,
+      dateDeclenchement: estAuMarche ? bougieActuelle.time : undefined,
       // Enregistre uniquement si l'utilisateur a explicitement activé la collecte pour cet indicateur
       protectedSwingsSnapshot: optionsCollecte.protectedSwings ? protectedSwingsSnapshot : undefined,
       unmitigatedProfileSnapshot: optionsCollecte.unmitigatedProfile ? unmitigatedProfileSnapshot : undefined,
@@ -649,7 +755,12 @@ export const useBacktestStore = create<BacktestState>()(
       smcSnapshot: optionsCollecte.luxAlgoSMC ? smcSnapshot : undefined,
     };
 
-    console.log(`📈 [Backtest Store] Ouverture d'une position ${direction} à ${prixEntree}`);
+    if (estAuMarche) {
+      console.log(`📈 [Backtest Store] Ouverture immédiate d'une position ${direction} au marché à ${prixEntree}`);
+    } else {
+      console.log(`⏳ [Backtest Store] Placement d'un ordre ${direction} en attente (Limit/Stop) à ${prixEntree} (Prix marché: ${bougieActuelle.close})`);
+    }
+
     set({ positionActive: nouvellePosition });
   },
 
@@ -672,9 +783,21 @@ export const useBacktestStore = create<BacktestState>()(
     const bougieActuelle = donneesCompletes[indexCourant];
     const prixSortie = bougieActuelle.close;
 
-    const pnlCalculé = positionActive.direction === 'long' 
-      ? ((prixSortie - positionActive.prixEntree) / positionActive.prixEntree) * 100
-      : ((positionActive.prixEntree - prixSortie) / positionActive.prixEntree) * 100;
+    // Si la position n'était pas déclenchée, fermer manuellement revient à annuler l'ordre non déclenché (Missed)
+    const etaitDeclenchee = positionActive.estDeclenchee ?? true;
+    const pnlCalculé = etaitDeclenchee
+      ? (positionActive.direction === 'long'
+        ? ((prixSortie - positionActive.prixEntree) / positionActive.prixEntree) * 100
+        : ((positionActive.prixEntree - prixSortie) / positionActive.prixEntree) * 100)
+      : 0;
+
+    const resultatCalcule = !etaitDeclenchee
+      ? 'missed'
+      : pnlCalculé > 0.05
+        ? 'win'
+        : pnlCalculé < -0.05
+          ? 'loss'
+          : 'breakeven';
 
     const positionCloturee: PositionSimulee = {
       ...positionActive,
@@ -683,15 +806,11 @@ export const useBacktestStore = create<BacktestState>()(
       indexSortie: indexCourant,
       dureeReelleBougies: indexCourant - positionActive.indexEntree,
       pnl: pnlCalculé,
-      resultat: pnlCalculé > 0.05 
-        ? 'win' 
-        : pnlCalculé < -0.05 
-          ? 'loss' 
-          : 'breakeven',
+      resultat: resultatCalcule,
       estCloturee: true,
     };
 
-    console.log(`🔒 [Backtest Store] Fermeture manuelle de la position à ${prixSortie}`);
+    console.log(`🔒 [Backtest Store] Fermeture manuelle de la position à ${prixSortie} (Résultat: ${resultatCalcule})`);
     set({
       positionActive: positionCloturee,
     });
