@@ -19,11 +19,186 @@ async function attendreHydratationLocale(): Promise<void> {
 }
 
 /**
+ * Envoie un trade complet (table trades, steps, images, reasons) vers Supabase.
+ * Force le user_id de la session courante pour satisfaire RLS et nettoie les clés étrangères.
+ * 
+ * Exemple :
+ * const succes = await televerserTradeVersSupabase(trade, session.user.id);
+ */
+export async function televerserTradeVersSupabase(
+  trade: TradeWithSteps | Record<string, any>,
+  userId: string
+): Promise<boolean> {
+  try {
+    const tradeDataToInsert = { ...trade };
+
+    // 1️⃣ Séparation des colonnes pures de la table "trades"
+    const {
+      steps: rawSteps,
+      images: rawImages,
+      reasons: rawReasons,
+      ...champsTrades
+    } = tradeDataToInsert;
+
+    const tradeId = trade.id || crypto.randomUUID();
+
+    const pureTradeData: Record<string, any> = {
+      ...champsTrades,
+      id: tradeId,
+      user_id: userId, // FORCE le user_id de la session active pour respecter la politique RLS Supabase
+    };
+
+    // Nettoyage strategy_id : UUID valide ou NULL
+    if (!pureTradeData.strategy_id || typeof pureTradeData.strategy_id !== 'string' || pureTradeData.strategy_id.trim() === '') {
+      pureTradeData.strategy_id = null;
+    }
+
+    // Nettoyage des heures pour éviter les erreurs de type 'time' dans PostgreSQL
+    if (pureTradeData.entry_time && (typeof pureTradeData.entry_time !== 'string' || pureTradeData.entry_time.trim() === '')) {
+      pureTradeData.entry_time = null;
+    }
+    if (pureTradeData.exit_time && (typeof pureTradeData.exit_time !== 'string' || pureTradeData.exit_time.trim() === '')) {
+      pureTradeData.exit_time = null;
+    }
+
+    // Valeurs par défaut indispensables
+    if (!pureTradeData.pair) pureTradeData.pair = 'EURUSD';
+    if (!pureTradeData.direction) pureTradeData.direction = 'long';
+    if (!pureTradeData.session) pureTradeData.session = 'London';
+    if (!pureTradeData.date_backtested) {
+      pureTradeData.date_backtested = new Date().toISOString().split('T')[0];
+    }
+    if (!pureTradeData.status) pureTradeData.status = 'complete';
+    if (!pureTradeData.journal_type) pureTradeData.journal_type = 'global';
+
+    // 2️⃣ Téléversement des images en Base64 vers Supabase Storage si nécessaire
+    let updatedImages = rawImages || [];
+    if (updatedImages.length > 0) {
+      try {
+        const { base64ToBlob, uploadImage } = await import('@/lib/storage');
+        updatedImages = await Promise.all(
+          updatedImages.map(async (img: any) => {
+            if (img.url?.startsWith('data:image/')) {
+              try {
+                const blob = base64ToBlob(img.url);
+                const cleanFileName = `offline_sync_${img.phase || 'avant'}_${img.context || 'intermediaire'}_${Date.now()}.jpg`;
+                const path = `trade_images/${userId}/${tradeId}/${cleanFileName}`;
+                const publicUrl = await uploadImage(blob as File, path);
+                return { ...img, url: publicUrl, storage_path: path };
+              } catch (singleImgErr) {
+                console.warn(`⚠️ [SyncManager] Échec upload storage pour une image du trade ${tradeId}:`, singleImgErr);
+                return img;
+              }
+            }
+            return img;
+          })
+        );
+      } catch (imgErr) {
+        console.warn(`⚠️ [SyncManager] Erreur globale upload images pour ${tradeId}:`, imgErr);
+      }
+    }
+
+    // 3️⃣ Upsert du trade principal dans Supabase
+    let { error: tradeError } = await supabase.from('trades').upsert(pureTradeData);
+
+    // Si échec à cause d'une clé étrangère sur strategy_id, on réessaie sans la stratégie
+    if (tradeError && tradeError.message?.includes('strategy_id')) {
+      console.warn(`⚠️ [SyncManager] strategy_id non trouvé sur Supabase pour ${tradeId}, réessai avec null...`);
+      pureTradeData.strategy_id = null;
+      const retry = await supabase.from('trades').upsert(pureTradeData);
+      tradeError = retry.error;
+    }
+
+    if (tradeError) {
+      console.error(`❌ [SyncManager] Échec upsert trade ${tradeId}:`, tradeError.message || tradeError);
+      return false;
+    }
+
+    // 4️⃣ Upsert des étapes (steps)
+    if (rawSteps && rawSteps.length > 0) {
+      const stepsPropres = rawSteps.map((s: any, index: number) => ({
+        id: s.id || crypto.randomUUID(),
+        trade_id: tradeId,
+        order: s.order ?? index,
+        type: s.type || 'entry',
+        title: s.title || 'Étape',
+        timeframe: s.timeframe || null,
+        notes: s.notes || null,
+        fields: s.fields || {},
+      }));
+
+      const { error: stepsError } = await supabase.from('steps').upsert(stepsPropres);
+      if (stepsError) {
+        console.warn(`⚠️ [SyncManager] Erreur upsert steps pour ${tradeId}:`, stepsError.message || stepsError);
+      }
+    }
+
+    // 5️⃣ Insertion des images dans trade_images avec DÉDUPLICATION par (phase, context)
+    if (updatedImages && updatedImages.length > 0) {
+      try {
+        await supabase.from('trade_images').delete().eq('trade_id', tradeId);
+
+        // Déduplication pour respecter la contrainte UNIQUE(trade_id, phase, context)
+        const carteImages = new Map<string, any>();
+        for (const img of updatedImages) {
+          const cle = `${img.phase || 'avant'}_${img.context || 'intermediaire'}`;
+          carteImages.set(cle, img);
+        }
+
+        const insertsImages = Array.from(carteImages.values()).map((img: any) => ({
+          trade_id: tradeId,
+          phase: img.phase || 'avant',
+          context: img.context || 'intermediaire',
+          url: img.url || '',
+          source: img.source || 'upload',
+          storage_path: img.storage_path || null,
+        })).filter((img) => img.url && img.url.length > 0 && !img.url.startsWith('data:'));
+
+        if (insertsImages.length > 0) {
+          const { error: imagesError } = await supabase.from('trade_images').insert(insertsImages);
+          if (imagesError) {
+            console.warn(`⚠️ [SyncManager] Erreur insertion trade_images pour ${tradeId}:`, imagesError.message || imagesError);
+          }
+        }
+      } catch (errImages) {
+        console.warn(`⚠️ [SyncManager] Exception traitement images pour ${tradeId}:`, errImages);
+      }
+    }
+
+    // 6️⃣ Insertion des raisons (trade_reasons)
+    if (rawReasons && rawReasons.length > 0) {
+      try {
+        await supabase.from('trade_reasons').delete().eq('trade_id', tradeId);
+        const insertsReasons = rawReasons.map((r: any) => ({
+          trade_id: tradeId,
+          reason_id: r.reason_id,
+          variant_name: r.variant_name || 'Standard',
+        }));
+        await supabase.from('trade_reasons').insert(insertsReasons);
+      } catch (reasonsErr) {
+        console.warn(`⚠️ [SyncManager] Erreur trade_reasons pour ${tradeId}:`, reasonsErr);
+      }
+    }
+
+    // Met à jour la base locale avec le user_id de la session
+    useLocalDatabase.getState().updateTrade(tradeId, { user_id: userId });
+
+    return true;
+  } catch (globalErr) {
+    console.error(`❌ [SyncManager] Exception inattendue lors de televerserTradeVersSupabase:`, globalErr);
+    return false;
+  }
+}
+
+/**
  * Hook de synchronisation hors-ligne / Cloud (Offline-First).
  * 
  * Responsabilités claires :
  * 1. synchroniserFileDAttente : envoie les modifications locales (INSERT, UPDATE, DELETE) vers Supabase.
- * 2. syncAll : envoie la file d'abord, puis télécharge les données Cloud sans jamais écraser les trades locaux.
+ * 2. syncAll : synchronisation bidirectionnelle complète :
+ *    - Envoie les modifications de la file.
+ *    - Détecte et envoie tous les trades locaux/tablette absents de Supabase.
+ *    - Télécharge et fusionne les données du Cloud sans jamais écraser les trades locaux.
  * 3. Surveillance du réseau (événement 'online') et timer régulier (toutes les 30s).
  */
 export function useOfflineSyncManager() {
@@ -75,121 +250,29 @@ export function useOfflineSyncManager() {
           }
 
           // ─── CAS B : INSERTION / MODIFICATION ──────────────
-          const tradeDataToInsert = { ...item.tradeData };
+          const tradeDataToInsert = { ...item.tradeData, id: item.tradeId };
+          if (item.steps) tradeDataToInsert.steps = item.steps;
+          if (item.images) tradeDataToInsert.images = item.images;
+          if (item.reasons) tradeDataToInsert.reasons = item.reasons;
 
-          // 1. Extraire uniquement les colonnes pures de la table "trades"
-          // Retire les champs imbriqués (steps, images, reasons) pour ne pas déclencher d'erreur PostgREST
-          const {
-            steps: _steps,
-            images: _images,
-            reasons: _reasons,
-            ...champsTrades
-          } = tradeDataToInsert;
-
-          const pureTradeData: Record<string, any> = {
-            ...champsTrades,
-            id: item.tradeId, // Toujours forcer l'ID pour que l'upsert Supabase modifie la ligne existante au lieu d'en créer une nouvelle
-          };
-
-          // Si le trade a été créé hors-ligne avec 'local-user', on lui assigne le vrai UUID
-          if (pureTradeData.user_id === 'local-user' || !pureTradeData.user_id) {
-            pureTradeData.user_id = sessionData.session.user.id;
-            // Met également à jour la base locale
-            useLocalDatabase.getState().updateTrade(item.tradeId, { user_id: sessionData.session.user.id });
-          }
-
-          // Nettoyage de strategy_id : PostgreSQL exige un UUID valide ou NULL (pas de chaîne vide "")
-          if (!pureTradeData.strategy_id || typeof pureTradeData.strategy_id !== 'string' || pureTradeData.strategy_id.trim() === '') {
-            pureTradeData.strategy_id = null;
-          }
-
-          // 2. Upload des images locales (Base64) vers Supabase Storage
-          let updatedImages = item.images || [];
-          if (updatedImages.length > 0) {
-            try {
-              const { base64ToBlob, uploadImage } = await import('@/lib/storage');
-              updatedImages = await Promise.all(
-                updatedImages.map(async (img: any) => {
-                  if (img.url?.startsWith('data:image/')) {
-                    console.log(`[SyncManager] Upload de l'image locale pour phase: ${img.phase}`);
-                    const blob = base64ToBlob(img.url);
-                    const cleanFileName = `offline_sync_${img.phase}_${img.context}_${Date.now()}.jpg`;
-                    const path = `trade_images/${sessionData.session.user.id}/${item.tradeId}/${cleanFileName}`;
-                    const publicUrl = await uploadImage(blob as File, path);
-                    return { ...img, url: publicUrl, storage_path: path };
-                  }
-                  return img;
-                })
-              );
-            } catch (imgErr) {
-              console.warn(`⚠️ [SyncManager] Erreur upload images pour ${item.tradeId}, poursuite du trade:`, imgErr);
-            }
-          }
-
-          // 3. Upsert du trade principal dans Supabase
-          const { error: tradeError } = await supabase.from('trades').upsert(pureTradeData);
-          if (tradeError) throw tradeError;
-
-          // 4. Traitement des étapes
-          if (item.steps && item.steps.length > 0) {
-            const stepsPropres = item.steps.map((s: any) => ({
-              id: s.id || crypto.randomUUID(),
-              trade_id: item.tradeId,
-              order: s.order ?? 0,
-              type: s.type,
-              title: s.title,
-              timeframe: s.timeframe || null,
-              notes: s.notes || null,
-              fields: s.fields || {},
-            }));
-            const { error: stepsError } = await supabase.from('steps').upsert(stepsPropres);
-            if (stepsError) throw stepsError;
-          }
-
-          // 5. Traitement des raisons (trade_reasons)
-          if (item.reasons) {
-            await supabase.from('trade_reasons').delete().eq('trade_id', item.tradeId);
-            if (item.reasons.length > 0) {
-              const inserts = item.reasons.map((r: any) => ({
-                trade_id: item.tradeId,
-                reason_id: r.reason_id,
-                variant_name: r.variant_name || 'Standard',
-              }));
-              const { error: reasonsError } = await supabase.from('trade_reasons').insert(inserts);
-              if (reasonsError) throw reasonsError;
-            }
-          }
-
-          // 6. Traitement des images dans la table trade_images
-          if (updatedImages.length > 0 || (item.images && item.images.length === 0)) {
-            await supabase.from('trade_images').delete().eq('trade_id', item.tradeId);
-            if (updatedImages.length > 0) {
-              const inserts = updatedImages.map((img: any) => ({
-                trade_id: item.tradeId,
-                phase: img.phase,
-                context: img.context,
-                url: img.url,
-                source: img.source || 'upload',
-                storage_path: img.storage_path || null,
-              }));
-              const { error: imagesError } = await supabase.from('trade_images').insert(inserts);
-              if (imagesError) throw imagesError;
-            }
+          const succes = await televerserTradeVersSupabase(tradeDataToInsert, sessionData.session.user.id);
+          if (!succes) {
+            throw new Error(`Échec du téléversement Supabase pour le trade ${item.tradeId}`);
           }
 
           console.log(`✅ [SyncManager] Action ${item.action} réussie pour le trade ${item.tradeId}`);
           retirerDeLaFile(item.id);
 
-          // 7. Déclenchement de l'IA (detect-news) en arrière-plan (sur INSERT)
-          if (item.action === 'INSERT' && pureTradeData.date_backtested && pureTradeData.entry_time) {
+          // Déclenchement de l'IA (detect-news) en arrière-plan (sur INSERT)
+          if (item.action === 'INSERT' && tradeDataToInsert.date_backtested && tradeDataToInsert.entry_time) {
             const token = sessionData?.session?.access_token;
             supabase.functions.invoke('detect-news', {
               body: {
                 trade_id: item.tradeId,
-                pair: pureTradeData.pair,
-                date: pureTradeData.date_backtested,
-                entry_time: pureTradeData.entry_time,
-                exit_time: pureTradeData.exit_time || null,
+                pair: tradeDataToInsert.pair,
+                date: tradeDataToInsert.date_backtested,
+                entry_time: tradeDataToInsert.entry_time,
+                exit_time: tradeDataToInsert.exit_time || null,
               },
               headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             }).catch((err) => console.error(`❌ [SyncManager] Erreur IA:`, err));
@@ -201,7 +284,7 @@ export function useOfflineSyncManager() {
           const tentatives = (item.tentatives || 0) + 1;
           incrementerTentative(item.id);
 
-          // Si l'élément a échoué 3 fois (ex: contrainte BDD invalide), on le retire pour débloquer l'app
+          // Si l'élément a échoué 3 fois, on le retire pour débloquer l'app
           if (tentatives >= 3) {
             console.warn(`⚠️ [SyncManager] Abandon de l'élément ${item.tradeId} après 3 tentatives infructueuses.`);
             retirerDeLaFile(item.id);
@@ -217,8 +300,7 @@ export function useOfflineSyncManager() {
     }
   }, [retirerDeLaFile, incrementerTentative, queryClient, setDerniereSynchroReussie, setSyncEnCours]);
 
-  // ─── 2. Synchronisation globale (Supabase → Local) ────────────────────────────
-  // Télécharge l'ensemble des données Cloud tout en préservant TOUS les trades locaux
+  // ─── 2. Synchronisation globale bidirectionnelle (Local ↔ Cloud) ───────────────
   const syncAll = useCallback(async () => {
     if (!navigator.onLine || synchroEnExecutionRef.current) return;
 
@@ -230,14 +312,14 @@ export function useOfflineSyncManager() {
 
     const userId = sessionData.session.user.id;
 
-    // 1️⃣ On vide d'abord la file d'attente vers Supabase pour que rien ne soit écrasé
+    // 1️⃣ On vide d'abord la file d'attente vers Supabase
     await synchroniserFileDAttente();
 
     synchroEnExecutionRef.current = true;
     setSyncEnCours(true);
 
     try {
-      console.log('🔄 [SyncManager] Téléchargement des données depuis Supabase...');
+      console.log('🔄 [SyncManager] Synchronisation bidirectionnelle Cloud / Local...');
 
       // 1. Stratégies
       const { data: strategies } = await supabase
@@ -275,7 +357,6 @@ export function useOfflineSyncManager() {
       }
 
       // 4. Les Trades de l'utilisateur connecté depuis Supabase
-      // Remarque : On charge les steps et trade_images (step_images n'existe plus dans le schéma)
       const { data: allTrades, error: tradesError } = await supabase
         .from('trades')
         .select(`
@@ -290,7 +371,7 @@ export function useOfflineSyncManager() {
       if (tradesError) {
         console.error('❌ [SyncManager] Erreur récupération trades Supabase:', tradesError);
       } else if (allTrades) {
-        // 5. Fusion NON-DESTRUCTRICE des trades locaux et du Cloud
+        const idsCloud = new Set(allTrades.map((t: any) => t.id));
         const tradesLocauxActuels = useLocalDatabase.getState().trades;
         const fileActuelle = useOfflineSyncStore.getState().queue;
 
@@ -304,6 +385,23 @@ export function useOfflineSyncManager() {
           fileActuelle.filter((q) => q.action === 'UPDATE').map((q) => q.tradeId)
         );
 
+        // ─── ÉTAPE CRUCIALE : DÉTECTION ET UPLOAD DES TRADES LOCAUX ABSENTS DU CLOUD ───
+        // Si la tablette contient des trades qui ne sont pas encore sur Supabase
+        const tradesManquantsSurCloud = tradesLocauxActuels.filter(
+          (t) => !idsCloud.has(t.id) && !idsSupprimes.has(t.id)
+        );
+
+        if (tradesManquantsSurCloud.length > 0) {
+          console.log(`📤 [SyncManager] ${tradesManquantsSurCloud.length} trade(s) local/tablette manquant(s) sur le Cloud. Téléversement automatique en cours...`);
+          for (const localTrade of tradesManquantsSurCloud) {
+            const uploadOk = await televerserTradeVersSupabase(localTrade, userId);
+            if (uploadOk) {
+              idsCloud.add(localTrade.id);
+            }
+          }
+        }
+
+        // 5. Fusion NON-DESTRUCTRICE des trades locaux et du Cloud
         const tradesMap = new Map<string, TradeWithSteps>();
 
         // 1. Conserver TOUS les trades locaux actuels (sauf ceux marqués pour suppression)
@@ -315,14 +413,8 @@ export function useOfflineSyncManager() {
 
         // 2. Fusionner les trades reçus du Cloud
         for (const cloudTrade of (allTrades as TradeWithSteps[])) {
-          if (idsSupprimes.has(cloudTrade.id)) {
-            continue; // Trade supprimé localement, on ne l'ajoute pas
-          }
-          if (idsModifiesLocalement.has(cloudTrade.id)) {
-            // Modification locale en cours, on préserve la version locale
-            continue;
-          }
-          // On applique la version Cloud
+          if (idsSupprimes.has(cloudTrade.id)) continue;
+          if (idsModifiesLocalement.has(cloudTrade.id)) continue;
           tradesMap.set(cloudTrade.id, cloudTrade);
         }
 

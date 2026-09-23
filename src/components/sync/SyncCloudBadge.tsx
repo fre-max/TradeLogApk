@@ -85,6 +85,7 @@ export function SyncCloudBadge() {
   // ─── Calcul du statut à afficher ─────────────────────────────────
   const nbLocaux = tradesLocaux.length;
   const nbEnAttente = queue.length;
+  const aDesTradesLocauxEnSurplus = nbTradesCloud !== null && nbLocaux > nbTradesCloud;
 
   type Statut = 'loading' | 'offline' | 'pending' | 'behind' | 'synced';
   let statut: Statut;
@@ -93,8 +94,8 @@ export function SyncCloudBadge() {
     statut = 'loading';
   } else if (!emailConnecte) {
     statut = 'offline';
-  } else if (nbEnAttente > 0) {
-    // Des trades attendent d'être envoyés sur le cloud
+  } else if (nbEnAttente > 0 || aDesTradesLocauxEnSurplus) {
+    // Des trades locaux attendent d'être envoyés sur le cloud
     statut = 'pending';
   } else if (nbTradesCloud !== null && nbTradesCloud > nbLocaux) {
     // Le cloud a plus de trades que le local → il faut télécharger
@@ -275,8 +276,10 @@ export function SyncCloudBadge() {
               <div className="flex items-center gap-1.5 px-3 py-2 bg-amber-950/40 border border-amber-800/40 rounded-lg">
                 <span>⚠️</span>
                 <p className="text-amber-300 text-[11px]">
-                  {nbEnAttente} trade{nbEnAttente > 1 ? 's' : ''} en attente.
-                  Vérifiez votre connexion Internet et votre session cloud.
+                  {nbEnAttente > 0
+                    ? `${nbEnAttente} trade${nbEnAttente > 1 ? 's' : ''} en file d'attente.`
+                    : `${nbLocaux - (nbTradesCloud ?? 0)} trade${nbLocaux - (nbTradesCloud ?? 0) > 1 ? 's' : ''} sur cet appareil à envoyer sur le Cloud.`}
+                  {' '}Cliquez sur Synchroniser ci-dessous.
                 </p>
               </div>
             )}

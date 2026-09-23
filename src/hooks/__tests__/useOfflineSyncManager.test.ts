@@ -227,4 +227,101 @@ describe('useOfflineSyncManager - Flux de synchronisation Offline-First', () => 
     // - La file d'attente a été vidée suite au succès
     expect(useOfflineSyncStore.getState().queue).toHaveLength(0);
   });
+
+  it('téléverse automatiquement vers Supabase les trades présents en local mais absents du Cloud même si la file d attente est vide', async () => {
+    // Cas réel vécu par l'utilisateur : la tablette a 3 trades locaux, mais la file d'attente est vide (0 en attente)
+    // et le Cloud n'en a que 1.
+    const tradeDejaSurCloud: TradeWithSteps = {
+      id: 'trade-cloud-1',
+      user_id: 'test-user-uuid-999',
+      pair: 'EURUSD',
+      direction: 'long',
+      session: 'London',
+      date_backtested: '2026-03-01',
+      status: 'complete',
+      journal_type: 'global',
+      created_at: '2026-03-01T08:00:00.000Z',
+      steps: [],
+    };
+
+    const tradeOrphelinTablette1: TradeWithSteps = {
+      id: 'trade-orphelin-1',
+      user_id: 'local-user',
+      pair: 'GBPUSD',
+      direction: 'short',
+      session: 'NY',
+      date_backtested: '2026-03-02',
+      status: 'complete',
+      journal_type: 'global',
+      created_at: '2026-03-02T10:00:00.000Z',
+      steps: [],
+    };
+
+    const tradeOrphelinTablette2: TradeWithSteps = {
+      id: 'trade-orphelin-2',
+      user_id: 'local-user',
+      pair: 'XAUUSD',
+      direction: 'long',
+      session: 'London',
+      date_backtested: '2026-03-03',
+      status: 'complete',
+      journal_type: 'global',
+      created_at: '2026-03-03T12:00:00.000Z',
+      steps: [],
+    };
+
+    // La base locale a les 3 trades
+    useLocalDatabase.getState().setTrades([tradeDejaSurCloud, tradeOrphelinTablette1, tradeOrphelinTablette2]);
+    // La file d'attente est TOTALEMENT VIDE (0 trade en attente)
+    useOfflineSyncStore.getState().viderLaFile();
+
+    const tradesUpsertes: any[] = [];
+    vi.mocked(supabase.from).mockImplementation((table: string) => {
+      if (table === 'trades') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [tradeDejaSurCloud], // Le Cloud n'a que 1 trade
+                error: null,
+              }),
+            }),
+          }),
+          upsert: vi.fn().mockImplementation((payload) => {
+            tradesUpsertes.push(payload);
+            return Promise.resolve({ error: null });
+          }),
+        } as any;
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          order: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+        delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+        upsert: vi.fn().mockResolvedValue({ error: null }),
+        insert: vi.fn().mockResolvedValue({ error: null }),
+      } as any;
+    });
+
+    const { result } = renderHook(() => useOfflineSyncManager());
+
+    // syncAll est automatiquement exécuté au montage dès que navigator.onLine est true
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Les 2 trades orphelins doivent avoir été envoyés sur Supabase avec le user_id connecté !
+    expect(tradesUpsertes.length).toBeGreaterThanOrEqual(2);
+    const idsEnvoyes = tradesUpsertes.map((t) => t.id);
+    expect(idsEnvoyes).toContain('trade-orphelin-1');
+    expect(idsEnvoyes).toContain('trade-orphelin-2');
+
+    // Les user_id doivent être mis à jour avec le compte connecté
+    tradesUpsertes.forEach((t) => {
+      expect(t.user_id).toBe('test-user-uuid-999');
+    });
+
+    // La base locale contient toujours les 3 trades
+    expect(useLocalDatabase.getState().trades).toHaveLength(3);
+  });
 });
