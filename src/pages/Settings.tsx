@@ -7,6 +7,7 @@ import { useUIStore } from '@/store'
 import { usePinStore } from '@/store/usePinStore'
 import { cn } from '@/lib/utils'
 import { exportCsv } from '@/lib/exportCsv'
+import { exporterTradesPourMT5Json } from '@/lib/exportMt5Json'
 import type { Session } from '@supabase/supabase-js'
 import { useOfflineSyncManager } from '@/hooks/useOfflineSyncManager'
 
@@ -133,6 +134,21 @@ export default function Settings() {
     }
     exportCsv(trades)
     addToast(`${trades.length} trade(s) exporté(s) en CSV !`, 'success')
+  }
+
+  // ─── Export JSON MetaTrader 5 (Dataset IA) ──────────────────────
+  const handleExportMT5JSON = () => {
+    if (trades.length === 0) {
+      addToast('Aucun trade à exporter', 'error')
+      return
+    }
+    try {
+      exporterTradesPourMT5Json(trades)
+      addToast(`${trades.length} trade(s) exporté(s) pour MetaTrader 5 !`, 'success')
+    } catch (error) {
+      console.error('❌ [Settings] Erreur export MT5 :', error)
+      addToast("Erreur lors de l'exportation des trades pour MT5", 'error')
+    }
   }
 
   // ─── Test Telegram ──────────────────────────────────────────
@@ -294,7 +310,7 @@ export default function Settings() {
           )}
         </Section>
 
-        {/* Section Données — Export CSV + info PDF */}
+        {/* Section Données — Export CSV, Export MT5 JSON + info PDF */}
         <Section title="📊 Données">
           <SettingRow
             label="Export Excel / CSV"
@@ -308,6 +324,20 @@ export default function Settings() {
               </button>
             }
           />
+          <div className="border-t border-border pt-3 mt-1">
+            <SettingRow
+              label="Export JSON MetaTrader 5 (Dataset IA)"
+              description={`Exporte ${trades.length} trade(s) formatés avec timestamps, paires et prix pour automatiser les captures MT5`}
+              action={
+                <button
+                  onClick={handleExportMT5JSON}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-md text-[13px] font-medium hover:bg-emerald-700 transition-colors whitespace-nowrap active:scale-95"
+                >
+                  🤖 Exporter JSON MT5
+                </button>
+              }
+            />
+          </div>
           <div className="border-t border-border pt-3 mt-1">
             <div className="flex items-start justify-between gap-4">
               <div>

@@ -11,7 +11,7 @@ import { calculerDetectionLiquiditeSRTL } from './detectionLiquiditeSRTL';
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
-const VERSION_CATALOGUE_INDICATEURS = '2.3.0';
+const VERSION_CATALOGUE_INDICATEURS = '2.4.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -931,40 +931,27 @@ return {
   },
   {
     id: 'script-detection-liquidite-srtl',
-    nom: 'Détection Liquidité : S/R & Trendline',
-    description: 'Détecte la liquidité institutionnelle sur les Supports/Résistances (horizontaux) et les Trendlines (obliques) avec mode paramétrable.',
+    nom: 'Détection Liquidité : Zones S/R',
+    description: 'Détecte les zones de liquidité horizontales sur les Supports (SSL) et Résistances (BSL) avec au minimum 2 retests et marges rectangulaires visibles.',
     auteur: 'TradeLog AI / Wyckoff',
-    version: '1.0.0',
+    version: '2.0.0',
     type: 'overlay',
     actif: true,
     visibleSurGraphique: true,
     collecteActive: true,
     parametres: {
-      modeDetection: 'tous',
       profondeurPivot: 5,
+      margeZonePips: 4.0,
+      epaisseurBufferPips: 1.5,
       minTouches: 2,
-      tolerancePips: 1.5,
       minBougiesEntrePivots: 4,
       maxBougiesHistorique: 600,
+      afficherZones: true,
       afficherLignes: true,
       afficherEtiquettes: true,
-      afficherZones: true,
-      masquerNiveauxBalayes: false,
+      masquerZonesCassees: false,
     },
     definitionsVariables: [
-      {
-        cle: 'modeDetection',
-        label: 'Mode de Détection',
-        description: 'Choisir : "tous", "sr_seulement" (Supports/Résistances) ou "trendline_seulement"',
-        type: 'select',
-        valeurParDefaut: 'tous',
-        options: [
-          { label: 'Tous (S/R + Trendlines)', value: 'tous' },
-          { label: 'Supports / Résistances Uniquement', value: 'sr_seulement' },
-          { label: 'Trendlines Uniquement', value: 'trendline_seulement' },
-        ],
-        groupe: 'Mode Principal',
-      },
       {
         cle: 'profondeurPivot',
         label: 'Sensibilité des Pivots',
@@ -977,31 +964,42 @@ return {
         groupe: 'Détection des Pivots',
       },
       {
+        cle: 'margeZonePips',
+        label: 'Marge Tolérance Retests (Pips)',
+        description: 'Marge autorisée pour qu\'un retest fasse partie de la zone même s\'il dépasse légèrement',
+        type: 'number',
+        valeurParDefaut: 4.0,
+        min: 0.5,
+        max: 20.0,
+        step: 0.5,
+        groupe: 'Marge & Tolérance',
+      },
+      {
+        cle: 'epaisseurBufferPips',
+        label: 'Épaisseur Rectangle (Pips)',
+        description: 'Marge ajoutée pour donner du corps et de l\'épaisseur visible au rectangle',
+        type: 'number',
+        valeurParDefaut: 1.5,
+        min: 0.5,
+        max: 10.0,
+        step: 0.5,
+        groupe: 'Marge & Tolérance',
+      },
+      {
         cle: 'minTouches',
-        label: 'Touches Minimales (Contacts)',
-        description: 'Nombre minimal de contacts pour valider un niveau ou une trendline',
+        label: 'Retests Minima Requis (>=2)',
+        description: 'Nombre minimum de points d\'ancrage pour valider une zone de liquidité',
         type: 'number',
         valeurParDefaut: 2,
         min: 2,
-        max: 5,
+        max: 6,
         step: 1,
-        groupe: 'Validation des Lignes',
-      },
-      {
-        cle: 'tolerancePips',
-        label: 'Tolérance Alignement (Pips)',
-        description: 'Écart maximal de prix en pips pour valider un contact ou alignement',
-        type: 'number',
-        valeurParDefaut: 1.5,
-        min: 0.2,
-        max: 10.0,
-        step: 0.1,
-        groupe: 'Règles d\'Alignement',
+        groupe: 'Validation',
       },
       {
         cle: 'minBougiesEntrePivots',
-        label: 'Écart Minimal (Bougies)',
-        description: 'Nombre minimum de bougies séparant deux contacts',
+        label: 'Écart Minimal entre Retests',
+        description: 'Nombre minimum de bougies séparant deux retests',
         type: 'number',
         valeurParDefaut: 4,
         min: 2,
@@ -1021,33 +1019,33 @@ return {
         groupe: 'Historique',
       },
       {
+        cle: 'afficherZones',
+        label: 'Afficher les Rectangles de Zones',
+        description: 'Affiche les boîtes de zones de liquidité sur le graphique',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
         cle: 'afficherLignes',
-        label: 'Afficher les Droites',
-        description: 'Trace les lignes horizontales et obliques sur le graphique',
+        label: 'Afficher les Lignes Médianes',
+        description: 'Trace la ligne médiane horizontale de la zone',
         type: 'boolean',
         valeurParDefaut: true,
         groupe: 'Affichage Graphique',
       },
       {
         cle: 'afficherEtiquettes',
-        label: 'Afficher les Badges BSL / SSL',
-        description: 'Affiche les étiquettes de liquidité sur les graphiques',
+        label: 'Afficher les Étiquettes (Badges)',
+        description: 'Affiche le statut et le nombre de touches sur le graphique',
         type: 'boolean',
         valeurParDefaut: true,
         groupe: 'Affichage Graphique',
       },
       {
-        cle: 'afficherZones',
-        label: 'Afficher les Boîtes de Sweep',
-        description: 'Encadre les zones où la liquidité a été purgée',
-        type: 'boolean',
-        valeurParDefaut: true,
-        groupe: 'Affichage Graphique',
-      },
-      {
-        cle: 'masquerNiveauxBalayes',
-        label: 'Masquer les Lignes Purgées',
-        description: 'N\'affiche que la liquidité active non encore balayée',
+        cle: 'masquerZonesCassees',
+        label: 'Masquer les Zones Cassées',
+        description: 'Masque les zones qui ont été invalidées par une clôture franche',
         type: 'boolean',
         valeurParDefaut: false,
         groupe: 'Filtrage',
@@ -1056,25 +1054,25 @@ return {
     creeLe: '2026-09-23T00:00:00.000Z',
     misAJourLe: '2026-09-23T00:00:00.000Z',
     code: `/**
- * Indicateur Scriptable : Détection Liquidité S/R & Trendline
- * Détecte les zones de liquidité sur Supports/Résistances et Trendlines obliques.
+ * Indicateur Scriptable : Détection Liquidité Zones S/R
+ * Détecte les zones de liquidité sur Supports/Résistances avec marge et retests obligatoires.
  */
 return {
   calculer: function(contexte) {
     const { bougies, parametres } = contexte;
-    if (!bougies || bougies.length < 25) return { donnees: {}, primitives: {} };
+    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };
 
     const res = calculerDetectionLiquiditeSRTL(bougies, {
-      modeDetection: parametres.modeDetection || 'tous',
       profondeurPivot: Number(parametres.profondeurPivot || 5),
+      margeZonePips: Number(parametres.margeZonePips || 4.0),
+      epaisseurBufferPips: Number(parametres.epaisseurBufferPips || 1.5),
       minTouches: Number(parametres.minTouches || 2),
-      tolerancePips: Number(parametres.tolerancePips || 1.5),
       minBougiesEntrePivots: Number(parametres.minBougiesEntrePivots || 4),
       maxBougiesHistorique: Number(parametres.maxBougiesHistorique || 600),
-      masquerNiveauxBalayes: Boolean(parametres.masquerNiveauxBalayes),
+      masquerZonesCassees: Boolean(parametres.masquerZonesCassees),
+      afficherZones: parametres.afficherZones !== false,
       afficherLignes: parametres.afficherLignes !== false,
       afficherEtiquettes: parametres.afficherEtiquettes !== false,
-      afficherZones: parametres.afficherZones !== false,
     });
 
     return {
