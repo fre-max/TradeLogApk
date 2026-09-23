@@ -5,10 +5,13 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: string): string {
+export function formatDate(date: string | null | undefined): string {
+  if (!date) return '—'
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return '—'
   return new Intl.DateTimeFormat('fr-FR', {
     day: '2-digit', month: 'short', year: 'numeric'
-  }).format(new Date(date))
+  }).format(d)
 }
 
 export function formatRR(rr: number | null | undefined): string {

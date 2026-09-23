@@ -14,8 +14,10 @@ import { useUIStore, useFilterStore } from '@/store'
 import { formatDate, formatRR, cn } from '@/lib/utils'
 import { SkeletonTableRow } from '@/components/ui/Skeleton'
 import { StatusBadge } from '@/components/trade/StatusBadge'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import type { TradeWithSteps } from '@/types'
+import { useBacktestStore } from '@/store/backtestStore'
+import { extraireContexteReplay } from '@/lib/replayHelper'
 
 // ─── TradeTable ───────────────────────────────────────────
 // Tableau principal des trades avec :
@@ -26,6 +28,8 @@ import type { TradeWithSteps } from '@/types'
 // - Adaptation dynamique des colonnes selon le sous-journal choisi
 
 export function TradeTable() {
+  const navigate = useNavigate()
+  const lancerRestaurationContexte = useBacktestStore((state) => state.lancerRestaurationContexte)
   const { data: trades = [], isLoading, isError } = useTrades()
   const { mutateAsync: deleteTrade, isPending: isDeleting } = useDeleteTrade()
   const openDetail = useUIStore((state) => state.openDetail)
@@ -159,19 +163,36 @@ export function TradeTable() {
         col.display({
           id: 'actions',
           header: 'Actions',
-          cell: (info) => (
-            <div className="flex gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  openEditTrade(info.row.original)
-                }}
-                className="px-3 py-1.5 bg-accent text-white rounded-md text-[11.5px] font-medium hover:bg-accent/90 transition-colors"
-              >
-                Modifier
-              </button>
-            </div>
-          ),
+          cell: (info) => {
+            const trade = info.row.original
+            const contexte = extraireContexteReplay(trade)
+            return (
+              <div className="flex gap-1.5">
+                {contexte && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      lancerRestaurationContexte(contexte)
+                      navigate('/backtest')
+                    }}
+                    title="Rejouer ce trade dans le Backtest au moment précis"
+                    className="px-2.5 py-1.5 bg-accent/20 border border-accent/40 text-accent rounded-md text-[11.5px] font-semibold hover:bg-accent hover:text-white transition-all flex items-center gap-1"
+                  >
+                    🔄 Rejouer
+                  </button>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openEditTrade(trade)
+                  }}
+                  className="px-3 py-1.5 bg-accent text-white rounded-md text-[11.5px] font-medium hover:bg-accent/90 transition-colors"
+                >
+                  Modifier
+                </button>
+              </div>
+            )
+          },
         }),
       ]
     }
@@ -219,19 +240,36 @@ export function TradeTable() {
         col.display({
           id: 'actions',
           header: 'Actions',
-          cell: (info) => (
-            <div className="flex gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  openEditTrade(info.row.original)
-                }}
-                className="px-3 py-1.5 bg-accent text-white rounded-md text-[11.5px] font-medium hover:bg-accent/90 transition-colors"
-              >
-                Modifier
-              </button>
-            </div>
-          ),
+          cell: (info) => {
+            const trade = info.row.original
+            const contexte = extraireContexteReplay(trade)
+            return (
+              <div className="flex gap-1.5">
+                {contexte && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      lancerRestaurationContexte(contexte)
+                      navigate('/backtest')
+                    }}
+                    title="Rejouer ce trade dans le Backtest au moment précis"
+                    className="px-2.5 py-1.5 bg-accent/20 border border-accent/40 text-accent rounded-md text-[11.5px] font-semibold hover:bg-accent hover:text-white transition-all flex items-center gap-1"
+                  >
+                    🔄 Rejouer
+                  </button>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openEditTrade(trade)
+                  }}
+                  className="px-3 py-1.5 bg-accent text-white rounded-md text-[11.5px] font-medium hover:bg-accent/90 transition-colors"
+                >
+                  Modifier
+                </button>
+              </div>
+            )
+          },
         }),
       ]
     }
@@ -283,37 +321,54 @@ export function TradeTable() {
       col.display({
         id: 'actions',
         header: 'Actions',
-        cell: (info) => (
-          <div className="flex gap-2">
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                openEditTrade(info.row.original)
-              }}
-              className="px-3 py-1.5 bg-accent text-white rounded-md text-[11.5px] font-medium hover:bg-accent/90 transition-colors"
-            >
-              Modifier
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                if (confirm('Êtes-vous sûr de vouloir supprimer ce trade ?')) {
-                  deleteTrade(info.row.original.id)
-                    .then(() => {
-                      addToast('Trade supprimé avec succès', 'success')
-                    })
-                    .catch((err) => {
-                      addToast(err.message || 'Erreur lors de la suppression', 'error')
-                    })
-                }
-              }}
-              disabled={isDeleting}
-              className="px-3 py-1.5 bg-loss/10 text-loss border border-loss/30 rounded-md text-[11.5px] font-medium hover:bg-loss/20 transition-colors disabled:opacity-50"
-            >
-              Supprimer
-            </button>
-          </div>
-        ),
+        cell: (info) => {
+          const trade = info.row.original
+          const contexte = extraireContexteReplay(trade)
+          return (
+            <div className="flex gap-1.5">
+              {contexte && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    lancerRestaurationContexte(contexte)
+                    navigate('/backtest')
+                  }}
+                  title="Rejouer ce trade dans le Backtest au moment précis"
+                  className="px-2.5 py-1.5 bg-accent/20 border border-accent/40 text-accent rounded-md text-[11.5px] font-semibold hover:bg-accent hover:text-white transition-all flex items-center gap-1"
+                >
+                  🔄 Rejouer
+                </button>
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openEditTrade(trade)
+                }}
+                className="px-3 py-1.5 bg-accent text-white rounded-md text-[11.5px] font-medium hover:bg-accent/90 transition-colors"
+              >
+                Modifier
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (confirm('Êtes-vous sûr de vouloir supprimer ce trade ?')) {
+                    deleteTrade(trade.id)
+                      .then(() => {
+                        addToast('Trade supprimé avec succès', 'success')
+                      })
+                      .catch((err) => {
+                        addToast(err.message || 'Erreur lors de la suppression', 'error')
+                      })
+                  }
+                }}
+                disabled={isDeleting}
+                className="px-3 py-1.5 bg-loss/10 text-loss border border-loss/30 rounded-md text-[11.5px] font-medium hover:bg-loss/20 transition-colors disabled:opacity-50"
+              >
+                Supprimer
+              </button>
+            </div>
+          )
+        },
       }),
     ]
   }, [journalType, isDeleting])
@@ -377,8 +432,119 @@ export function TradeTable() {
         ))}
       </div>
 
-      {/* Contenu du tableau */}
-      <div className="overflow-x-auto">
+      {/* Vue Cartes Mobile (écrans < 768px) */}
+      <div className="block md:hidden p-3 space-y-2.5">
+        {/* Skeleton loader mobile */}
+        {isLoading && (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-surface border border-border rounded-xl p-4 animate-pulse space-y-3">
+                <div className="flex justify-between">
+                  <div className="h-5 w-24 bg-surface2 rounded" />
+                  <div className="h-5 w-16 bg-surface2 rounded" />
+                </div>
+                <div className="h-8 w-full bg-surface2 rounded" />
+                <div className="h-7 w-1/2 bg-surface2 rounded" />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Cartes réelles sur smartphone */}
+        {!isLoading && table.getRowModel().rows.map((row) => {
+          const trade = row.original
+          const contexte = extraireContexteReplay(trade)
+          const entryStep = trade.steps?.find((s) => s.type === 'entry')
+          const estLong = trade.direction === 'long'
+          const estWin = trade.result === 'win'
+          const estLoss = trade.result === 'loss'
+          const estBE = trade.result === 'breakeven'
+
+          return (
+            <div
+              key={row.id}
+              onClick={() => openDetail(trade)}
+              className="bg-surface border border-border rounded-xl p-3.5 shadow-sm active:scale-[0.99] transition-transform space-y-2.5 cursor-pointer hover:border-accent/40"
+            >
+              {/* Ligne 1 : Paire, Direction, Résultat, Date */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-txt text-base tracking-tight">{trade.pair}</span>
+                  <span className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
+                    estLong ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" : "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                  )}>
+                    {estLong ? '↑ Long' : '↓ Short'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  {trade.result && (
+                    <span className={cn(
+                      "px-2 py-0.5 rounded text-[11px] font-bold",
+                      estWin ? "bg-win/15 text-win" : estLoss ? "bg-loss/15 text-loss" : "bg-slate-500/20 text-slate-300"
+                    )}>
+                      {estWin ? '✓ Win' : estLoss ? '✗ Loss' : estBE ? '— BE' : '🟡 Missed'}
+                    </span>
+                  )}
+                  <span className="text-txt3 text-[11px]">{formatDate(trade.created_at)}</span>
+                </div>
+              </div>
+
+              {/* Ligne 2 : Setup, Session, R:R */}
+              <div className="flex items-center justify-between text-xs py-1 px-2.5 bg-surface2/60 rounded-lg">
+                <div className="flex items-center gap-2 text-txt2 truncate">
+                  <span>{entryStep?.title || (entryStep?.fields as any)?.setup || 'Standard'}</span>
+                  {trade.session && <span className="text-txt3">· {trade.session}</span>}
+                </div>
+
+                <div className="flex items-center gap-2 font-mono flex-shrink-0">
+                  {trade.rr_planned != null && (
+                    <span className="text-txt3 text-[11px]">Prévu: {formatRR(trade.rr_planned)}</span>
+                  )}
+                  {trade.rr_realized != null && (
+                    <span className={cn("font-bold text-sm", trade.rr_realized > 0 ? "text-win" : "text-loss")}>
+                      {formatRR(trade.rr_realized)}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Ligne 3 : Actions rapides */}
+              <div className="flex items-center justify-between pt-1 gap-2 border-t border-border/50">
+                <StatusBadge status={trade.status || 'in_progress'} />
+
+                <div className="flex items-center gap-2">
+                  {contexte && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        lancerRestaurationContexte(contexte)
+                        navigate('/backtest')
+                      }}
+                      className="px-3 py-1.5 bg-accent/20 border border-accent/40 text-accent rounded-lg text-xs font-bold hover:bg-accent hover:text-white transition-all flex items-center gap-1"
+                    >
+                      🔄 Rejouer
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openEditTrade(trade)
+                    }}
+                    className="px-3 py-1.5 bg-surface2 hover:bg-surface border border-border2 text-txt2 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Modifier
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Contenu du tableau Desktop et Tablette (écrans >= 768px) */}
+      <div className="hidden md:block overflow-x-auto">
         <table className="w-full border-collapse min-w-[700px]">
           <thead>
             {table.getHeaderGroups().map((hg) => (
@@ -425,79 +591,79 @@ export function TradeTable() {
             ))}
           </tbody>
         </table>
+      </div>
 
-        {/* Contrôles de pagination */}
-        {!isLoading && filtered.length > 0 && (
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-3 px-4 py-3 border-t border-border bg-surface2/10 text-xs">
-            <div className="text-txt3">
-              Affichage de{' '}
-              <span className="font-semibold text-txt2">
-                {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1}
-              </span>{' '}
-              à{' '}
-              <span className="font-semibold text-txt2">
-                {Math.min(
-                  (table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize,
-                  filtered.length
-                )}
-              </span>{' '}
-              sur <span className="font-semibold text-txt">{filtered.length}</span> trades
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
-                className="px-2.5 py-1.5 bg-surface border border-border rounded text-txt2 disabled:opacity-40 hover:text-txt transition-colors text-[11px] font-medium"
-              >
-                ◀ Précédent
-              </button>
-              <span className="text-txt3">
-                Page <span className="font-semibold text-txt2">{table.getState().pagination.pageIndex + 1}</span> sur{' '}
-                <span className="font-semibold text-txt2">{table.getPageCount()}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
-                className="px-2.5 py-1.5 bg-surface border border-border rounded text-txt2 disabled:opacity-40 hover:text-txt transition-colors text-[11px] font-medium"
-              >
-                Suivant ▶
-              </button>
-            </div>
+      {/* Contrôles de pagination (accessibles sur mobile et desktop) */}
+      {!isLoading && filtered.length > 0 && (
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-3 px-4 py-3 border-t border-border bg-surface2/10 text-xs">
+          <div className="text-txt3 text-center sm:text-left">
+            Affichage de{' '}
+            <span className="font-semibold text-txt2">
+              {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1}
+            </span>{' '}
+            à{' '}
+            <span className="font-semibold text-txt2">
+              {Math.min(
+                (table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize,
+                filtered.length
+              )}
+            </span>{' '}
+            sur <span className="font-semibold text-txt">{filtered.length}</span> trades
           </div>
-        )}
-
-        {/* Empty state enrichi — quand 0 trades après chargement */}
-        {!isLoading && filtered.length === 0 && (
-          <div className="py-20 flex flex-col items-center justify-center gap-4">
-            {/* Illustration */}
-            <div className="w-20 h-20 bg-surface2 rounded-2xl flex items-center justify-center text-4xl border border-border">
-              📊
-            </div>
-
-            {/* Texte */}
-            <div className="text-center">
-              <p className="text-txt font-medium text-[15px] mb-1">Aucun trade enregistré</p>
-              <p className="text-txt3 text-sm max-w-[280px]">
-                Commencez votre journal de backtesting en ajoutant votre premier trade
-              </p>
-            </div>
-
-            {/* Bouton CTA */}
+          
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                console.log('➕ [TradeTable] Clic bouton CTA (ouverture formulaire)')
-                openNewTrade()
-              }}
-              className="bg-accent text-white px-5 py-2.5 rounded-lg text-[13.5px] font-medium hover:bg-accent/90 transition-colors flex items-center gap-2"
+              type="button"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+              className="px-3 py-1.5 bg-surface border border-border rounded text-txt2 disabled:opacity-40 hover:text-txt transition-colors text-[11.5px] font-medium active:scale-95"
             >
-              + Créer mon premier trade
+              ◀ Précédent
+            </button>
+            <span className="text-txt3 text-xs">
+              Page <span className="font-semibold text-txt2">{table.getState().pagination.pageIndex + 1}</span> sur{' '}
+              <span className="font-semibold text-txt2">{table.getPageCount()}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+              className="px-3 py-1.5 bg-surface border border-border rounded text-txt2 disabled:opacity-40 hover:text-txt transition-colors text-[11.5px] font-medium active:scale-95"
+            >
+              Suivant ▶
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* État vide (empty state) — affiché sur mobile et desktop quand aucun trade n'est trouvé */}
+      {!isLoading && filtered.length === 0 && (
+        <div className="py-16 px-4 flex flex-col items-center justify-center gap-4 text-center">
+          {/* Illustration */}
+          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-surface2 rounded-2xl flex items-center justify-center text-3xl sm:text-4xl border border-border">
+            📊
+          </div>
+
+          {/* Texte */}
+          <div>
+            <p className="text-txt font-medium text-[15px] mb-1">Aucun trade enregistré</p>
+            <p className="text-txt3 text-xs sm:text-sm max-w-[280px]">
+              Commencez votre journal de backtesting en ajoutant votre premier trade
+            </p>
+          </div>
+
+          {/* Bouton CTA */}
+          <button
+            onClick={() => {
+              console.log('➕ [TradeTable] Clic bouton CTA (ouverture formulaire)')
+              openNewTrade()
+            }}
+            className="bg-accent text-white px-5 py-2.5 rounded-lg text-[13.5px] font-medium hover:bg-accent/90 transition-colors flex items-center gap-2 shadow-sm active:scale-95"
+          >
+            + Créer mon premier trade
+          </button>
+        </div>
+      )}
     </div>
   )
 }

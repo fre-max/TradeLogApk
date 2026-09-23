@@ -10614,4 +10614,3 @@ export {
   v as midpoint,
   Tr as rotatePoint
 };
-//# sourceMappingURL=lightweight-charts-drawing.es.js.map

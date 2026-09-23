@@ -64,16 +64,20 @@ export function useQuickEntry() {
     }): Promise<QuickEntryResult> => {
       console.log('🚀 [useQuickEntry] Début création trade rapide...')
 
-      // 1️⃣ Récupérer l'utilisateur connecté via la session locale si possible (évite timeout hors-ligne)
+      // 1️⃣ Récupérer l'utilisateur connecté via la session locale (fonctionne hors-ligne)
       let user = null
-      if (navigator.onLine) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        user = session?.user || null
+      } catch (e) {
+        console.warn('⚠️ [useQuickEntry] Impossible de lire la session locale:', e)
+      }
+
+      // Si pas de session locale et que le réseau est disponible, appel de secours
+      if (!user && navigator.onLine) {
         try {
-          const { data: { session } } = await supabase.auth.getSession()
-          user = session?.user || null
-          if (!user) {
-            const { data: { user: fetchedUser } } = await supabase.auth.getUser()
-            user = fetchedUser
-          }
+          const { data: { user: fetchedUser } } = await supabase.auth.getUser()
+          user = fetchedUser
         } catch (e) {
           console.warn('⚠️ [useQuickEntry] Impossible de récupérer l\'utilisateur Supabase:', e)
         }
@@ -151,11 +155,13 @@ export function useQuickEntry() {
       }
       console.log('✅ [useQuickEntry] Étape créée, ID :', insertedStep.id)
 
-      // 4️⃣ Attacher l'image Telegram à l'étape créée
+      // 4️⃣ Attacher l'image à la table trade_images
       const { error: imageError } = await supabase
-        .from('step_images')
+        .from('trade_images')
         .insert({
-          step_id: insertedStep.id,
+          trade_id: insertedTrade.id,
+          phase: 'avant',
+          context: 'superieur',
           source: 'telegram',
           url: imageUrl,
           storage_path: null,
@@ -164,7 +170,7 @@ export function useQuickEntry() {
       if (imageError) {
         console.error('⚠️ [useQuickEntry] Erreur lors de l\'attachement de l\'image :', imageError)
       } else {
-        console.log('✅ [useQuickEntry] Image Telegram attachée à l\'étape')
+        console.log('✅ [useQuickEntry] Image Telegram attachée à trade_images')
       }
 
       // 5️⃣ Déclencher automatiquement la détection des news économiques en arrière-plan (non bloquant)
@@ -199,10 +205,9 @@ export function useQuickEntry() {
         .from('trades')
         .select(`
           *,
-          steps (
-            *,
-            images: step_images (*)
-          )
+          steps (*),
+          images: trade_images (*),
+          reasons: trade_reasons (reason_id, variant_name)
         `)
         .eq('id', insertedTrade.id)
         .single()
@@ -210,6 +215,10 @@ export function useQuickEntry() {
       if (refetchError || !fullTrade) {
         throw refetchError || new Error('Erreur lors du rechargement final du trade')
       }
+
+      // Ajouter également le trade dans la base locale
+      const { useLocalDatabase } = await import('@/store/useLocalDatabase')
+      useLocalDatabase.getState().addTrade(fullTrade as TradeWithSteps)
 
       return {
         tradeId: insertedTrade.id,

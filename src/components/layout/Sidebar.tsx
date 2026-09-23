@@ -54,86 +54,100 @@ export function Sidebar() {
 
       <aside
         className={cn(
-          'w-[220px] bg-surface border-r border-border flex flex-col py-5 flex-shrink-0',
-          // Mode tiroir par défaut (fixé à gauche avec transition slide)
-          'fixed top-0 left-0 h-full z-[150] transition-transform duration-300',
+          // Largeur confortable et fond de surface
+          'w-[240px] bg-surface border-r border-border flex flex-col flex-shrink-0',
+          // Mode tiroir par défaut (fixé à gauche avec transition slide et hauteur 100%)
+          'fixed top-0 left-0 h-full z-[150] transition-transform duration-300 overflow-hidden',
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full',
           // Mode permanent côte-à-côte uniquement sur desktop et hors backtest
           !estBacktest && 'md:relative md:translate-x-0'
         )}
       >
-        {/* Logo + bouton fermer */}
-        <div className="flex items-center gap-2.5 px-4 pb-6">
-          <div className="w-7 h-7 bg-accent rounded-md flex items-center justify-center text-white font-semibold text-xs">TL</div>
+        {/* 1️⃣ En-tête fixe : Logo + bouton fermer (toujours accessible) */}
+        <div className="flex items-center gap-2.5 px-4 py-4 border-b border-border/60 flex-shrink-0">
+          <div className="w-7 h-7 bg-accent rounded-md flex items-center justify-center text-white font-semibold text-xs shadow-sm">
+            TL
+          </div>
           <span className="text-txt font-semibold text-[15px] tracking-tight flex-1">TradeLog</span>
           {/* Bouton fermer visible sur mobile, et sur desktop uniquement pour le backtest */}
           <button
             onClick={closeSidebar}
             className={cn(
-              "text-txt3 hover:text-txt text-lg leading-none",
+              "w-8 h-8 flex items-center justify-center text-txt3 hover:text-txt hover:bg-surface2 rounded-md transition-colors text-lg leading-none",
               !estBacktest && "md:hidden"
             )}
+            title="Fermer le menu"
           >
             ✕
           </button>
         </div>
 
-        {/* Catégories de Journaux */}
-        <div className="px-2 mb-4">
-          <p className="text-[11px] font-medium text-txt3 uppercase tracking-wider px-2 mb-1">Journaux</p>
-          {JOURNAL_ITEMS.map((item) => (
-            <NavItem
-              key={item.path}
-              icon={item.icon}
-              label={item.label}
-              active={location.pathname === item.path}
-              onClick={() => naviguerVers(item.path)}
-            />
-          ))}
-        </div>
-
-        {/* Autres outils de navigation */}
-        <div className="px-2 mb-6">
-          <p className="text-[11px] font-medium text-txt3 uppercase tracking-wider px-2 mb-1">Outils</p>
-          {NAV_ITEMS.map((item) => (
-            <NavItem
-              key={item.path}
-              icon={item.icon}
-              label={item.label}
-              active={location.pathname === item.path}
-              onClick={() => naviguerVers(item.path)}
-            />
-          ))}
-        </div>
-
-        {/* Filtres rapides par paire */}
-        <div className="px-2 mb-4">
-          <p className="text-[11px] font-medium text-txt3 uppercase tracking-wider px-2 mb-1">Filtres rapides</p>
-          
-          <div className="px-2 mb-3">
-            <select
-              value={filterStrategyId || ''}
-              onChange={(e) => setFilter('filterStrategyId', e.target.value || null)}
-              className="w-full bg-bg border border-border2 rounded-md text-txt px-2 py-1.5 text-[12.5px] outline-none focus:border-accent"
-            >
-              <option value="">Toutes les stratégies</option>
-              {strategies.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.version})</option>
+        {/* 2️⃣ Corps défilant : permet de scroller librement tous les liens et filtres sur smartphone */}
+        <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-3 space-y-5 scrollbar-thin">
+          {/* Catégories de Journaux */}
+          <div>
+            <p className="text-[11px] font-semibold text-txt3 uppercase tracking-wider px-2 mb-1.5">Journaux</p>
+            <div className="space-y-0.5">
+              {JOURNAL_ITEMS.map((item) => (
+                <NavItem
+                  key={item.path}
+                  icon={item.icon}
+                  label={item.label}
+                  active={location.pathname === item.path}
+                  onClick={() => naviguerVers(item.path)}
+                />
               ))}
-            </select>
+            </div>
           </div>
-          {PAIRS.map((pair) => (
-            <NavItem
-              key={pair}
-              icon="💹"
-              label={pair}
-              active={filterPair === pair}
-              onClick={() => setFilter('filterPair', filterPair === pair ? null : pair)}
-            />
-          ))}
+
+          {/* Autres outils de navigation */}
+          <div>
+            <p className="text-[11px] font-semibold text-txt3 uppercase tracking-wider px-2 mb-1.5">Outils</p>
+            <div className="space-y-0.5">
+              {NAV_ITEMS.map((item) => (
+                <NavItem
+                  key={item.path}
+                  icon={item.icon}
+                  label={item.label}
+                  active={location.pathname === item.path}
+                  onClick={() => naviguerVers(item.path)}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Filtres rapides par paire */}
+          <div>
+            <p className="text-[11px] font-semibold text-txt3 uppercase tracking-wider px-2 mb-1.5">Filtres rapides</p>
+            
+            <div className="px-2 mb-2">
+              <select
+                value={filterStrategyId || ''}
+                onChange={(e) => setFilter('filterStrategyId', e.target.value || null)}
+                className="w-full bg-bg border border-border2 rounded-md text-txt px-2 py-1.5 text-[12.5px] outline-none focus:border-accent"
+              >
+                <option value="">Toutes les stratégies</option>
+                {strategies.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.version})</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-0.5">
+              {PAIRS.map((pair) => (
+                <NavItem
+                  key={pair}
+                  icon="💹"
+                  label={pair}
+                  active={filterPair === pair}
+                  onClick={() => setFilter('filterPair', filterPair === pair ? null : pair)}
+                />
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div className="mt-auto px-2 pt-4 border-t border-border">
+        {/* 3️⃣ Pied fixe : Paramètres toujours visibles et immédiatement cliquables */}
+        <div className="px-2 py-3 border-t border-border bg-surface flex-shrink-0">
           <NavItem
             icon="⚙️"
             label="Paramètres"

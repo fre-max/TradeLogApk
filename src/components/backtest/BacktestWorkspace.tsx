@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useBacktestStore } from '@/store/backtestStore';
+import { useBacktestStore, type PositionSimulee, type ContexteRestaurationReplay } from '@/store/backtestStore';
 import { parserCsvPrix, agregerBougies } from '@/lib/chartDataHelper';
 import type { Bougie } from '@/lib/chartDataHelper';
 import { BacktestChart, type BacktestChartHandle } from './BacktestChart';
@@ -7,11 +7,20 @@ import { FundamentalHeaderBadge } from './FundamentalHeaderBadge';
 import { MacroAccordionTable } from './MacroAccordionTable';
 import { MacroCSVUploader } from './MacroCSVUploader';
 import { AIDatasetModal } from './AIDatasetModal';
+import { BacktestTradeModal } from './BacktestTradeModal';
+import { BacktestIndicatorsModal } from './BacktestIndicatorsModal';
+import { BacktestBotModal } from './BacktestBotModal';
+import type { TradingBot } from '@/types/bot';
+import { evaluerBotScript } from '@/lib/bot/botEngine';
+import { calculerLuxAlgoSMC } from '@/lib/indicators/luxAlgoSMC';
+import { calculerProtectedSwings } from '@/lib/indicators/protectedSwings';
+import { calculerZigZag } from '@/lib/indicators/zigzag';
+import { calculerUnmitigatedVolumeProfile } from '@/lib/indicators/unmitigatedVolumeProfile';
+import { recupererIndicateursStockes, evaluerIndicateurScript } from '@/lib/indicators/indicatorEngine';
 import { sauvegarderEchantillon, recupererTousLesEchantillons } from '@/lib/datasetStorage';
 import type { EchantillonIA } from '@/types/dataset';
 import { useUIStore } from '@/store';
 import { TradeDrawer } from '@/components/trade/TradeDrawer';
-import type { PositionSimulee } from '@/store/backtestStore';
 import { supabase } from '@/lib/supabase';
 import { uploadImage, compresserEtConvertirEnBase64 } from '@/lib/storage';
 import { sauvegarderBougiesM1Cache, recupererBougiesM1Cache } from '@/lib/backtestCache';
@@ -106,10 +115,12 @@ export function BacktestWorkspace() {
 
   // ─── États locaux ────────────────────────────────────────────────────────────
   const [largeurFenetre, setLargeurFenetre] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
+  const [hauteurFenetre, setHauteurFenetre] = useState(typeof window !== 'undefined' ? window.innerHeight : 800);
   const [chargement, setChargement] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
   const [outilActif, setOutilActif] = useState<string | null>(null);
   const [estPleinEcran, setEstPleinEcran] = useState(false);
+  // En plein écran, les outils et le replay sont toujours visibles (plus de toggle)
   const [theme, setTheme] = useState<'dark' | 'light'>('light');
 
 
@@ -363,8 +374,11 @@ export function BacktestWorkspace() {
 
 
   useEffect(() => {
-    // Met à jour la largeur de la fenêtre lors du redimensionnement
-    const gererResize = () => setLargeurFenetre(window.innerWidth);
+    // Met à jour la largeur et hauteur de la fenêtre lors du redimensionnement ou rotation d'écran
+    const gererResize = () => {
+      setLargeurFenetre(window.innerWidth);
+      setHauteurFenetre(window.innerHeight);
+    };
     window.addEventListener('resize', gererResize);
     return () => window.removeEventListener('resize', gererResize);
   }, []);
@@ -392,14 +406,51 @@ export function BacktestWorkspace() {
     };
   }, [menuCaptureOuvert]);
 
+  // Bascule entre le mode standard et le mode Plein Écran Total immersif
+  const basculerPleinEcran = useCallback(() => {
+    if (!estPleinEcran) {
+      setEstPleinEcran(true);
+      try {
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        }
+      } catch (e) {
+        // Ignorer si non supporté sur la plateforme
+      }
+    } else {
+      setEstPleinEcran(false);
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      } catch (e) {
+        // Ignorer
+      }
+    }
+  }, [estPleinEcran]);
+
+  // Synchronisation avec les événements de plein écran natif du navigateur / Android
+  useEffect(() => {
+    const gererChangementFullscreen = () => {
+      if (!document.fullscreenElement && estPleinEcran) {
+        setEstPleinEcran(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', gererChangementFullscreen);
+    return () => document.removeEventListener('fullscreenchange', gererChangementFullscreen);
+  }, [estPleinEcran]);
+
   const estMobile = largeurFenetre < 768;
 
-  // Hauteur du graphique : plus grande en plein écran, réduite à 350px sur mobile
+  // Hauteur du graphique optimisée :
+  // - En plein écran TOTAL : prend 100% de la hauteur de l'écran (aucune barre parasite)
+  // - Sur smartphone Android (hors plein écran) : calcul dynamique pour maximiser la vue des bougies
+  // - Sur tablette et Desktop : 600px pour un grand confort d'analyse
   const hauteurGraphique = estPleinEcran
-    ? window.innerHeight - 120
+    ? hauteurFenetre
     : estMobile
-      ? 350
-      : 500;
+      ? Math.max(440, hauteurFenetre - 160)
+      : 600;
 
   // Classes CSS calculées selon le thème courant
   const C = getThemeClasses(theme);
@@ -419,9 +470,10 @@ export function BacktestWorkspace() {
     chargerDonnees,
     avancerBougie,
     reculerBougie,
-    revenirDebut,
     setEstEnLecture,
     setVitesseLecture,
+    ouvrirPosition,
+    archiverPositionActive,
     fermerPositionManuellement,
     supprimerTradeHistorique,
     mettreAJourDonneesMtf,
@@ -439,11 +491,29 @@ export function BacktestWorkspace() {
     toggleFundamentalMode,
     activeSnapshot,
     macroEvents,
+    afficherProtectedSwings,
+    toggleProtectedSwings,
+    afficherUnmitigatedProfile,
+    toggleUnmitigatedProfile,
+    afficherZigZag,
+    toggleZigZag,
+    afficherLuxAlgoSMC,
+    toggleLuxAlgoSMC,
   } = useBacktestStore();
 
   // Le timeframe local est initialisé depuis le store persisté (timeframeSauvegarde)
   // On utilise un useState local pour la réactivité UI, mais on le synchronise au store
   const [timeframe, setTimeframeLocal] = useState(timeframeSauvegarde || 'H1');
+  const [modalIndicateursOuvert, setModalIndicateursOuvert] = useState(false);
+  const [scriptIdPourEdition, setScriptIdPourEdition] = useState<string | null>(null);
+  const [ongletInitialIndicateurs, setOngletInitialIndicateurs] = useState<'indicateurs' | 'configuration' | 'editeur' | 'telemetrie'>('indicateurs');
+  const [modalBotOuverte, setModalBotOuverte] = useState(false);
+  const [botReplayActif, setBotReplayActif] = useState<TradingBot | null>(null);
+
+  const scriptsIndicateurs = useBacktestStore((s) => s.scriptsIndicateurs);
+
+  // Nombre d'indicateurs actuellement visibles sur le graphique
+  const nbIndicateursActifs = scriptsIndicateurs.filter((s) => s.visibleSurGraphique).length;
 
   // Fonction pour changer l'UT et mémoriser dans le store en même temps
   // Exemple : setTimeframe('H4') → met à jour l'UI et persist dans le sessionStorage
@@ -473,15 +543,15 @@ export function BacktestWorkspace() {
     if (!contexteRestauration) return;
 
     const restaurer = async () => {
-      const { pair, annee, timeframe: tfRestaurer, timestamp } = contexteRestauration;
-      console.log(`🔄 [Replay Link] Demande de restauration vers ${pair} ${annee} ${tfRestaurer} à timestamp ${timestamp}`);
+      const { pair, annee, timeframe: tfRestaurer, timestamp, position } = contexteRestauration;
+      console.log(`🔄 [Replay Link] Demande de restauration vers ${pair} ${annee} ${tfRestaurer} à timestamp ${timestamp}`, position);
       
       // 1. Met à jour l'UT locale
       setTimeframeLocal(tfRestaurer);
       setTimeframeSauvegarde(tfRestaurer);
 
-      // 2. Charge les données avec ciblage de bougie
-      await chargerDonneesCloud(pair, annee, timestamp, tfRestaurer);
+      // 2. Charge les données avec ciblage précis de la bougie et restauration de la position active
+      await chargerDonneesCloud(pair, annee, timestamp, tfRestaurer, position);
 
       // 3. Consomme le contexte pour ne pas reboucler
       nettoyerRestaurationContexte();
@@ -501,22 +571,106 @@ export function BacktestWorkspace() {
     console.log(`⏱️ [Re-Aggregation] Données ré-agrégées en ${timeframe} — ${bougiesAgregees.length} bougies générées`);
   }, [timeframe, donneesM1Chargees, mettreAJourDonneesMtf]);
 
-  // ─── Boucle de lecture du Replay ─────────────────────────────────────────────
+  // ─── Boucle de lecture du Replay avec support Bot Automatique ───────────────
   useEffect(() => {
     if (!estEnLecture) return;
+
     const intervalle = setInterval(() => {
+      // 1. Si un bot tourne et que la position précédente est clôturée par le SL/TP, on l'archive pour enchaîner
+      const stateStore = useBacktestStore.getState();
+      if (botReplayActif && stateStore.positionActive && stateStore.positionActive.estCloturee) {
+        archiverPositionActive();
+      }
+
+      // 2. Faire avancer le graphique d'une bougie
       const continuer = avancerBougie();
       if (!continuer) {
         clearInterval(intervalle);
         addToast('Replay terminé — fin des données disponibles.', 'info');
+        return;
+      }
+
+      // 3. Si un bot automatique est activé en Replay Visuel
+      if (botReplayActif) {
+        const stateApres = useBacktestStore.getState();
+        const indexActuel = stateApres.indexCourant;
+        const posActuelle = stateApres.positionActive;
+
+        if (!posActuelle && indexActuel >= 30) {
+          const bougies = stateApres.donneesCompletes;
+          const bougie = bougies[indexActuel];
+          const debutFenetre = Math.max(0, indexActuel - 120);
+          const fenetre = bougies.slice(debutFenetre, indexActuel + 1);
+
+          const smc = calculerLuxAlgoSMC(fenetre);
+          const swings = calculerProtectedSwings(fenetre);
+          const zigzag = calculerZigZag(fenetre);
+          const uvp = calculerUnmitigatedVolumeProfile(fenetre);
+
+          // Évaluation dynamique des indicateurs en scripts avec télémétrie active
+          const scriptsStockes = stateApres.scriptsIndicateurs.length > 0
+            ? stateApres.scriptsIndicateurs
+            : recupererIndicateursStockes();
+          const scriptsDonnees: Record<string, any> = {};
+
+          for (const s of scriptsStockes) {
+            if (s.collecteActive) {
+              try {
+                const resScript = evaluerIndicateurScript(s.code, {
+                  bougies: fenetre,
+                  parametres: s.parametres || {},
+                });
+                if (resScript) {
+                  scriptsDonnees[s.id] = resScript.donnees;
+                }
+              } catch (e) {
+                // Silencieux
+              }
+            }
+          }
+
+          const decision = evaluerBotScript(botReplayActif.code, {
+            bougie: bougie,
+            index: indexActuel,
+            historique: fenetre,
+            indicateurs: {
+              smc,
+              swings,
+              zigzag,
+              uvp,
+              scripts: scriptsDonnees,
+              ...scriptsDonnees,
+            },
+            positionActive: null,
+            compte: { capitalInitial: 10000, capitalActuel: 10000, tradesEffectues: stateApres.historiqueSimule.length },
+            parametres: botReplayActif.parametres,
+          });
+
+          if (decision && (decision.action === 'BUY' || decision.action === 'SELL')) {
+            const direction = decision.action === 'BUY' ? 'long' : 'short';
+            const prixEntree = decision.prixEntree || bougie.close;
+            const sl = decision.stopLoss || (direction === 'long' ? prixEntree * 0.995 : prixEntree * 1.005);
+            const dist = Math.abs(prixEntree - sl);
+            const ratio = Number(botReplayActif.parametres.ratioRR || 2.0);
+            const tp = decision.takeProfit || (direction === 'long' ? prixEntree + dist * ratio : prixEntree - dist * ratio);
+
+            ouvrirPosition(direction, prixEntree, sl, tp);
+            addToast(`🤖 [${botReplayActif.nom}] Ordre ${decision.action} exécuté à ${prixEntree}`, 'info');
+          }
+        }
       }
     }, vitesseLecture);
+
     return () => clearInterval(intervalle);
-  }, [estEnLecture, vitesseLecture, avancerBougie]);
+  }, [estEnLecture, vitesseLecture, avancerBougie, botReplayActif, archiverPositionActive, ouvrirPosition, addToast]);
 
   // ─── Automatisation du Journaling en 2 Étapes ───────────────────────────────
   const [initialisantPlanification, setInitialisantPlanification] = useState(false);
   const [initialisantResolution, setInitialisantResolution] = useState(false);
+
+  // Modale mobile ultra-rapide (< 16ms) pour planifier/enregistrer un trade sans freeze
+  const [modalMobileOuverte, setModalMobileOuverte] = useState(false);
+  const [promiseCaptureMobile, setPromiseCaptureMobile] = useState<Promise<{ id: string; url: string; source: 'upload'; phase: 'avant' | 'apres'; storage_path?: string } | null> | null>(null);
 
   // Capture le graphique et upload vers Supabase — utilisée automatiquement ET manuellement
   // Retourne l'objet image prêt à insérer dans le formulaire, ou null si erreur
@@ -577,8 +731,18 @@ export function BacktestWorkspace() {
     }
   };
 
-  const initialiserPlanificationTrade = useCallback(async (position: PositionSimulee) => {
-    // 1️⃣ Capture automatique du graphique EN PREMIER (pendant que le graphique est en plein cadre, avant que le drawer ne sort)
+  const initialiserPlanificationTrade = useCallback(async (position: PositionSimulee, forcerDesktop: boolean = false) => {
+    // 🚀 Sur mobile (smartphone) : ouverture instantanée de la modal tactile dédiée (< 16ms)
+    // La capture d'écran s'effectue en arrière-plan sans bloquer l'interface
+    if (estMobile && !forcerDesktop) {
+      console.log('⚡ [Backtest] Ouverture instantanée de la modale mobile de planification');
+      const capturePromise = capturerGraphique('avant');
+      setPromiseCaptureMobile(capturePromise);
+      setModalMobileOuverte(true);
+      return;
+    }
+
+    // 1️⃣ Capture automatique du graphique EN PREMIER (mode bureau)
     const imageAvant = await capturerGraphique('avant');
 
     // 2️⃣ Activation de l'état d'initialisation pour faire sortir le drawer
@@ -603,6 +767,13 @@ export function BacktestWorkspace() {
       annee: anneeCloud,
       timeframe: timeframe,
       timestamp: timestampUnix,
+      prixEntree: position.prixEntree,
+      stopLoss: position.stopLoss,
+      takeProfit: position.takeProfit,
+      direction: position.direction,
+      dureeEstimeeHeures: position.dureeEstimeeHeures,
+      dureeEstimeeBougies: position.dureeEstimeeBougies,
+      dureeEstimeeLargeur: position.dureeEstimeeLargeur,
     };
 
     const prefillObj = {
@@ -639,10 +810,20 @@ export function BacktestWorkspace() {
     openNewTradeWithPrefill(prefillObj);
 
     setInitialisantPlanification(false);
-  }, [actif, paireCloud, journalDest, timeframe, openNewTradeWithPrefill, capturerGraphique]);
+  }, [actif, paireCloud, journalDest, timeframe, openNewTradeWithPrefill, capturerGraphique, estMobile]);
 
-  const initialiserResolutionTrade = useCallback(async (position: PositionSimulee) => {
-    // 1️⃣ Capture automatique du graphique EN PREMIER (pendant que le graphique est en plein cadre, avant que le drawer ne sort)
+  const initialiserResolutionTrade = useCallback(async (position: PositionSimulee, forcerDesktop: boolean = false) => {
+    // 🚀 Sur mobile (smartphone) : ouverture instantanée de la modal tactile dédiée (< 16ms)
+    // La capture d'écran s'effectue en arrière-plan sans bloquer l'interface
+    if (estMobile && !forcerDesktop) {
+      console.log('⚡ [Backtest] Ouverture instantanée de la modale mobile de résolution');
+      const capturePromise = capturerGraphique('apres');
+      setPromiseCaptureMobile(capturePromise);
+      setModalMobileOuverte(true);
+      return;
+    }
+
+    // 1️⃣ Capture automatique du graphique EN PREMIER (mode bureau)
     const imageApres = await capturerGraphique('apres');
 
     // 2️⃣ Activation de l'état d'initialisation pour faire sortir le drawer
@@ -685,6 +866,13 @@ export function BacktestWorkspace() {
       annee: anneeCloud,
       timeframe: timeframe,
       timestamp: timestampUnix,
+      prixEntree: position.prixEntree,
+      stopLoss: position.stopLoss,
+      takeProfit: position.takeProfit,
+      direction: position.direction,
+      dureeEstimeeHeures: position.dureeEstimeeHeures,
+      dureeEstimeeBougies: position.dureeEstimeeBougies,
+      dureeEstimeeLargeur: position.dureeEstimeeLargeur,
     };
 
     const prefillObj = {
@@ -720,7 +908,18 @@ export function BacktestWorkspace() {
     openNewTradeWithPrefill(prefillObj);
 
     setInitialisantResolution(false);
-  }, [actif, paireCloud, journalDest, timeframe, openNewTradeWithPrefill, capturerGraphique]);
+  }, [actif, paireCloud, journalDest, timeframe, openNewTradeWithPrefill, capturerGraphique, estMobile]);
+
+  // Permet à l'utilisateur sur mobile d'ouvrir le grand formulaire complet avec confluences
+  const handleOuvrirFormulaireComplet = useCallback(() => {
+    setModalMobileOuverte(false);
+    if (!positionActive) return;
+    if (!positionActive.estCloturee) {
+      initialiserPlanificationTrade(positionActive, true);
+    } else {
+      initialiserResolutionTrade(positionActive, true);
+    }
+  }, [positionActive, initialiserPlanificationTrade, initialiserResolutionTrade]);
 
   // Hook pour observer l'ouverture d'une nouvelle position active (Étape 1) - Déclenchement auto désactivé
   const lastPositionRef = useRef<PositionSimulee | null>(null);
@@ -754,13 +953,15 @@ export function BacktestWorkspace() {
       }
       // Échap : quitter plein écran et revenir au curseur
       if (e.code === 'Escape') {
-        setEstPleinEcran(false);
+        if (estPleinEcran) {
+          basculerPleinEcran();
+        }
         setOutilActif(null);
       }
     };
     window.addEventListener('keydown', gererTouche);
     return () => window.removeEventListener('keydown', gererTouche);
-  }, [estEnLecture, avancerBougie, setEstEnLecture]);
+  }, [estEnLecture, avancerBougie, setEstEnLecture, estPleinEcran, basculerPleinEcran]);
 
   // ─── Importation CSV (Supporte la sélection multiple .csv et .csv.gz) ──────
   const gererCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -825,8 +1026,101 @@ export function BacktestWorkspace() {
     }
   };
 
+  // ─── Téléchargement Cloud Multi-Miroirs (avec système de fallback automatique) ─
+  /**
+   * Télécharge un fichier Forex compressé (.csv.gz) depuis le Cloud avec basculement automatique sur plusieurs miroirs.
+   * Résout les blocages et les timeouts réseau en tentant GitHub Raw en priorité.
+   * 
+   * Exemple :
+   * const reponse = await telechargerFichierCloud('EURUSD_M1_2025.csv.gz');
+   */
+  const telechargerFichierCloud = async (nomFichier: string): Promise<Response> => {
+    // Miroirs en ordre de priorité — GitHub Raw est le plus fiable pour les fichiers publics
+    const miroirs = [
+      `https://raw.githubusercontent.com/fre-max/Forex_Data/main/forex_data/${nomFichier}`,
+      `https://github.com/fre-max/Forex_Data/raw/main/forex_data/${nomFichier}`,
+      `https://cdn.jsdelivr.net/gh/fre-max/Forex_Data@main/forex_data/${nomFichier}`,
+      `https://cdn.statically.io/gh/fre-max/Forex_Data/main/forex_data/${nomFichier}`,
+    ];
+
+    // Résumé des tentatives pour afficher un message d'erreur utile à l'utilisateur
+    const tentatives: string[] = [];
+    let derniereErreur: Error | null = null;
+
+    for (const url of miroirs) {
+      try {
+        console.log(`📡 [Cloud Loader] Tentative sur : ${url}`);
+        // Timeout de 25s — assez long pour les connexions mobiles lentes
+        const controleur = new AbortController();
+        const idTimeout = setTimeout(() => controleur.abort(), 25000);
+
+        // mode: 'cors' est explicite pour éviter les requêtes opaque sur les CDN
+        const reponse = await fetch(url, {
+          signal: controleur.signal,
+          mode: 'cors',
+          cache: 'default',
+        });
+        clearTimeout(idTimeout);
+
+        if (reponse.ok) {
+          console.log(`✅ [Cloud Loader] Succès sur : ${url}`);
+          return reponse;
+        } else {
+          const msg = `HTTP ${reponse.status} sur ${url}`;
+          console.warn(`⚠️ [Cloud Loader] ${msg}`);
+          tentatives.push(msg);
+          derniereErreur = new Error(msg);
+        }
+      } catch (erreur: any) {
+        const message = erreur?.name === 'AbortError'
+          ? `Timeout (25s) sur ${url}`
+          : `${erreur?.message || String(erreur)} — sur ${url}`;
+        console.warn(`⚠️ [Cloud Loader] Échec miroir : ${message}`);
+        tentatives.push(message);
+        derniereErreur = erreur;
+      }
+    }
+
+    // Message d'erreur détaillé avec toutes les tentatives pour faciliter le debug
+    const detail = tentatives.map((t, i) => `${i + 1}. ${t}`).join('\n');
+    throw new Error(
+      `Impossible de télécharger ${nomFichier}.\n\nTentatives échouées :\n${detail}\n\nVérifie ta connexion ou charge un fichier CSV localement.`
+    );
+  };
+
+  /**
+   * Décompresse un fichier gzip en texte de manière universelle.
+   * Tente d'abord le DecompressionStream natif du navigateur, et bascule sur pako
+   * si la WebView Android ne fournit pas de flux de décompression complet.
+   */
+  const decompresserGzipEnTexte = async (reponse: Response): Promise<string> => {
+    const buffer = await reponse.arrayBuffer();
+
+    // 1. Essai avec DecompressionStream natif
+    if (typeof DecompressionStream !== 'undefined') {
+      try {
+        const blob = new Blob([buffer]);
+        const stream = blob.stream().pipeThrough(new DecompressionStream('gzip'));
+        const texte = await new Response(stream).text();
+        if (texte && texte.length > 0) return texte;
+      } catch (e) {
+        console.warn('⚠️ [Decompress] Fallback vers le décompresseur pako:', e);
+      }
+    }
+
+    // 2. Fallback universel pako (supporté sur 100% des smartphones Android et iOS)
+    const pako = await import('pako');
+    return pako.ungzip(new Uint8Array(buffer), { to: 'string' });
+  };
+
   // ─── Chargement Cloud / Cache Local depuis IndexedDB ───────────────────────
-  const chargerDonneesCloud = async (paireSel: string, anneeSel: string, targetTimestamp?: number, targetTimeframe?: string) => {
+  const chargerDonneesCloud = async (
+    paireSel: string,
+    anneeSel: string,
+    targetTimestamp?: number,
+    targetTimeframe?: string,
+    targetPosition?: ContexteRestaurationReplay['position']
+  ) => {
     setChargement(true);
     setErreur(null);
     try {
@@ -836,21 +1130,13 @@ export function BacktestWorkspace() {
       // 1️⃣ Tentative de lecture depuis le cache IndexedDB local (Mode Offline First)
       bougiesM1 = await recupererBougiesM1Cache(paireSel, anneeSel);
 
-      // 2️⃣ Si les données ne sont pas en cache local, on essaie de les télécharger depuis le Cloud
+      // 2️⃣ Si les données ne sont pas en cache local, on les télécharge depuis le Cloud
       if (!bougiesM1 || bougiesM1.length === 0) {
         const nomFichier = `${paireSel.toUpperCase()}_M1_${anneeSel}.csv.gz`;
-        const url = `https://cdn.jsdelivr.net/gh/fre-max/Forex_Data@main/forex_data/${nomFichier}`;
         
-        console.log(`📡 [Cloud Loader] Téléchargement de ${url}...`);
-        const reponse = await fetch(url);
-        if (!reponse.ok) {
-          throw new Error(`Impossible de trouver l'historique pour ${paireSel} (${anneeSel}) sur le serveur.`);
-        }
-        
-        const stream = reponse.body?.pipeThrough(new DecompressionStream('gzip'));
-        if (!stream) throw new Error("Impossible d'initialiser le flux de décompression.");
-        
-        const texteCsv = await new Response(stream).text();
+        console.log(`📡 [Cloud Loader] Début du téléchargement de ${nomFichier}...`);
+        const reponse = await telechargerFichierCloud(nomFichier);
+        const texteCsv = await decompresserGzipEnTexte(reponse);
         bougiesM1 = parserCsvPrix(texteCsv);
 
         // 3️⃣ Enregistrement dans IndexedDB pour les prochaines fois (et le mode offline)
@@ -874,24 +1160,67 @@ export function BacktestWorkspace() {
       // Si un timestamp de ciblage est spécifié (restauration de trade)
       if (targetTimestamp !== undefined) {
         const targetTimeVal = targetTimestamp;
-        let indexTrouve = bougiesAgregees.findIndex(b => {
-          const t = typeof b.time === 'number' ? b.time : Math.floor(new Date(b.time).getTime() / 1000);
-          return t === targetTimeVal;
+        let indexTrouve = -1;
+
+        // 1. Recherche exacte
+        indexTrouve = bougiesAgregees.findIndex((b) => {
+          const tempsSec: number = typeof b.time === 'number' ? b.time : Math.floor(new Date(b.time).getTime() / 1000);
+          return tempsSec === targetTimeVal;
         });
 
-        // Si non trouvé exactement, cherche le plus proche inférieur ou égal
+        // 2. Si non trouvé exactement (ex: trade pris en cours de bougie H1 ou M15),
+        // on cherche la dernière bougie dont le timestamp est <= targetTimeVal
         if (indexTrouve === -1) {
-          indexTrouve = bougiesAgregees.findIndex(b => {
-            const t = typeof b.time === 'number' ? b.time : Math.floor(new Date(b.time).getTime() / 1000);
-            return t > targetTimeVal;
-          }) - 1;
+          for (let i = bougiesAgregees.length - 1; i >= 0; i--) {
+            const rawTime = bougiesAgregees[i].time;
+            const tempsSec: number = typeof rawTime === 'number'
+              ? rawTime
+              : Math.floor(new Date(rawTime).getTime() / 1000);
+            if (tempsSec <= targetTimeVal) {
+              indexTrouve = i;
+              break;
+            }
+          }
         }
 
         if (indexTrouve >= 0 && indexTrouve < bougiesAgregees.length) {
-          // On avance l'index de + 15 bougies pour laisser voir le déclenchement et un bout du déroulement
-          const indexCible = Math.min(indexTrouve + 15, bougiesAgregees.length - 1);
-          console.log(`🎯 [Replay Link] Positionnement du graphique à l'index ${indexCible} (bougie exacte index ${indexTrouve})`);
-          useBacktestStore.setState({ indexCourant: indexCible });
+          // 👉 POSITION EXACTE : la bougie courante est PRÉCISÉMENT la bougie d'entrée du trade
+          const indexCible = indexTrouve;
+          console.log(`🎯 [Replay Link] Replay positionné au moment EXACT de la prise de position (index ${indexCible}, bougie ${bougiesAgregees[indexCible].time})`);
+
+          // 3. Si une position est fournie, on initialise directement l'objet position active pour l'afficher sur le graphique
+          let positionActiveRestauree: PositionSimulee | null = null;
+          if (targetPosition && targetPosition.prixEntree) {
+            const bougieEntree = bougiesAgregees[indexCible];
+            positionActiveRestauree = {
+              direction: targetPosition.direction,
+              prixEntree: targetPosition.prixEntree,
+              stopLoss: targetPosition.stopLoss,
+              takeProfit: targetPosition.takeProfit,
+              dateEntree: bougieEntree.time,
+              indexEntree: indexCible,
+              dureeEstimeeLargeur: targetPosition.dureeEstimeeLargeur ?? 30,
+              dureeEstimeeBougies: targetPosition.dureeEstimeeBougies ?? 12,
+              dureeEstimeeHeures: targetPosition.dureeEstimeeHeures,
+              tradeIdSupabase: targetPosition.tradeIdSupabase,
+              estCloturee: false,
+            };
+            console.log(`📦 [Replay Link] Objet position restauré et affiché sur le graphique :`, positionActiveRestauree);
+          }
+
+          useBacktestStore.setState({
+            indexCourant: indexCible,
+            positionActive: positionActiveRestauree,
+            historiqueSimule: [],
+            estEnLecture: false,
+          });
+
+          // 4. Cadrage du graphique sur la bougie d'entrée avec du recul à gauche pour voir le setup
+          setTimeout(() => {
+            if (chartRef.current) {
+              chartRef.current.cadrerSurIndex(indexCible, 50);
+            }
+          }, 200);
         } else {
           console.warn(`[Replay Link] Impossible de trouver la bougie pour le timestamp ${targetTimestamp}`);
         }
@@ -921,23 +1250,12 @@ export function BacktestWorkspace() {
     const anneePrecedente = anneeMinimumChargee - 1;
     const paireActive = paireCloud.toUpperCase();
     const nomFichier = `${paireActive}_M1_${anneePrecedente}.csv.gz`;
-    const url = `https://cdn.jsdelivr.net/gh/fre-max/Forex_Data@main/forex_data/${nomFichier}`;
 
     console.log(`☁️ [Cloud Loader] Chargement de l'année ${anneePrecedente} depuis le Cloud...`);
     
     try {
-      const reponse = await fetch(url);
-      if (!reponse.ok) {
-        console.warn(`[Cloud Loader] L'année ${anneePrecedente} n'est pas disponible pour ${paireActive}.`);
-        isFetchingPrevYear.current = false;
-        setAnneeMinimumChargee(anneePrecedente);
-        return;
-      }
-
-      const stream = reponse.body?.pipeThrough(new DecompressionStream('gzip'));
-      if (!stream) throw new Error("Impossible d'initialiser le flux de décompression.");
-
-      const texteCsv = await new Response(stream).text();
+      const reponse = await telechargerFichierCloud(nomFichier);
+      const texteCsv = await decompresserGzipEnTexte(reponse);
       const anciennesBougiesM1 = parserCsvPrix(texteCsv);
 
       const nouvellesBougiesM1 = [...anciennesBougiesM1, ...donneesM1Chargees];
@@ -1150,13 +1468,14 @@ export function BacktestWorkspace() {
   // ─── Rendu ─────────────────────────────────────────────────────────────────
   return (
     <div className={`flex flex-col overflow-hidden transition-colors duration-200 ${C.bgWorkspace}
-      ${estPleinEcran ? 'fixed inset-0 z-[200]' : 'flex-1'}`}
+      ${estPleinEcran ? 'fixed inset-0 z-[200] w-screen h-screen' : 'flex-1'}`}
     >
 
       {/* ══════════════════════════════════════════════════════════ */}
-      {/* BARRE SUPÉRIEURE — style TradingView Header               */}
+      {/* BARRE SUPÉRIEURE — Masquée en Mode Plein Écran Total      */}
       {/* ══════════════════════════════════════════════════════════ */}
-      <div className={`flex items-center gap-2 px-4 h-12 border-b flex-shrink-0 overflow-x-auto whitespace-nowrap scrollbar-none ${C.bgHeader}`}>
+      {!estPleinEcran && (
+        <div className={`flex items-center gap-2 px-4 h-12 border-b flex-shrink-0 overflow-x-auto whitespace-nowrap scrollbar-none ${C.bgHeader}`}>
 
 
 
@@ -1414,6 +1733,58 @@ export function BacktestWorkspace() {
           )}
         </button>
 
+        {/* ── Bouton Modal Gestionnaire d'Indicateurs & Télémétrie (Style TradingView) ── */}
+        <button
+          onClick={() => setModalIndicateursOuvert(true)}
+          className={`flex-shrink-0 px-2.5 py-1 text-[12px] font-semibold rounded transition-all flex items-center gap-1.5 border ${
+            nbIndicateursActifs > 0
+              ? 'bg-sky-950/80 border-sky-500 text-sky-200 shadow-sm'
+              : C.btnBase
+          }`}
+          title="Ouvrir le gestionnaire d'indicateurs graphiques et la configuration de télémétrie"
+        >
+          <span className="flex items-center justify-center w-4 h-4 text-[10px] font-bold text-sky-400 bg-sky-900/60 rounded border border-sky-500/40">
+            fx
+          </span>
+          <span className={nbIndicateursActifs > 0 ? 'text-sky-300 font-bold' : 'text-slate-400'}>
+            Indicateurs
+          </span>
+          {nbIndicateursActifs > 0 && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold font-mono bg-sky-600 text-white">
+              {nbIndicateursActifs}
+            </span>
+          )}
+        </button>
+
+        {/* ── Bouton Modal Gestionnaire de Bots Automatisés ── */}
+        <button
+          onClick={() => setModalBotOuverte(true)}
+          className={`flex-shrink-0 px-2.5 py-1 text-[12px] font-semibold rounded transition-all flex items-center gap-1.5 border ${
+            botReplayActif
+              ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 shadow-sm animate-pulse'
+              : C.btnBase
+          }`}
+          title="Ouvrir le studio de bots de trading automatisés (extensions sans recompilation)"
+        >
+          <span>🤖</span>
+          <span className={botReplayActif ? 'text-emerald-300 font-bold' : 'text-slate-400'}>
+            Bots {botReplayActif ? `(${botReplayActif.nom.slice(0, 10)}...)` : ''}
+          </span>
+          {botReplayActif && (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                setBotReplayActif(null);
+                addToast('Replay visuel du bot arrêté.', 'info');
+              }}
+              className="ml-1 text-[10px] text-rose-400 hover:text-rose-200 px-1 rounded hover:bg-rose-950/50"
+              title="Arrêter le bot"
+            >
+              ✕
+            </span>
+          )}
+        </button>
+
         <div className={`flex-shrink-0 h-5 w-px ${C.separator}`} />
 
         {/* ── Bouton Thème (Clair / Sombre) ── */}
@@ -1427,18 +1798,19 @@ export function BacktestWorkspace() {
 
         {/* ── Bouton Plein Écran ── */}
         <button
-          onClick={() => setEstPleinEcran(!estPleinEcran)}
+          onClick={basculerPleinEcran}
           title={estPleinEcran ? 'Quitter le plein écran (Esc)' : 'Plein écran'}
           className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded transition-colors text-base ${C.btnBase}`}
         >
           {estPleinEcran ? '⊡' : '⊞'}
         </button>
       </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════════ */}
       {/* BANDEAU ET ACCORDÉONS ANALYSE FONDAMENTALE (MODE SPLIT)     */}
       {/* ══════════════════════════════════════════════════════════ */}
-      {fundamentalModeEnabled && (
+      {!estPleinEcran && fundamentalModeEnabled && (
         <div className="flex flex-col gap-2 p-2 bg-[#131722]/95 border-b border-[#2a2e39] flex-shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <FundamentalHeaderBadge snapshot={activeSnapshot} />
@@ -1462,7 +1834,7 @@ export function BacktestWorkspace() {
 
       {/* Modale d'importation CSV Macro */}
       {showMacroUploaderModal && (
-        <div className="fixed inset-0 z-[300] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[300] bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
           <MacroCSVUploader onClose={() => setShowMacroUploaderModal(false)} />
         </div>
       )}
@@ -1470,7 +1842,7 @@ export function BacktestWorkspace() {
       {/* ══════════════════════════════════════════════════════════ */}
       {/* BANDEAU STUDIO COLLECTE IA (QUAND LE MODE IA EST ACTIF)  */}
       {/* ══════════════════════════════════════════════════════════ */}
-      {modeStudioIA && (
+      {!estPleinEcran && modeStudioIA && (
         <div className="flex items-center justify-between gap-3 px-4 py-2 bg-indigo-950/40 border-b border-indigo-500/30 flex-shrink-0 overflow-x-auto text-xs">
           <div className="flex items-center gap-3">
             <span className="font-bold text-indigo-400 flex items-center gap-1.5 whitespace-nowrap">
@@ -1625,159 +1997,456 @@ export function BacktestWorkspace() {
       {/* ══════════════════════════════════════════════════════════ */}
       {/* CORPS PRINCIPAL : Toolbar Gauche + Graphique + Panel Droit */}
       {/* ══════════════════════════════════════════════════════════ */}
-      <div className="flex flex-col md:flex-row flex-1 overflow-y-auto md:overflow-hidden">
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden relative">
 
-        {/* ─── BARRE D'OUTILS DE TRACAGE (style TradingView) ─── */}
-        {/* Horizontale et défilante sur mobile, verticale sur écran moyen (md) */}
-        <div className={`w-full md:w-14 h-12 md:h-auto flex flex-row md:flex-col items-center p-1.5 md:pt-2 gap-1 md:gap-0.5 border-b md:border-b-0 md:border-r flex-shrink-0 overflow-x-auto md:overflow-y-auto scrollbar-none ${C.bgSidebar}`}>
-          {OUTILS_TRACAGE.map((groupe) => (
-            <React.Fragment key={groupe.group}>
-              {groupe.items.map((outil) => {
-                const estActif = outilActif === outil.id;
-                return (
+        {/* ─── BARRE D'OUTILS DE TRACAGE — Masquée en Plein Écran Total ─── */}
+        {!estPleinEcran && (
+          <div className={`w-full md:w-14 h-10 md:h-auto flex flex-row md:flex-col items-center p-1 md:pt-2 gap-1 md:gap-0.5 border-b md:border-b-0 md:border-r flex-shrink-0 overflow-x-auto md:overflow-y-auto scrollbar-none ${C.bgSidebar}`}>
+            {OUTILS_TRACAGE.map((groupe) => (
+              <React.Fragment key={groupe.group}>
+                {groupe.items.map((outil) => {
+                  const estActif = outilActif === outil.id;
+                  return (
+                    <button
+                      key={String(outil.id)}
+                      onClick={() => setOutilActif(estActif ? null : outil.id)}
+                      title={outil.title}
+                      className={`w-9 md:w-12 h-7 md:h-9 flex flex-col items-center justify-center rounded text-[8.5px] md:text-[9px] font-bold tracking-tight transition-all leading-tight px-0.5 flex-shrink-0
+                        ${estActif ? C.btnActive : C.btnBase}`}
+                    >
+                      {/* Icône SVG pour le curseur, texte pour les autres */}
+                      {outil.label === 'CURSOR' ? (
+                        <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 md:w-4 md:h-4" fill="currentColor">
+                          <path d="M2 1l12 6.5L9.5 9l-1 5.5L2 1z" />
+                        </svg>
+                      ) : (
+                        <span className="text-[9px] md:text-[10px] font-bold">{outil.label}</span>
+                      )}
+                    </button>
+                  );
+                })}
+                <div className={`w-px md:w-8 h-5 md:h-px mx-1 md:mx-0 my-0 md:my-1 flex-shrink-0 ${C.separator}`} />
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+
+        {/* ─── GRAPHIQUE PRINCIPAL (Prend 100% de l'espace) ─── */}
+        <div className="flex-1 min-w-0 flex-shrink-0 relative w-full h-full">
+
+          {/* En mode normal : WIDGET UT (Timeframe) flottant et déplaçable */}
+          {!estPleinEcran && (
+            <div
+              style={
+                hasDraggedUt
+                  ? { position: 'absolute', left: `${utPos.x}px`, top: `${utPos.y}px`, zIndex: 35 }
+                  : estMobile
+                    ? { position: 'absolute', left: '10px', top: '10px', zIndex: 35 }
+                    : { position: 'absolute', left: '80px', top: '20px', zIndex: 35 }
+              }
+              className={`flex items-center gap-1 p-1 md:p-1.5 rounded-lg border shadow-lg backdrop-blur-md select-none max-w-[calc(100vw-20px)] ${
+                theme === 'dark' ? 'bg-[#1e222d]/85 border-[#2a2e39]/90' : 'bg-white/85 border-[#e0e3eb]/90'
+              }`}
+            >
+              {/* Poignée de drag */}
+              <div
+                onMouseDown={handleDragStart}
+                onTouchStart={handleDragStart}
+                className={`cursor-grab active:cursor-grabbing px-1 text-xs select-none font-bold tracking-tight ${
+                  theme === 'dark' ? 'text-[#787b86]' : 'text-[#9598a1]'
+                }`}
+                title="Maintenir pour déplacer le sélecteur d'UT"
+              >
+                ⋮⋮
+              </div>
+              
+              {/* Boutons d'UT avec défilement horizontal fluide sur mobile */}
+              <div className="flex items-center gap-0.5 overflow-x-auto scrollbar-none py-0.5">
+                {TIMEFRAMES.map((tf) => (
                   <button
-                    key={String(outil.id)}
-                    onClick={() => setOutilActif(estActif ? null : outil.id)}
-                    title={outil.title}
-                    className={`w-10 md:w-12 h-8 md:h-9 flex flex-col items-center justify-center rounded text-[9px] font-bold tracking-tight transition-all leading-tight px-0.5 flex-shrink-0
-                      ${estActif ? C.btnActive : C.btnBase}`}
+                    key={tf.value}
+                    onClick={() => setTimeframe(tf.value)}
+                    className={`px-2 py-0.5 md:px-2.5 md:py-1 text-[10px] md:text-[11px] font-semibold rounded transition-colors whitespace-nowrap ${
+                      timeframe === tf.value ? C.btnActive : C.btnBase
+                    }`}
                   >
-                    {/* Icône SVG pour le curseur, texte pour les autres */}
-                    {outil.label === 'CURSOR' ? (
-                      <svg viewBox="0 0 16 16" className="w-4 h-4" fill="currentColor">
-                        <path d="M2 1l12 6.5L9.5 9l-1 5.5L2 1z" />
-                      </svg>
-                    ) : (
-                      <span className="text-[10px] font-bold">{outil.label}</span>
-                    )}
+                    {tf.label}
                   </button>
-                );
-              })}
-              <div className={`w-px md:w-8 h-6 md:h-px mx-1 md:mx-0 my-0 md:my-1 flex-shrink-0 ${C.separator}`} />
-            </React.Fragment>
-          ))}
-        </div>
+                ))}
+              </div>
 
-        {/* ─── GRAPHIQUE PRINCIPAL ─── */}
-        <div className="flex-1 min-w-0 flex-shrink-0 relative">
-          
-          {/* WIDGET UT (Timeframe) flottant et déplaçable par l'utilisateur */}
-          <div
-            style={
-              hasDraggedUt
-                ? { position: 'absolute', left: `${utPos.x}px`, top: `${utPos.y}px`, zIndex: 100 }
-                : { position: 'absolute', left: '80px', top: '20px', zIndex: 100 }
-            }
-            className={`flex items-center gap-1.5 p-1.5 rounded-lg border shadow-lg backdrop-blur-md select-none ${
-              theme === 'dark' ? 'bg-[#1e222d]/85 border-[#2a2e39]/90' : 'bg-white/85 border-[#e0e3eb]/90'
-            }`}
-          >
-            {/* Poignée de drag */}
-            <div
-              onMouseDown={handleDragStart}
-              onTouchStart={handleDragStart}
-              className={`cursor-grab active:cursor-grabbing px-1 text-xs select-none font-bold tracking-tight ${
-                theme === 'dark' ? 'text-[#787b86]' : 'text-[#9598a1]'
-              }`}
-              title="Maintenir pour déplacer le sélecteur d'UT"
-            >
-              ⋮⋮
+              {/* Bouton raccourci Plein Écran toujours à portée de main */}
+              <div className="w-px h-4 bg-border2 mx-0.5" />
+              <button
+                onClick={basculerPleinEcran}
+                className="px-2 py-0.5 md:px-2.5 md:py-1 text-[10px] md:text-[11px] font-bold rounded bg-accent/15 hover:bg-accent/25 text-accent flex items-center gap-1 transition-all whitespace-nowrap"
+                title="Passer en mode Plein Écran immersif"
+              >
+                <span>⛶</span>
+                <span className="hidden sm:inline">Plein Écran</span>
+              </button>
             </div>
-            
-            {/* Boutons d'UT */}
-            <div className="flex items-center gap-0.5">
-              {TIMEFRAMES.map((tf) => (
+          )}
+
+          {/* En mode normal : DOCK FLOATING DE REPLAY */}
+          {!estPleinEcran && (
+            <div
+              style={
+                hasDraggedReplay
+                  ? { position: 'absolute', left: `${replayPos.x}px`, top: `${replayPos.y}px`, zIndex: 90 }
+                  : estMobile
+                    ? { position: 'absolute', bottom: '12px', left: '50%', transform: 'translateX(-50%)', zIndex: 90 }
+                    : { position: 'absolute', right: '24px', bottom: '24px', zIndex: 90 }
+              }
+              className={`flex items-center gap-1 md:gap-1.5 p-1.5 md:p-2 rounded-xl border shadow-2xl backdrop-blur-md select-none ${
+                theme === 'dark' ? 'bg-[#1e222d]/90 border-[#2a2e39]' : 'bg-white/90 border-[#e0e3eb]'
+              }`}
+            >
+              {/* Poignée de drag */}
+              <div
+                onMouseDown={handleDragReplayStart}
+                onTouchStart={handleDragReplayStart}
+                className={`cursor-grab active:cursor-grabbing px-1.5 py-1 text-xs select-none font-bold tracking-tight ${
+                  theme === 'dark' ? 'text-[#787b86]' : 'text-[#9598a1]'
+                }`}
+                title="Maintenir pour déplacer les contrôles de Replay"
+              >
+                ⋮⋮
+              </div>
+
+              {/* Mode Replay / Découpe ✂️ */}
+              <button
+                onClick={() => setOutilActif(outilActif === 'replay-cut' ? null : 'replay-cut')}
+                title="Mode Replay — Cliquer sur une bougie pour démarrer"
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
+                  outilActif === 'replay-cut' ? C.btnActive : C.btnBase
+                }`}
+              >
+                ✂️
+              </button>
+
+              <div className={`w-px h-5 ${C.separator}`} />
+
+              {/* ⏪ Reculer/Bougie précédente */}
+              <button
+                onClick={() => reculerBougie()}
+                title="Bougie précédente"
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
+              >
+                ⏪
+              </button>
+
+              {/* ▶ / ⏸ Play / Pause */}
+              <button
+                onClick={() => setEstEnLecture(!estEnLecture)}
+                title={estEnLecture ? 'Pause (Espace)' : 'Lecture (Espace)'}
+                className={`w-9 h-8 flex items-center justify-center rounded-lg text-sm font-bold transition-all ${
+                  estEnLecture ? 'bg-[#ff9800] text-white hover:bg-[#f57c00]' : 'bg-[#26a69a] text-white hover:bg-[#00897b]'
+                }`}
+              >
+                {estEnLecture ? '⏸' : '▶'}
+              </button>
+
+              {/* ⏩ Avancer / Bougie suivante */}
+              <button
+                onClick={() => {
+                  setEstEnLecture(false);
+                  avancerBougie();
+                }}
+                title="Bougie suivante (→)"
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
+              >
+                ⏩
+              </button>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════ */}
+          {/* CONTRÔLES EN MODE PLEIN ÉCRAN TOTAL                        */}
+          {/* Layout : Haut-Gauche (paire+TF) | Haut-Droite (thème+quit) */}
+          {/*          Bas-Gauche (outils)    | Bas-Droite (replay)       */}
+          {/* ══════════════════════════════════════════════════════════ */}
+          {estPleinEcran && (
+            <>
+              {/* 1️⃣ HAUT-GAUCHE : Badge paire + Timeframes */}
+              <div className="absolute top-2.5 left-2.5 z-[110] flex items-center gap-1.5 p-1 rounded-xl bg-[#1e222d]/85 border border-[#2a2e39] backdrop-blur-md shadow-xl text-white select-none">
+                {/* Badge Actif avec indicateur live */}
+                <div className="flex items-center gap-1.5 px-2 py-0.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="font-bold text-xs tracking-wide">
+                    {actif !== 'Aucun actif' && actif ? actif : paireCloud}
+                  </span>
+                </div>
+
+                <div className="w-px h-3.5 bg-white/15" />
+
+                {/* Timeframes : clic direct, pas de menu déroulant */}
+                <div className="flex items-center gap-0.5">
+                  {['1m', '5m', '15m', '1h', '4h', '1d'].map((tf) => (
+                    <button
+                      key={tf}
+                      onClick={() => setTimeframe(tf)}
+                      className={`px-1.5 py-0.5 rounded-md text-[10.5px] font-bold transition-all ${
+                        timeframe === tf
+                          ? 'bg-[#2962ff] text-white shadow'
+                          : 'text-white/60 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {tf}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2️⃣ HAUT-DROITE : Bouton trade + Thème + Quitter */}
+              <div className="absolute top-2.5 right-2.5 z-[110] flex items-center gap-1.5 select-none">
+
+                {/* Bouton Bots en mode plein écran */}
                 <button
-                  key={tf.value}
-                  onClick={() => setTimeframe(tf.value)}
-                  className={`px-2.5 py-1 text-[11px] font-semibold rounded transition-colors ${
-                    timeframe === tf.value ? C.btnActive : C.btnBase
+                  onClick={() => setModalBotOuverte(true)}
+                  className={`flex items-center gap-1 px-2 h-7 rounded-xl backdrop-blur-md border text-xs font-bold shadow-xl transition-all active:scale-95 ${
+                    botReplayActif
+                      ? 'bg-emerald-600/90 text-white border-emerald-400/40 animate-pulse'
+                      : 'bg-[#1e222d]/85 hover:bg-[#2a2e39] text-white border-[#2a2e39]'
                   }`}
+                  title="Ouvrir le Studio de Bots"
                 >
-                  {tf.label}
+                  <span>🤖</span>
+                  <span className="hidden sm:inline">{botReplayActif ? 'Bot Actif' : 'Bots'}</span>
                 </button>
-              ))}
-            </div>
-          </div>
 
-          {/* DOCK FLOATING DE REPLAY (Déplaçable et facile d'accès tactile pour tablette, sans vitesse) */}
-          <div
-            style={
-              hasDraggedReplay
-                ? { position: 'absolute', left: `${replayPos.x}px`, top: `${replayPos.y}px`, zIndex: 90 }
-                : { position: 'absolute', right: '24px', bottom: '24px', zIndex: 90 }
-            }
-            className={`flex items-center gap-1.5 p-2 rounded-xl border shadow-2xl backdrop-blur-md select-none ${
-              theme === 'dark' ? 'bg-[#1e222d]/90 border-[#2a2e39]' : 'bg-white/90 border-[#e0e3eb]'
-            }`}
-          >
-            {/* Poignée de drag */}
-            <div
-              onMouseDown={handleDragReplayStart}
-              onTouchStart={handleDragReplayStart}
-              className={`cursor-grab active:cursor-grabbing px-1.5 py-1 text-xs select-none font-bold tracking-tight ${
-                theme === 'dark' ? 'text-[#787b86]' : 'text-[#9598a1]'
-              }`}
-              title="Maintenir pour déplacer les contrôles de Replay"
-            >
-              ⋮⋮
-            </div>
+                {/* Bouton Planifier / Enregistrer — visible uniquement si une position est active */}
+                {positionActive && (
+                  !positionActive.estCloturee ? (
+                    // Position ouverte → bouton Planifier
+                    <button
+                      onClick={() => initialiserPlanificationTrade(positionActive)}
+                      disabled={initialisantPlanification}
+                      className="flex items-center gap-1 px-2.5 h-7 rounded-xl bg-[#7c3aed]/90 hover:bg-[#6d28d9] backdrop-blur-md border border-[#7c3aed]/40 text-white text-[10px] font-bold shadow-xl transition-all active:scale-95 disabled:opacity-50"
+                      title="Planifier ce trade dans le journal"
+                    >
+                      {initialisantPlanification ? (
+                        <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : '📝'}
+                      Planifier
+                    </button>
+                  ) : (
+                    // Position clôturée → bouton Enregistrer
+                    <button
+                      onClick={() => initialiserResolutionTrade(positionActive)}
+                      disabled={initialisantResolution}
+                      className="flex items-center gap-1 px-2.5 h-7 rounded-xl bg-[#10b981]/90 hover:bg-[#059669] backdrop-blur-md border border-[#10b981]/40 text-white text-[10px] font-bold shadow-xl transition-all active:scale-95 disabled:opacity-50"
+                      title="Enregistrer le résultat dans le journal"
+                    >
+                      {initialisantResolution ? (
+                        <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : '📝'}
+                      Enregistrer
+                    </button>
+                  )
+                )}
 
-            {/* Mode Replay / Découpe ✂️ */}
-            <button
-              onClick={() => setOutilActif(outilActif === 'replay-cut' ? null : 'replay-cut')}
-              title="Mode Replay — Cliquer sur une bougie pour démarrer"
-              className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
-                outilActif === 'replay-cut' ? C.btnActive : C.btnBase
-              }`}
-            >
-              ✂️
-            </button>
+                {/* Toggle thème clair/sombre */}
+                <button
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  title={theme === 'dark' ? 'Passer au thème clair' : 'Passer au thème sombre'}
+                  className="w-7 h-7 flex items-center justify-center rounded-xl bg-[#1e222d]/85 hover:bg-[#2a2e39] backdrop-blur-md border border-[#2a2e39] text-white text-xs shadow-xl transition-all active:scale-95"
+                >
+                  {theme === 'dark' ? '☀️' : '🌙'}
+                </button>
 
-            <div className={`w-px h-5 ${C.separator}`} />
+                {/* Quitter le plein écran */}
+                <button
+                  onClick={basculerPleinEcran}
+                  className="flex items-center justify-center w-7 h-7 rounded-xl bg-[#1e222d]/85 hover:bg-red-500/90 hover:border-red-500/40 backdrop-blur-md border border-[#2a2e39] text-white text-xs font-bold shadow-xl transition-all active:scale-95"
+                  title="Quitter le mode plein écran (Esc)"
+                >
+                  ✕
+                </button>
+              </div>
 
-            {/* ⏮ Retour au début */}
-            <button
-              onClick={revenirDebut}
-              title="Retour au début"
-              className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
-            >
-              ⏮
-            </button>
+              {/* 5️⃣ TRADE DRAWER EN PLEIN ÉCRAN */}
+              {/* En mode fullscreen (z-[200]), le TradeDrawer doit être à z-[300] pour passer par-dessus */}
+              {/* Sans ça, le drawer (z-[100]) resterait masqué par le conteneur plein écran */}
+              {(isNewTradeOpen || initialisantPlanification || initialisantResolution) && (
+                <div className="absolute inset-0 z-[300] flex">
+                  {/* Overlay semi-transparent derrière le drawer */}
+                  <div className="absolute inset-0 bg-black/60" />
 
-            {/* ⏪ Reculer/Bougie précédente */}
-            <button
-              onClick={() => reculerBougie()}
-              title="Bougie précédente"
-              className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
-            >
-              ⏪
-            </button>
+                  {/* Le panneau du drawer à droite */}
+                  <div className="absolute top-0 right-0 h-full w-full max-w-[420px] flex flex-col bg-surface border-l border-border shadow-2xl">
+                    {initialisantPlanification || initialisantResolution ? (
+                      // Spinner pendant la capture automatique du graphique
+                      <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-3 text-center">
+                        <span className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                        <p className="text-xs font-semibold text-txt">
+                          {initialisantPlanification
+                            ? 'Planification : capture automatique du graphique...'
+                            : 'Résolution : capture automatique de clôture...'}
+                        </p>
+                        <p className="text-[10px] text-txt3">Veuillez patienter pendant l'upload...</p>
+                      </div>
+                    ) : (
+                      <TradeDrawer isInline={true} backtestMode={true} onCaptureGraphique={capturerGraphique} />
+                    )}
+                  </div>
+                </div>
+              )}
 
+              {/* 3️⃣ BAS-GAUCHE : Barre horizontale d'outils de dessin (toujours visible) */}
+              {/* Les outils sont en bas pour que le pouce les atteigne facilement sur mobile */}
+              <div className="absolute bottom-2.5 left-2.5 z-[110] flex items-center gap-0.5 p-1 rounded-2xl bg-[#1e222d]/90 border border-[#2a2e39] backdrop-blur-md shadow-2xl select-none">
+                {/* Curseur */}
+                <button
+                  onClick={() => setOutilActif(null)}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === null ? 'bg-[#2962ff] text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Curseur / Sélection"
+                >
+                  <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor">
+                    <path d="M2 1l12 6.5L9.5 9l-1 5.5L2 1z" />
+                  </svg>
+                </button>
 
-            {/* ▶ / ⏸ Play / Pause */}
-            <button
-              onClick={() => setEstEnLecture(!estEnLecture)}
-              title={estEnLecture ? 'Pause (Espace)' : 'Lecture (Espace)'}
-              className={`w-9 h-8 flex items-center justify-center rounded-lg text-sm font-bold transition-all ${
-                estEnLecture ? 'bg-[#ff9800] text-white hover:bg-[#f57c00]' : 'bg-[#26a69a] text-white hover:bg-[#00897b]'
-              }`}
-            >
-              {estEnLecture ? '⏸' : '▶'}
-            </button>
+                <div className="w-px h-4 bg-white/10 mx-0.5" />
 
-            {/* ⏩ Avancer / Bougie suivante */}
-            <button
-              onClick={() => {
-                setEstEnLecture(false);
-                avancerBougie();
-              }}
-              title="Bougie suivante (→)"
-              className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
-            >
-              ⏩
-            </button>
-          </div>
+                {/* Ligne de tendance */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'trend-line' ? null : 'trend-line')}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === 'trend-line' ? 'bg-[#2962ff] text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Ligne de tendance ╱"
+                >
+                  ╱
+                </button>
+
+                {/* Ligne horizontale */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'horizontal-line' ? null : 'horizontal-line')}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === 'horizontal-line' ? 'bg-[#2962ff] text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Ligne horizontale ―"
+                >
+                  ―
+                </button>
+
+                {/* Rectangle / Zone POI */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'rectangle' ? null : 'rectangle')}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === 'rectangle' ? 'bg-[#2962ff] text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Zone POI / Rectangle ▭"
+                >
+                  ▭
+                </button>
+
+                {/* Retracement Fibonacci */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'fib-retracement' ? null : 'fib-retracement')}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === 'fib-retracement' ? 'bg-[#2962ff] text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Retracement Fibonacci ≡"
+                >
+                  ≡
+                </button>
+
+                {/* Annotation Texte */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'text-annotation' ? null : 'text-annotation')}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === 'text-annotation' ? 'bg-[#2962ff] text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Annotation Texte T"
+                >
+                  T
+                </button>
+
+                <div className="w-px h-4 bg-white/10 mx-0.5" />
+
+                {/* Position Long */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'pos-long' ? null : 'pos-long')}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === 'pos-long' ? 'bg-emerald-500 text-white' : 'text-emerald-400 hover:bg-white/10'
+                  }`}
+                  title="Position Long ▲"
+                >
+                  ▲
+                </button>
+
+                {/* Position Short */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'pos-short' ? null : 'pos-short')}
+                  className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition-colors ${
+                    outilActif === 'pos-short' ? 'bg-rose-500 text-white' : 'text-rose-400 hover:bg-white/10'
+                  }`}
+                  title="Position Short ▼"
+                >
+                  ▼
+                </button>
+              </div>
+
+              {/* 4️⃣ BAS-DROITE : Mini barre de Replay (toujours visible, pas de toggle) */}
+              <div className="absolute bottom-2.5 right-2.5 z-[110] flex items-center gap-1 p-1 rounded-2xl bg-[#1e222d]/90 border border-[#2a2e39] backdrop-blur-md shadow-2xl select-none">
+                {/* Découpe Replay — positionner le début du replay sur une bougie */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'replay-cut' ? null : 'replay-cut')}
+                  className={`w-7 h-7 flex items-center justify-center rounded-xl text-xs transition-colors ${
+                    outilActif === 'replay-cut' ? 'bg-amber-500 text-white shadow' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Découpe Replay ✂️"
+                >
+                  ✂️
+                </button>
+
+                <div className="w-px h-3.5 bg-white/15" />
+
+                {/* Bougie précédente */}
+                <button
+                  onClick={() => reculerBougie()}
+                  className="w-7 h-7 flex items-center justify-center rounded-xl text-xs text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+                  title="Bougie précédente"
+                >
+                  ⏪
+                </button>
+
+                {/* Play / Pause */}
+                <button
+                  onClick={() => setEstEnLecture(!estEnLecture)}
+                  className={`px-2.5 h-7 flex items-center justify-center rounded-xl text-xs font-bold transition-all shadow ${
+                    estEnLecture ? 'bg-[#ff9800] text-white' : 'bg-[#26a69a] text-white'
+                  }`}
+                  title="Lecture / Pause (Espace)"
+                >
+                  {estEnLecture ? '⏸' : '▶'}
+                </button>
+
+                {/* Bougie suivante */}
+                <button
+                  onClick={() => {
+                    setEstEnLecture(false);
+                    avancerBougie();
+                  }}
+                  className="w-7 h-7 flex items-center justify-center rounded-xl text-xs text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+                  title="Bougie suivante (→)"
+                >
+                  ⏩
+                </button>
+
+                {/* Compteur bougie discret */}
+                {donneesCompletes.length > 0 && (
+                  <span className="text-white/40 text-[10px] font-mono px-1 hidden sm:inline">
+                    {indexCourant + 1}/{donneesCompletes.length}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
           {erreur && (
             <div className={`border-b text-xs px-4 py-2 ${C.errBg}`}>
               ⚠️ {erreur}
@@ -1791,27 +2460,38 @@ export function BacktestWorkspace() {
             height={hauteurGraphique}
             theme={theme}
             timeframe={timeframe}
+            onOpenIndicatorModal={(scriptId, onglet) => {
+              setScriptIdPourEdition(scriptId || null);
+              setOngletInitialIndicateurs(onglet || (scriptId ? 'configuration' : 'indicateurs'));
+              setModalIndicateursOuvert(true);
+            }}
           />
         </div>
 
-        {/* ─── PANEL DROIT : Uniquement affiché pour l'écriture/détail du TradeDrawer ─── */}
-        {/* L'historique et les statistiques passives ont été supprimés pour maximiser l'espace du graphique */}
-        {(isNewTradeOpen || initialisantPlanification || initialisantResolution) && (
-          <div className="w-full md:w-[420px] flex flex-col border-t md:border-t-0 md:border-l flex-shrink-0 transition-all duration-300 bg-surface">
-            {initialisantPlanification || initialisantResolution ? (
-              <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-3 text-center bg-surface">
-                <span className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin"></span>
-                <p className="text-xs font-semibold text-txt">
-                  {initialisantPlanification 
-                    ? "Planification : capture automatique du graphique..." 
-                    : "Résolution : capture automatique de clôture..."}
-                </p>
-                <p className="text-[10px] text-txt3">Veuillez patienter pendant l'upload...</p>
-              </div>
-            ) : (
-              <TradeDrawer isInline={true} backtestMode={true} onCaptureGraphique={capturerGraphique} />
-            )}
-          </div>
+        {/* ─── PANEL DROIT / MODAL MOBILE : Affiché uniquement hors mode plein écran ─── */}
+        {/* En mode plein écran, le TradeDrawer est rendu à l'intérieur du conteneur fixed (voir section 5️⃣) */}
+        {!estPleinEcran && (isNewTradeOpen || initialisantPlanification || initialisantResolution) && (
+          estMobile ? (
+            // Sur smartphone Android, le TradeDrawer s'affiche comme une modal en plein écran avec bouton retour
+            <TradeDrawer isInline={false} backtestMode={true} onCaptureGraphique={capturerGraphique} />
+          ) : (
+            // Sur tablette et desktop, on garde le panneau latéral élégant fixé à droite du graphique
+            <div className="w-[420px] flex flex-col border-l flex-shrink-0 transition-all duration-300 bg-surface">
+              {initialisantPlanification || initialisantResolution ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-3 text-center bg-surface">
+                  <span className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin"></span>
+                  <p className="text-xs font-semibold text-txt">
+                    {initialisantPlanification
+                      ? 'Planification : capture automatique du graphique...'
+                      : 'Résolution : capture automatique de clôture...'}
+                  </p>
+                  <p className="text-[10px] text-txt3">Veuillez patienter pendant l'upload...</p>
+                </div>
+              ) : (
+                <TradeDrawer isInline={true} backtestMode={true} onCaptureGraphique={capturerGraphique} />
+              )}
+            </div>
+          )
         )}
       </div>
 
@@ -1819,6 +2499,43 @@ export function BacktestWorkspace() {
         ouvert={modalAIDatasetOuverte}
         onFermer={() => setModalAIDatasetOuverte(false)}
         onNombreChange={(nb) => setNbEchantillonsIA(nb)}
+      />
+
+      {/* Fiche modale tactile ultra-rapide (< 16ms) pour smartphone sans bloquer l'UI */}
+      <BacktestTradeModal
+        ouvert={modalMobileOuverte}
+        onFermer={() => setModalMobileOuverte(false)}
+        position={positionActive}
+        paire={actif !== 'Aucun actif' && actif ? actif : paireCloud}
+        timeframe={timeframe}
+        annee={String(anneeCloud)}
+        journal_type={journalDest}
+        onOuvrirFormulaireComplet={handleOuvrirFormulaireComplet}
+        promiseCapture={promiseCaptureMobile}
+        onRecapturer={capturerGraphique}
+      />
+
+      {/* Modal Style TradingView pour ajouter/supprimer indicateurs et régler la télémétrie */}
+      <BacktestIndicatorsModal
+        isOpen={modalIndicateursOuvert}
+        onClose={() => {
+          setModalIndicateursOuvert(false);
+          setScriptIdPourEdition(null);
+        }}
+        idInitialScriptSelectionne={scriptIdPourEdition}
+        ongletInitial={ongletInitialIndicateurs}
+      />
+
+      {/* Modal Studio de Bots Automatisés (Extensions sans recompilation) */}
+      <BacktestBotModal
+        isOpen={modalBotOuverte}
+        onClose={() => setModalBotOuverte(false)}
+        bougies={donneesCompletes}
+        onLancerReplayVisuel={(bot) => {
+          setBotReplayActif(bot);
+          setEstEnLecture(true);
+          addToast(`🤖 Bot "${bot.nom}" démarré en Replay Visuel !`, 'success');
+        }}
       />
     </div>
   );

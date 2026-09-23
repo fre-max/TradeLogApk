@@ -116,34 +116,34 @@ export const AIDatasetModal: React.FC<AIDatasetModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 backdrop-blur-sm p-3 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-[#1e222d] border border-[#2a2e39] text-[#d1d4dc] w-full max-w-5xl max-h-[92vh] rounded-xl shadow-2xl flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-[#1e222d] border-0 sm:border border-[#2a2e39] text-[#d1d4dc] w-full sm:max-w-5xl h-[100dvh] sm:h-auto sm:max-h-[92vh] rounded-none sm:rounded-xl shadow-2xl flex flex-col overflow-hidden">
         
         {/* ─── En-tête de la Modale ─── */}
-        <div className="p-4 border-b border-[#2a2e39] flex flex-wrap items-center justify-between gap-3 bg-[#181b24]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-xl">
+        <div className="p-3 sm:p-4 border-b border-[#2a2e39] flex items-center justify-between gap-2.5 bg-[#181b24] shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-lg sm:text-xl shrink-0">
               🤖
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                Atelier Dataset IA
-                <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-mono">
-                  {echantillons.length} images
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-lg font-bold text-white flex items-center gap-1.5 sm:gap-2 truncate">
+                <span>Atelier Dataset IA</span>
+                <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-mono shrink-0">
+                  {echantillons.length}
                 </span>
               </h2>
-              <p className="text-xs text-[#787b86]">
-                Échantillons standardisés prêts pour l'entraînement (YOLOv8 / ViT / PyTorch)
+              <p className="text-[10px] sm:text-xs text-[#787b86] truncate hidden xs:block sm:block">
+                Échantillons standardisés prêts pour l'entraînement (YOLOv8 / ViT)
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {echantillons.length > 0 && (
               <>
                 <button
                   onClick={handleViderTout}
-                  className="px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 border border-rose-900/50 rounded-lg transition-colors"
+                  className="px-2.5 sm:px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 border border-rose-900/50 rounded-lg transition-colors active:scale-95"
                   title="Effacer toutes les captures"
                 >
                   Vider
@@ -151,16 +151,17 @@ export const AIDatasetModal: React.FC<AIDatasetModalProps> = ({
                 <button
                   onClick={handleTelechargerZip}
                   disabled={exportEnCours}
-                  className="px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  className="px-3 sm:px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50 active:scale-95 whitespace-nowrap"
                 >
                   {exportEnCours ? (
                     <>
                       <span className="inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Génération ZIP...
+                      <span>Export...</span>
                     </>
                   ) : (
                     <>
-                      <span>📥</span> Exporter (.ZIP)
+                      <span>📥</span>
+                      <span>Export<span className="hidden sm:inline"> (.ZIP)</span></span>
                     </>
                   )}
                 </button>
@@ -175,13 +176,13 @@ export const AIDatasetModal: React.FC<AIDatasetModalProps> = ({
           </div>
         </div>
 
-        {/* ─── Barre de Filtres et Commutateur de Vue ─── */}
-        <div className="px-4 py-3 border-b border-[#2a2e39] flex flex-wrap items-center justify-between gap-3 bg-[#131722]/50 text-xs">
+        {/* ─── Barre de Filtres et Commutateur de Vue (Scrollable horizontalement sur mobile) ─── */}
+        <div className="px-3 sm:px-4 py-2 sm:py-3 border-b border-[#2a2e39] flex items-center justify-between gap-2.5 bg-[#131722]/50 text-xs shrink-0 overflow-x-auto no-scrollbar">
           {/* Onglets Filtres */}
-          <div className="flex items-center gap-1.5 bg-[#181b24] p-1 rounded-lg border border-[#2a2e39]">
+          <div className="flex items-center gap-1 bg-[#181b24] p-1 rounded-lg border border-[#2a2e39] shrink-0">
             <button
               onClick={() => setFiltreType('tous')}
-              className={`px-3 py-1 rounded-md transition-colors ${
+              className={`px-2.5 sm:px-3 py-1 rounded-md transition-colors whitespace-nowrap ${
                 filtreType === 'tous'
                   ? 'bg-indigo-600 text-white font-medium shadow-sm'
                   : 'text-[#787b86] hover:text-[#d1d4dc]'
@@ -191,33 +192,33 @@ export const AIDatasetModal: React.FC<AIDatasetModalProps> = ({
             </button>
             <button
               onClick={() => setFiltreType('positif')}
-              className={`px-3 py-1 rounded-md transition-colors ${
+              className={`px-2.5 sm:px-3 py-1 rounded-md transition-colors whitespace-nowrap ${
                 filtreType === 'positif'
                   ? 'bg-emerald-600 text-white font-medium shadow-sm'
                   : 'text-[#787b86] hover:text-[#d1d4dc]'
               }`}
             >
-              Positifs / Setups ({nbPositifs})
+              Positifs ({nbPositifs})
             </button>
             <button
               onClick={() => setFiltreType('negatif')}
-              className={`px-3 py-1 rounded-md transition-colors ${
+              className={`px-2.5 sm:px-3 py-1 rounded-md transition-colors whitespace-nowrap ${
                 filtreType === 'negatif'
                   ? 'bg-rose-600 text-white font-medium shadow-sm'
                   : 'text-[#787b86] hover:text-[#d1d4dc]'
               }`}
             >
-              Négatifs / Faux signaux ({nbNegatifs})
+              Négatifs ({nbNegatifs})
             </button>
           </div>
 
           {/* Commutateur Vue Clean vs Annotée */}
-          <div className="flex items-center gap-2">
-            <span className="text-[#787b86]">Mode affichage :</span>
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <span className="text-[#787b86] hidden sm:inline">Affichage :</span>
             <div className="inline-flex p-0.5 rounded-lg bg-[#181b24] border border-[#2a2e39]">
               <button
                 onClick={() => setVueMode('clean')}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
+                className={`px-2 sm:px-2.5 py-1 rounded-md transition-colors whitespace-nowrap ${
                   vueMode === 'clean'
                     ? 'bg-[#2962ff] text-white font-medium'
                     : 'text-[#787b86] hover:text-[#d1d4dc]'
@@ -228,14 +229,14 @@ export const AIDatasetModal: React.FC<AIDatasetModalProps> = ({
               </button>
               <button
                 onClick={() => setVueMode('annotated')}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
+                className={`px-2 sm:px-2.5 py-1 rounded-md transition-colors whitespace-nowrap ${
                   vueMode === 'annotated'
                     ? 'bg-[#2962ff] text-white font-medium'
                     : 'text-[#787b86] hover:text-[#d1d4dc]'
                 }`}
                 title="Graphique avec positions et SL/TP (pour vérification)"
               >
-                Annoté (Humain)
+                Annoté
               </button>
             </div>
           </div>
@@ -339,14 +340,14 @@ export const AIDatasetModal: React.FC<AIDatasetModalProps> = ({
           )}
         </div>
 
-        {/* ─── Pied de page de la modale ─── */}
-        <div className="p-3 border-t border-[#2a2e39] bg-[#181b24] flex items-center justify-between text-xs text-[#787b86]">
-          <span>
-            Stockage local persistant (IndexedDB). Les images ne dépendent d'aucune connexion.
+        {/* ─── Pied de page de la modale (avec safe-area) ─── */}
+        <div className="p-3 border-t border-[#2a2e39] bg-[#181b24] flex items-center justify-between text-xs text-[#787b86] shrink-0 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
+          <span className="truncate max-w-[220px] sm:max-w-none text-[10px] sm:text-xs">
+            Stockage local IndexedDB · Sans connexion.
           </span>
           <button
             onClick={onFermer}
-            className="px-4 py-1.5 bg-[#2a2e39] hover:bg-[#3b4150] text-[#d1d4dc] rounded-lg transition-colors"
+            className="px-3.5 py-1.5 bg-[#2a2e39] hover:bg-[#3b4150] text-[#d1d4dc] rounded-lg transition-colors shrink-0 active:scale-95 font-semibold"
           >
             Fermer
           </button>

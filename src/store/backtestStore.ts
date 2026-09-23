@@ -3,6 +3,8 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { Bougie } from '@/lib/chartDataHelper'
 import type { MacroEvent, FundamentalSnapshot } from '@/types/fundamental'
 import { computeSnapshotAtTimestamp } from '@/lib/fundamentalEngine'
+import type { IndicatorScript } from '@/types/indicatorScript'
+import { recupererIndicateursStockes, sauvegarderIndicateurStocke } from '@/lib/indicators/indicatorEngine'
 
 /**
  * Représente un trade simulé pendant la session de backtesting.
@@ -31,7 +33,45 @@ export interface PositionSimulee {
     result: string;
   };
   planificationEnregistree?: boolean; // Indique si la planification (étape 1) a été sauvée
-  estCloturee?: boolean;          // Indique si le replay ou l'utilisateur a fermé la position
+  estCloturee?: boolean;              // Indique si le replay ou l'utilisateur a fermé la position
+  // 🛡️ Contexte technique au moment de la prise de position (Protected Swings)
+  protectedSwingsSnapshot?: any;
+  // 📊 Contexte technique de profil de volume non mitigué (SMC UVP)
+  unmitigatedProfileSnapshot?: any;
+  // 📐 Contexte technique de structure de marché et vagues (ZigZag)
+  zigzagSnapshot?: any;
+  // 💎 Contexte technique LuxAlgo Smart Money Concepts (SMC)
+  smcSnapshot?: any;
+}
+
+/**
+ * Préférences utilisateur pour la collecte des données télémétriques lors d'un trade
+ */
+export interface OptionsCollecteTelemetrie {
+  protectedSwings: boolean;
+  unmitigatedProfile: boolean;
+  zigzag: boolean;
+  luxAlgoSMC: boolean;
+}
+
+/**
+ * Contexte de restauration permettant de rejouer n'importe quel trade (DB ou session)
+ */
+export interface ContexteRestaurationReplay {
+  pair: string;
+  annee: string;
+  timeframe: string;
+  timestamp: number;
+  position?: {
+    direction: 'long' | 'short';
+    prixEntree: number;
+    stopLoss: number;
+    takeProfit: number;
+    dureeEstimeeHeures?: number;
+    dureeEstimeeBougies?: number;
+    dureeEstimeeLargeur?: number;
+    tradeIdSupabase?: string;
+  };
 }
 
 interface BacktestState {
@@ -73,7 +113,11 @@ interface BacktestState {
     takeProfit: number,
     dureeEstimeeHeures?: number,
     dureeEstimeeBougies?: number,
-    dureeEstimeeLargeur?: number
+    dureeEstimeeLargeur?: number,
+    protectedSwingsSnapshot?: any,
+    unmitigatedProfileSnapshot?: any,
+    zigzagSnapshot?: any,
+    smcSnapshot?: any
   ) => void;
   modifierPositionActive: (updates: Partial<PositionSimulee>) => void;
   fermerPositionManuellement: () => void;
@@ -82,11 +126,11 @@ interface BacktestState {
   supprimerTradeHistorique: (index: number) => void;
   reinitialiserSession: () => void;
   nettoyerRestaurationContexte: () => void;
-  lancerRestaurationContexte: (contexte: { pair: string; annee: string; timeframe: string; timestamp: number }) => void;
+  lancerRestaurationContexte: (contexte: ContexteRestaurationReplay) => void;
   couperReplayAIndex: (index: number) => void;
   injecterDonneesPrecedentes: (anciennesDonnees: Bougie[]) => void;
   mettreAJourDonneesMtf: (nouvellesDonnees: Bougie[]) => void;
-  contexteRestauration: { pair: string; annee: string; timeframe: string; timestamp: number } | null;
+  contexteRestauration: ContexteRestaurationReplay | null;
 
   // State et Actions pour l'Analyse Fondamentale
   fundamentalModeEnabled: boolean;
@@ -96,6 +140,34 @@ interface BacktestState {
   setMacroEvents: (events: MacroEvent[]) => void;
   clearMacroEvents: () => void;
   recalculerSnapshotMacro: () => void;
+
+  // State et Actions pour l'Indicateur LuxAlgo Protected Swings
+  afficherProtectedSwings: boolean;
+  toggleProtectedSwings: () => void;
+
+  // State et Actions pour l'Indicateur SMC Unmitigated Volume Profile
+  afficherUnmitigatedProfile: boolean;
+  toggleUnmitigatedProfile: () => void;
+
+  // State et Actions pour l'Indicateur ZigZag Autonome
+  afficherZigZag: boolean;
+  toggleZigZag: () => void;
+
+  // State et Actions pour l'Indicateur LuxAlgo Smart Money Concepts (SMC)
+  afficherLuxAlgoSMC: boolean;
+  toggleLuxAlgoSMC: () => void;
+
+  // Contrôle dynamique de l'affichage et de la collecte télémétrique (Style TradingView)
+  retirerIndicateur: (indicateur: 'protectedSwings' | 'unmitigatedProfile' | 'zigzag' | 'luxAlgoSMC') => void;
+  optionsCollecte: OptionsCollecteTelemetrie;
+  setOptionCollecte: (cle: keyof OptionsCollecteTelemetrie, valeur: boolean) => void;
+
+  // ─── Gestion Unifiée des Scripts d'Indicateurs (Style TradingView) ────────
+  scriptsIndicateurs: IndicatorScript[];
+  chargerScriptsIndicateurs: () => void;
+  toggleVisibiliteScript: (id: string) => void;
+  retirerScriptDuGraphique: (id: string) => void;
+  sauvegarderScriptIndicateur: (script: IndicatorScript) => void;
 }
 
 // Le store utilise le middleware 'persist' de Zustand pour sauvegarder l'état de session
@@ -135,6 +207,132 @@ export const useBacktestStore = create<BacktestState>()(
     console.log(`💡 [Backtest Store] Mode Fondamental : ${nouveauState ? 'ACTIVÉ' : 'DÉSACTIVÉ'}`);
     set({ fundamentalModeEnabled: nouveauState });
     get().recalculerSnapshotMacro();
+  },
+
+  // ─── Gestion Unifiée des Scripts d'Indicateurs (Style TradingView) ────────
+  scriptsIndicateurs: [],
+  chargerScriptsIndicateurs: () => {
+    const scripts = recupererIndicateursStockes();
+    set({
+      scriptsIndicateurs: scripts,
+      afficherLuxAlgoSMC: scripts.find(s => s.id === 'script-luxalgo-smc')?.visibleSurGraphique ?? false,
+      afficherProtectedSwings: scripts.find(s => s.id === 'script-protected-swings')?.visibleSurGraphique ?? false,
+      afficherUnmitigatedProfile: scripts.find(s => s.id === 'script-unmitigated-profile')?.visibleSurGraphique ?? false,
+      afficherZigZag: scripts.find(s => s.id === 'script-zigzag-smc')?.visibleSurGraphique ?? false,
+    });
+  },
+  toggleVisibiliteScript: (id: string) => {
+    const scripts = get().scriptsIndicateurs.length > 0 ? get().scriptsIndicateurs : recupererIndicateursStockes();
+    const script = scripts.find(s => s.id === id);
+    if (!script) return;
+    const nouvelleVisibilite = !script.visibleSurGraphique;
+    const maj = { ...script, visibleSurGraphique: nouvelleVisibilite, misAJourLe: new Date().toISOString() };
+    sauvegarderIndicateurStocke(maj);
+    const nouveauxScripts = scripts.map(s => s.id === id ? maj : s);
+    set({
+      scriptsIndicateurs: nouveauxScripts,
+      ...(id === 'script-luxalgo-smc' ? { afficherLuxAlgoSMC: nouvelleVisibilite } : {}),
+      ...(id === 'script-protected-swings' ? { afficherProtectedSwings: nouvelleVisibilite } : {}),
+      ...(id === 'script-unmitigated-profile' ? { afficherUnmitigatedProfile: nouvelleVisibilite } : {}),
+      ...(id === 'script-zigzag-smc' ? { afficherZigZag: nouvelleVisibilite } : {}),
+    });
+  },
+  retirerScriptDuGraphique: (id: string) => {
+    const scripts = get().scriptsIndicateurs.length > 0 ? get().scriptsIndicateurs : recupererIndicateursStockes();
+    const script = scripts.find(s => s.id === id);
+    if (!script) return;
+    const maj = { ...script, visibleSurGraphique: false, misAJourLe: new Date().toISOString() };
+    sauvegarderIndicateurStocke(maj);
+    const nouveauxScripts = scripts.map(s => s.id === id ? maj : s);
+    set({
+      scriptsIndicateurs: nouveauxScripts,
+      ...(id === 'script-luxalgo-smc' ? { afficherLuxAlgoSMC: false } : {}),
+      ...(id === 'script-protected-swings' ? { afficherProtectedSwings: false } : {}),
+      ...(id === 'script-unmitigated-profile' ? { afficherUnmitigatedProfile: false } : {}),
+      ...(id === 'script-zigzag-smc' ? { afficherZigZag: false } : {}),
+    });
+  },
+  sauvegarderScriptIndicateur: (script: IndicatorScript) => {
+    sauvegarderIndicateurStocke(script);
+    const scripts = get().scriptsIndicateurs.length > 0 ? get().scriptsIndicateurs : recupererIndicateursStockes();
+    const index = scripts.findIndex(s => s.id === script.id);
+    const nouveauxScripts = index >= 0
+      ? scripts.map(s => s.id === script.id ? script : s)
+      : [...scripts, script];
+    set({
+      scriptsIndicateurs: nouveauxScripts,
+      ...(script.id === 'script-luxalgo-smc' ? { afficherLuxAlgoSMC: script.visibleSurGraphique } : {}),
+      ...(script.id === 'script-protected-swings' ? { afficherProtectedSwings: script.visibleSurGraphique } : {}),
+      ...(script.id === 'script-unmitigated-profile' ? { afficherUnmitigatedProfile: script.visibleSurGraphique } : {}),
+      ...(script.id === 'script-zigzag-smc' ? { afficherZigZag: script.visibleSurGraphique } : {}),
+    });
+  },
+
+  // Indicateur LuxAlgo Protected Swings - Rétrocompatibilité
+  afficherProtectedSwings: false,
+  toggleProtectedSwings: () => {
+    const nouveau = !get().afficherProtectedSwings;
+    set({ afficherProtectedSwings: nouveau });
+    get().toggleVisibiliteScript('script-protected-swings');
+  },
+
+  // Indicateur SMC Unmitigated Volume Profile - Rétrocompatibilité
+  afficherUnmitigatedProfile: false,
+  toggleUnmitigatedProfile: () => {
+    const nouveau = !get().afficherUnmitigatedProfile;
+    set({ afficherUnmitigatedProfile: nouveau });
+    get().toggleVisibiliteScript('script-unmitigated-profile');
+  },
+
+  // Indicateur ZigZag Autonome - Rétrocompatibilité
+  afficherZigZag: false,
+  toggleZigZag: () => {
+    const nouveau = !get().afficherZigZag;
+    set({ afficherZigZag: nouveau });
+    get().toggleVisibiliteScript('script-zigzag-smc');
+  },
+
+  // Indicateur LuxAlgo Smart Money Concepts (SMC) - Rétrocompatibilité
+  afficherLuxAlgoSMC: false,
+  toggleLuxAlgoSMC: () => {
+    const nouveau = !get().afficherLuxAlgoSMC;
+    set({ afficherLuxAlgoSMC: nouveau });
+    get().toggleVisibiliteScript('script-luxalgo-smc');
+  },
+
+  // Retirer directement un indicateur du graphique (comme TradingView)
+  retirerIndicateur: (indicateur) => {
+    console.log(`🗑️ [Backtest Store] Retrait de l'indicateur ${indicateur} du graphique`);
+    if (indicateur === 'protectedSwings') {
+      set({ afficherProtectedSwings: false });
+      get().retirerScriptDuGraphique('script-protected-swings');
+    } else if (indicateur === 'unmitigatedProfile') {
+      set({ afficherUnmitigatedProfile: false });
+      get().retirerScriptDuGraphique('script-unmitigated-profile');
+    } else if (indicateur === 'zigzag') {
+      set({ afficherZigZag: false });
+      get().retirerScriptDuGraphique('script-zigzag-smc');
+    } else if (indicateur === 'luxAlgoSMC') {
+      set({ afficherLuxAlgoSMC: false });
+      get().retirerScriptDuGraphique('script-luxalgo-smc');
+    }
+  },
+
+  // Options de collecte de données personnalisées par l'utilisateur
+  optionsCollecte: {
+    protectedSwings: true,
+    unmitigatedProfile: true,
+    zigzag: true,
+    luxAlgoSMC: true,
+  },
+  setOptionCollecte: (cle, valeur) => {
+    console.log(`⚙️ [Backtest Store] Collecte ${cle} : ${valeur ? 'ACTIVÉE' : 'DÉSACTIVÉE'}`);
+    set((state) => ({
+      optionsCollecte: {
+        ...state.optionsCollecte,
+        [cle]: valeur,
+      },
+    }));
   },
 
   setMacroEvents: (events) => {
@@ -426,8 +624,8 @@ export const useBacktestStore = create<BacktestState>()(
   setAnneeCloud: (annee) => set({ anneeCloud: annee }),
   setTimeframeSauvegarde: (tf) => set({ timeframeSauvegarde: tf }),
 
-  ouvrirPosition: (direction, prixEntree, stopLoss, takeProfit, dureeEstimeeHeures, dureeEstimeeBougies, dureeEstimeeLargeur) => {
-    const { donneesCompletes, indexCourant, positionActive } = get();
+  ouvrirPosition: (direction, prixEntree, stopLoss, takeProfit, dureeEstimeeHeures, dureeEstimeeBougies, dureeEstimeeLargeur, protectedSwingsSnapshot, unmitigatedProfileSnapshot, zigzagSnapshot, smcSnapshot) => {
+    const { donneesCompletes, indexCourant, positionActive, optionsCollecte } = get();
     if (positionActive) {
       console.warn('⚠️ [Backtest Store] Une position est déjà ouverte.');
       return;
@@ -444,6 +642,11 @@ export const useBacktestStore = create<BacktestState>()(
       dureeEstimeeHeures,
       dureeEstimeeBougies,
       dureeEstimeeLargeur: dureeEstimeeLargeur || 30, // Largeur par défaut de 30 bougies
+      // Enregistre uniquement si l'utilisateur a explicitement activé la collecte pour cet indicateur
+      protectedSwingsSnapshot: optionsCollecte.protectedSwings ? protectedSwingsSnapshot : undefined,
+      unmitigatedProfileSnapshot: optionsCollecte.unmitigatedProfile ? unmitigatedProfileSnapshot : undefined,
+      zigzagSnapshot: optionsCollecte.zigzag ? zigzagSnapshot : undefined,
+      smcSnapshot: optionsCollecte.luxAlgoSMC ? smcSnapshot : undefined,
     };
 
     console.log(`📈 [Backtest Store] Ouverture d'une position ${direction} à ${prixEntree}`);
@@ -550,14 +753,12 @@ export const useBacktestStore = create<BacktestState>()(
   },
 
   // Prépare le contexte pour recharger le backtest à un instant précis
-  // Exemple d'utilisation : lancerRestaurationContexte({ pair: 'EURUSD', annee: '2025', timeframe: 'H1', timestamp: 1720000000 })
+  // Exemple d'utilisation : lancerRestaurationContexte({ pair: 'EURUSD', annee: '2025', timeframe: 'H1', timestamp: 1720000000, position: { ... } })
   lancerRestaurationContexte: (contexte) => {
+    console.log("🎯 [Backtest Store] Lancement de la restauration de replay pour le trade :", contexte);
     set({
       contexteRestauration: contexte,
-      // Réinitialise la session active pour éviter les conflits,
-      // mais on va recharger les nouvelles données à l'UT voulue
-      positionActive: null,
-      historiqueSimule: [],
+      estEnLecture: false,
     });
   }
 }
@@ -584,6 +785,11 @@ export const useBacktestStore = create<BacktestState>()(
     contexteRestauration: state.contexteRestauration,
     fundamentalModeEnabled: state.fundamentalModeEnabled,
     macroEvents: state.macroEvents,
+    afficherProtectedSwings: state.afficherProtectedSwings,
+    afficherUnmitigatedProfile: state.afficherUnmitigatedProfile,
+    afficherZigZag: state.afficherZigZag,
+    afficherLuxAlgoSMC: state.afficherLuxAlgoSMC,
+    optionsCollecte: state.optionsCollecte,
     // donneesCompletes : volontairement EXCLU
   }),
 }

@@ -2,6 +2,7 @@ import { useUIStore } from '@/store'
 import { useTrades } from '@/hooks/useTrades'
 import { cn } from '@/lib/utils'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { SyncCloudBadge } from '@/components/sync/SyncCloudBadge'
 
 // ─── Topbar ───────────────────────────────────────────────
 // Barre horizontale en haut avec :
@@ -75,6 +76,10 @@ export function Topbar({ title, onMenuClick, showBack }: TopbarProps) {
       <span className="md:hidden text-txt3 text-[12px]">
         {totalTrades} trade{totalTrades !== 1 ? 's' : ''}
       </span>
+
+      {/* Badge de synchronisation Cloud — visible sur toutes les pages */}
+      {/* Indique si les données du téléphone sont bien synchronisées avec le cloud */}
+      <SyncCloudBadge />
 
       {/* Bouton nouveau trade */}
       <button

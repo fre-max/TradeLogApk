@@ -49,50 +49,55 @@ export async function recupererDonneesBinance(symbole: string, intervalle: strin
 export function parserCsvPrix(contenuTextuel: string): Bougie[] {
   console.log('🚀 [CSV Parser] Début de l\'analyse du fichier CSV...');
 
-  // 1️⃣ Découpage par ligne et nettoyage
-  const lignes = contenuTextuel.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  // 1️⃣ Découpage direct par ligne (sans map ni filter intermédiaires pour préserver la RAM mobile)
+  const lignes = contenuTextuel.split(/\r?\n/);
   if (lignes.length < 1) {
     throw new Error("Le fichier CSV est vide.");
   }
 
-  // 2️⃣ Détection du séparateur (virgule, point-virgule ou tabulation)
-  const premiereLigne = lignes[0];
+  // 2️⃣ Analyse de la première ligne non vide
+  let premiereLigneIndex = 0;
+  while (premiereLigneIndex < lignes.length && lignes[premiereLigneIndex].trim().length === 0) {
+    premiereLigneIndex++;
+  }
+  if (premiereLigneIndex >= lignes.length) {
+    throw new Error("Le fichier CSV ne contient aucune donnée.");
+  }
+
+  const premiereLigne = lignes[premiereLigneIndex].trim();
   const separateur = premiereLigne.includes(';') ? ';' : (premiereLigne.includes('\t') ? '\t' : ',');
   const colonnesPremiereLigne = premiereLigne.split(separateur).map(c => c.trim().toLowerCase());
-  
+
   // Déterminer s'il y a un en-tête dans le fichier
   const aUnEntete = colonnesPremiereLigne.some(c => 
     c.includes('date') || c.includes('time') || c.includes('open') || c.includes('close') || c.includes('high')
   );
 
-  let indexDate = -1;
+  let indexDate = 0;
   let indexHeure = -1;
-  let indexOpen = -1;
-  let indexHigh = -1;
-  let indexLow = -1;
-  let indexClose = -1;
-  let formatSansEntete: 'histdata' | 'metatrader' | 'standard' = 'standard';
-  let ligneDeDepart = 0;
+  let indexOpen = 1;
+  let indexHigh = 2;
+  let indexLow = 3;
+  let indexClose = 4;
+  let formatSansEntete: 'histdata' | 'metatrader' | 'standard' = 'histdata';
+  let ligneDeDepart = premiereLigneIndex;
 
   if (aUnEntete) {
-    console.log(`📡 [CSV Parser] En-tête détecté avec séparateur "${separateur}" :`, colonnesPremiereLigne);
+    console.log(`📡 [CSV Parser] En-tête détecté avec séparateur "${separateur}"`);
     indexDate = colonnesPremiereLigne.findIndex(c => c.includes('date') || c.includes('time') || c.includes('timestamp') || c.includes('heure'));
     indexOpen = colonnesPremiereLigne.findIndex(c => c === 'open' || c === 'o' || c === 'ouvert' || c === 'ouverture');
     indexHigh = colonnesPremiereLigne.findIndex(c => c === 'high' || c === 'h' || c === 'haut' || c === 'maximum');
     indexLow = colonnesPremiereLigne.findIndex(c => c === 'low' || c === 'l' || c === 'bas' || c === 'minimum');
     indexClose = colonnesPremiereLigne.findIndex(c => c === 'close' || c === 'c' || c === 'cloture' || c === 'fermeture');
-    ligneDeDepart = 1;
+    formatSansEntete = 'standard';
+    ligneDeDepart = premiereLigneIndex + 1;
   } else {
-    // Fichier sans en-tête : détection automatique selon les premières colonnes
-    console.log(`📡 [CSV Parser] Aucun en-tête détecté. Analyse de la première ligne :`, colonnesPremiereLigne);
-    ligneDeDepart = 0;
-    
-    // Si la colonne 0 est de type date YYYY.MM.DD et la colonne 1 de type heure HH:MM (MetaTrader)
+    // Fichier sans en-tête : détection automatique
     const estDateMetaTrader = /^\d{4}[\.\-\/]\d{2}[\.\-\/]\d{2}$/.test(colonnesPremiereLigne[0]);
     const estHeureMetaTrader = /^\d{2}:\d{2}(:\d{2})?$/.test(colonnesPremiereLigne[1]);
-    
+
     if (estDateMetaTrader && estHeureMetaTrader) {
-      console.log("👉 [CSV Parser] Format sans en-tête identifié : MetaTrader (Date;Heure;O;H;L;C)");
+      console.log("👉 [CSV Parser] Format MetaTrader détecté");
       formatSansEntete = 'metatrader';
       indexDate = 0;
       indexHeure = 1;
@@ -101,8 +106,7 @@ export function parserCsvPrix(contenuTextuel: string): Bougie[] {
       indexLow = 4;
       indexClose = 5;
     } else {
-      // Par défaut, format HistData sans en-tête (DateHeure;O;H;L;C;Volume)
-      console.log("👉 [CSV Parser] Format sans en-tête identifié par défaut : HistData (DateHeure;O;H;L;C;Volume)");
+      // Par défaut : format HistData (DateHeure;O;H;L;C;Volume) utilisé par Forex_Data Cloud
       formatSansEntete = 'histdata';
       indexDate = 0;
       indexOpen = 1;
@@ -112,111 +116,86 @@ export function parserCsvPrix(contenuTextuel: string): Bougie[] {
     }
   }
 
-  // Vérifier qu'on a bien mappé toutes les colonnes requises
-  if (indexDate === -1 || indexOpen === -1 || indexHigh === -1 || indexLow === -1 || indexClose === -1) {
-    throw new Error(
-      "En-tête ou structure CSV non reconnue. Les colonnes requises doivent être identifiables."
-    );
-  }
-
   const resultats: Bougie[] = [];
+  let dernierTempsEnregistre: number | string | null = null;
+  const separateurChar = separateur;
 
-  // 4️⃣ Parcours et parsing des lignes
+  // 3️⃣ Parcours direct et ultra-rapide des lignes
   for (let i = ligneDeDepart; i < lignes.length; i++) {
-    const valeurs = lignes[i].split(separateur).map(v => v.trim());
-    if (valeurs.length <= Math.max(indexDate, indexOpen, indexHigh, indexLow, indexClose)) continue;
+    const rawLine = lignes[i];
+    if (rawLine.length < 10) continue;
+
+    const v = rawLine.split(separateurChar);
+    if (v.length < 5) continue;
 
     try {
       let dateTimestamp: number | string;
 
-      // Parsing de la date selon le format identifié
       if (formatSansEntete === 'histdata') {
-        // Format HistData : "YYYYMMDD HHMMSS" (ex: "20180101 170000")
-        const dateBrute = valeurs[indexDate];
-        if (dateBrute.length >= 15) {
-          const annee = dateBrute.substring(0, 4);
-          const mois = dateBrute.substring(4, 6);
-          const jour = dateBrute.substring(6, 8);
-          const heure = dateBrute.substring(9, 11);
-          const minute = dateBrute.substring(11, 13);
-          const seconde = dateBrute.substring(13, 15);
-          
-          const dateISO = `${annee}-${mois}-${jour}T${heure}:${minute}:${seconde}Z`;
-          dateTimestamp = Math.floor(Date.parse(dateISO) / 1000);
+        // Format HistData : "YYYYMMDD HHMMSS" (ex: "20250101 170000")
+        const d = v[indexDate].trim();
+        if (d.length >= 15) {
+          // Date.UTC direct sans allocation de chaîne ISO intermédiaire
+          const annee = parseInt(d.substring(0, 4), 10);
+          const mois = parseInt(d.substring(4, 6), 10) - 1;
+          const jour = parseInt(d.substring(6, 8), 10);
+          const heure = parseInt(d.substring(9, 11), 10);
+          const minute = parseInt(d.substring(11, 13), 10);
+          const seconde = parseInt(d.substring(13, 15), 10);
+
+          dateTimestamp = Math.floor(Date.UTC(annee, mois, jour, heure, minute, seconde) / 1000);
         } else {
           continue;
         }
       } else if (formatSansEntete === 'metatrader') {
-        // Format MetaTrader : Date ("YYYY.MM.DD") et Heure ("HH:MM")
-        const dateBrute = valeurs[indexDate].replace(/\./g, '-');
-        const heureBrute = valeurs[indexHeure];
-        const dateISO = `${dateBrute}T${heureBrute}:00Z`;
-        dateTimestamp = Math.floor(Date.parse(dateISO) / 1000);
+        const dateBrute = v[indexDate].trim().replace(/\./g, '-');
+        const heureBrute = v[indexHeure].trim();
+        dateTimestamp = Math.floor(Date.parse(`${dateBrute}T${heureBrute}:00Z`) / 1000);
       } else {
-        // Format standard avec en-tête
-        const dateBrute = valeurs[indexDate];
-        const timestampMs = Date.parse(dateBrute);
-        if (isNaN(timestampMs)) {
+        const dateBrute = v[indexDate].trim();
+        const ts = Date.parse(dateBrute);
+        if (isNaN(ts)) {
           if (/^\d{4}-\d{2}-\d{2}$/.test(dateBrute)) {
             dateTimestamp = dateBrute;
           } else {
             continue;
           }
         } else {
-          dateTimestamp = Math.floor(timestampMs / 1000);
+          dateTimestamp = Math.floor(ts / 1000);
         }
       }
 
-      if (typeof dateTimestamp === 'number' && isNaN(dateTimestamp)) {
-        continue;
-      }
+      if (typeof dateTimestamp === 'number' && isNaN(dateTimestamp)) continue;
 
-      // Parsing des prix (gestion des nombres décimaux à virgule française)
-      const open = parseFloat(valeurs[indexOpen].replace(',', '.'));
-      const high = parseFloat(valeurs[indexHigh].replace(',', '.'));
-      const low = parseFloat(valeurs[indexLow].replace(',', '.'));
-      const close = parseFloat(valeurs[indexClose].replace(',', '.'));
+      const open = parseFloat(v[indexOpen]);
+      const high = parseFloat(v[indexHigh]);
+      const low = parseFloat(v[indexLow]);
+      const close = parseFloat(v[indexClose]);
 
-      if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) {
-        continue;
-      }
+      if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) continue;
+
+      // Élimination immédiate des doublons consécutifs (très fréquent en M1)
+      if (dateTimestamp === dernierTempsEnregistre) continue;
+      dernierTempsEnregistre = dateTimestamp;
 
       resultats.push({
         time: dateTimestamp,
         open,
         high,
         low,
-        close
+        close,
       });
-    } catch (err) {
-      // Ligne corrompue passée sous silence
+    } catch {
+      // Ignorer une éventuelle ligne corrompue
     }
   }
 
   if (resultats.length === 0) {
-    throw new Error("Aucune ligne de données valide n'a pu être lue du fichier CSV.");
+    throw new Error("Aucune bougie valide n'a pu être extraite du fichier.");
   }
 
-  // Tri chronologique des bougies
-  const bougiesTriees = resultats.sort((a, b) => {
-    const tempsA = typeof a.time === 'number' ? a.time : Date.parse(a.time);
-    const tempsB = typeof b.time === 'number' ? b.time : Date.parse(b.time);
-    return tempsA - tempsB;
-  });
-
-  // Élimination des bougies doublons (lightweight-charts l'exige)
-  const bougiesFinales: Bougie[] = [];
-  const setTempsDetectes = new Set<string | number>();
-
-  for (const b of bougiesTriees) {
-    if (!setTempsDetectes.has(b.time)) {
-      setTempsDetectes.add(b.time);
-      bougiesFinales.push(b);
-    }
-  }
-
-  console.log(`✅ [CSV Parser] Analyse terminée. ${bougiesFinales.length} bougies prêtes pour le graphique.`);
-  return bougiesFinales;
+  console.log(`✅ [CSV Parser] ${resultats.length} bougies parsées avec succès.`);
+  return resultats;
 }
 
 /**

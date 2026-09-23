@@ -14,7 +14,8 @@
     "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "paths": { "@/*": ["./src/*"] }
+    "paths": { "@/*": ["./src/*"] },
+    "types": ["@testing-library/jest-dom/vitest"]
   },
   "include": ["src"]
 }

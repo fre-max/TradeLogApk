@@ -1,5 +1,4 @@
 import { AppLayout } from '@/components/layout/AppLayout'
-import { TelegramButton } from '@/components/trade/TelegramButton'
 import { TradeDetail } from '@/components/trade/TradeDetail'
 import { TradeDrawer } from '@/components/trade/TradeDrawer'
 import { TradeTable } from '@/components/trade/TradeTable'
@@ -30,9 +29,7 @@ export default function Journal() {
       {/* Drawers — se superposent au contenu */}
       <TradeDrawer />
       <TradeDetail />
-
-      {/* Bouton flottant Telegram (Quick Entry) */}
-      <TelegramButton />
     </AppLayout>
   )
 }
+

@@ -13,28 +13,26 @@ import { useLocalDatabase } from '@/store/useLocalDatabase'
 
 const QUERY_KEY = ['trades'] as const
 
-// Fetch all trades with steps and images (Lecture locale priorité 1)
+// Récupère tous les trades de manière instantanée et réactive depuis le store local
 export function useTrades() {
-  return useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: async (): Promise<TradeWithSteps[]> => {
-      // 🟢 MODE HORS-LIGNE PAR DÉFAUT : on lit la base locale Zustand
-      return useLocalDatabase.getState().trades
-    },
-  })
+  const trades = useLocalDatabase((state) => state.trades)
+
+  return {
+    data: trades,
+    isLoading: false,
+    isError: false,
+  }
 }
 
-// Fetch single trade (Lecture locale)
+// Récupère un trade individuel de manière réactive depuis le store local
 export function useTrade(id: string) {
-  return useQuery({
-    queryKey: [...QUERY_KEY, id],
-    queryFn: async (): Promise<TradeWithSteps> => {
-      const trade = useLocalDatabase.getState().trades.find((t) => t.id === id)
-      if (!trade) throw new Error('Trade introuvable en local')
-      return trade
-    },
-    enabled: !!id,
-  })
+  const trade = useLocalDatabase((state) => state.trades.find((t) => t.id === id))
+
+  return {
+    data: trade,
+    isLoading: false,
+    isError: !trade,
+  }
 }
 
 // Create trade (Écriture locale puis file d'attente Supabase)
@@ -47,11 +45,19 @@ export function useCreateTrade() {
     mutationFn: async (trade: TradeInsert) => {
       // 1. Sauvegarde instantanée en local (Mode Offline-First)
       const newTradeId = crypto.randomUUID()
+      let userId = 'local-user'
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) userId = session.user.id
+      } catch (e) {
+        // Mode hors ligne
+      }
+
       const localTrade: TradeWithSteps = {
-        ...(trade as any), // Cast pour simplification
+        ...(trade as any),
         id: newTradeId,
         created_at: new Date().toISOString(),
-        user_id: 'local-user', // ID temporaire
+        user_id: userId,
         steps: [],
         images: [],
       }
@@ -62,7 +68,7 @@ export function useCreateTrade() {
       ajouterALaFile({
         tradeId: newTradeId,
         action: 'INSERT',
-        tradeData: { ...trade, id: newTradeId }
+        tradeData: { ...trade, id: newTradeId, user_id: userId }
       })
 
       return localTrade
@@ -183,6 +189,14 @@ export function useUpdateTrade() {
               .catch(err => console.error('Erreur detect-news:', err))
             })
           }
+        })
+      } else {
+        // En mode hors-ligne, on ajoute la mise à jour dans la file d'attente de synchronisation
+        useOfflineSyncStore.getState().ajouterALaFile({
+          tradeId,
+          action: 'UPDATE',
+          tradeData: tradePayload,
+          steps: stepsPayload,
         })
       }
 

@@ -22,6 +22,28 @@ import {
 import { useBacktestStore, type PositionSimulee } from '@/store/backtestStore';
 import { useUIStore } from '@/store';
 import type { BoundingBoxYOLO } from '@/types/dataset';
+import {
+  calculerProtectedSwings,
+  capturerSnapshotProtectedSwings,
+} from '@/lib/indicators/protectedSwings';
+import { dessinerProtectedSwings } from '@/lib/indicators/protectedSwingsRenderer';
+import {
+  calculerUnmitigatedVolumeProfile,
+  capturerSnapshotUVP,
+} from '@/lib/indicators/unmitigatedVolumeProfile';
+import { dessinerUnmitigatedVolumeProfile } from '@/lib/indicators/unmitigatedVolumeProfileRenderer';
+import {
+  calculerZigZag,
+  capturerSnapshotZigZag,
+} from '@/lib/indicators/zigzag';
+import { dessinerZigZag } from '@/lib/indicators/zigzagRenderer';
+import {
+  calculerLuxAlgoSMC,
+  capturerSnapshotSMC,
+} from '@/lib/indicators/luxAlgoSMC';
+import { recupererIndicateursStockes, evaluerIndicateurScript } from '@/lib/indicators/indicatorEngine';
+import { dessinerResultatIndicateur, dessinerPrimitivesIndicateur } from '@/lib/indicators/scriptRenderer';
+import type { IndicatorScript, IndicatorExecutionResult } from '@/types/indicatorScript';
 
 // ─── 🛠️ Seuils de détection tactile élargis ──────────────────────────────────
 // 30px de tolérance au lieu de 5px par défaut pour faciliter la sélection au doigt.
@@ -133,6 +155,7 @@ interface BacktestChartProps {
   height: number;
   theme: 'dark' | 'light';
   timeframe: string;
+  onOpenIndicatorModal?: (scriptId?: string, onglet?: 'indicateurs' | 'configuration' | 'editeur' | 'telemetrie') => void;
 }
 
 const THEMES = {
@@ -143,6 +166,7 @@ const THEMES = {
 export interface BacktestChartHandle {
   takeScreenshot: () => Promise<Blob | null>;
   cadrerFenetreBougies: (nbBougies: number) => void;
+  cadrerSurIndex: (indexCible: number, nbBougiesContexte?: number) => void;
   capturerImageIA: (options: {
     nbBougies: number;
     cibleLargeur?: number;
@@ -157,7 +181,7 @@ export interface BacktestChartHandle {
 export const BacktestChart = React.forwardRef<
   BacktestChartHandle,
   BacktestChartProps
->(({ activeTool, onDrawingComplete, onScrollToLeft, height, theme, timeframe }, ref) => {
+>(({ activeTool, onDrawingComplete, onScrollToLeft, height, theme, timeframe, onOpenIndicatorModal }, ref) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -168,6 +192,43 @@ export const BacktestChart = React.forwardRef<
   const estEnLecture = useBacktestStore((s) => s.estEnLecture);
   const fundamentalModeEnabled = useBacktestStore((s) => s.fundamentalModeEnabled);
   const macroEvents = useBacktestStore((s) => s.macroEvents);
+  const scriptsIndicateurs = useBacktestStore((s) => s.scriptsIndicateurs);
+  const chargerScriptsIndicateurs = useBacktestStore((s) => s.chargerScriptsIndicateurs);
+  const toggleVisibiliteScript = useBacktestStore((s) => s.toggleVisibiliteScript);
+  const retirerScriptDuGraphique = useBacktestStore((s) => s.retirerScriptDuGraphique);
+
+  // Charge les scripts d'indicateurs à l'initialisation
+  useEffect(() => {
+    chargerScriptsIndicateurs();
+  }, [chargerScriptsIndicateurs]);
+
+  // ─── Calcul Unifié et Dynamique de tous les Indicateurs Scripts Actifs ───
+  const resultatsScriptsActifs = useMemo(() => {
+    if (donneesCompletes.length === 0) return [];
+    const bougiesVisibles = donneesCompletes.slice(0, indexCourant + 1);
+    const scripts = scriptsIndicateurs.length > 0 ? scriptsIndicateurs : recupererIndicateursStockes();
+
+    const resultats: Array<{ script: IndicatorScript; resultat: IndicatorExecutionResult }> = [];
+
+    for (const script of scripts) {
+      if (script.visibleSurGraphique) {
+        try {
+          const res = evaluerIndicateurScript(script.code, {
+            bougies: bougiesVisibles,
+            timeframe: timeframe,
+            parametres: script.parametres || {},
+          });
+          if (res) {
+            resultats.push({ script, resultat: res });
+          }
+        } catch (err) {
+          console.warn(`⚠️ [BacktestChart] Erreur d'évaluation pour l'indicateur ${script.nom}:`, err);
+        }
+      }
+    }
+
+    return resultats;
+  }, [donneesCompletes, indexCourant, scriptsIndicateurs, timeframe]);
 
   // Référence mutable pour éviter le stale closure du scroll handler
   const scrollRef = useRef(onScrollToLeft);
@@ -244,6 +305,19 @@ export const BacktestChart = React.forwardRef<
       const from = Math.max(0, currentIndex - nbBougies + 1);
       const to = currentIndex;
       chart.timeScale().setVisibleLogicalRange({ from, to });
+    },
+
+    // Cadre spécifiquement la vue sur un index cible (ex: bougie d'entrée du trade)
+    // avec un recul passé pour voir le contexte d'analyse et une marge à droite pour le futur
+    cadrerSurIndex: (indexCible: number, nbBougiesContexte = 60) => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const from = Math.max(0, indexCible - nbBougiesContexte);
+      const to = indexCible + 15; // Marge droite pour que la bougie d'entrée soit bien visible
+      chart.timeScale().setVisibleLogicalRange({ from, to });
+      requestAnimationFrame(() => {
+        redessinerOverlay();
+      });
     },
 
     // Capture standardisée pour le dataset d'apprentissage IA
@@ -438,16 +512,20 @@ export const BacktestChart = React.forwardRef<
 
             const overlayCanvas = overlayCanvasRef.current;
             const canvasFusion = document.createElement('canvas');
-            canvasFusion.width = chartCanvas.width;
-            canvasFusion.height = chartCanvas.height;
+
+            // Optimisation mobile : limite la largeur à 1200px max pour éviter les canvas 4K en mémoire
+            const maxLargeur = 1200;
+            const ratio = chartCanvas.width > maxLargeur ? maxLargeur / chartCanvas.width : 1;
+            canvasFusion.width = Math.round(chartCanvas.width * ratio);
+            canvasFusion.height = Math.round(chartCanvas.height * ratio);
             const ctx = canvasFusion.getContext('2d');
 
             if (!ctx) {
-              chartCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
+              chartCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.75);
               return;
             }
 
-            ctx.drawImage(chartCanvas, 0, 0);
+            ctx.drawImage(chartCanvas, 0, 0, canvasFusion.width, canvasFusion.height);
             if (overlayCanvas && overlayCanvas.width > 0 && overlayCanvas.height > 0) {
               ctx.drawImage(overlayCanvas, 0, 0, canvasFusion.width, canvasFusion.height);
             }
@@ -455,13 +533,13 @@ export const BacktestChart = React.forwardRef<
             canvasFusion.toBlob(
               (blob) => resolve(blob),
               'image/jpeg',
-              0.9
+              0.75
             );
           } catch (err) {
             console.error('Erreur lors de la capture fusionnée :', err);
             resolve(null);
           }
-        }, 150);
+        }, 50);
       });
     }
   }));
@@ -526,6 +604,7 @@ export const BacktestChart = React.forwardRef<
     positionsCanvas,
     positionSelectionneeId,
     dragAction,
+    resultatsScriptsActifs,
   });
 
   useEffect(() => {
@@ -538,9 +617,20 @@ export const BacktestChart = React.forwardRef<
       positionsCanvas,
       positionSelectionneeId,
       dragAction,
+      resultatsScriptsActifs,
     };
     redessinerOverlay();
-  }, [activeTool, indexCourant, positionActive, donneesCompletes, theme, positionsCanvas, positionSelectionneeId, dragAction]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    activeTool,
+    indexCourant,
+    positionActive,
+    donneesCompletes,
+    theme,
+    positionsCanvas,
+    positionSelectionneeId,
+    dragAction,
+    resultatsScriptsActifs,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Rendu overlay : P&L actif + positions canvas + prévisualisation ─────────
   const redessinerOverlay = useCallback(() => {
@@ -558,11 +648,31 @@ export const BacktestChart = React.forwardRef<
       donneesCompletes: currentData,
       positionsCanvas: currentPositions,
       positionSelectionneeId: selectedId,
+      resultatsScriptsActifs: currentScriptsResults,
     } = stateRef.current;
 
     const chart = chartRef.current;
     const series = seriesRef.current;
     if (!chart || !series) return;
+
+    // 0️⃣ Dessin dynamique et unifié de TOUS les indicateurs modulaires en scripts
+    const bougiesVisibles = currentData.slice(0, currentIndex + 1);
+    if (currentScriptsResults && currentScriptsResults.length > 0) {
+      for (const item of currentScriptsResults) {
+        try {
+          dessinerResultatIndicateur(
+            ctx,
+            item.resultat,
+            item.script,
+            chart,
+            series,
+            bougiesVisibles
+          );
+        } catch (err) {
+          console.warn(`⚠️ [BacktestChart] Erreur de tracé pour ${item.script.nom}:`, err);
+        }
+      }
+    }
 
     // 1️⃣ Dessin des positions canvas (Long/Short custom)
     for (const pos of currentPositions) {
@@ -1247,7 +1357,12 @@ export const BacktestChart = React.forwardRef<
     }
 
     prevDonneesLengthRef.current = donneesCompletes.length;
-  }, [donneesCompletes, indexCourant, estEnLecture]);
+
+    // Rafraîchir l'overlay après le rendu de la série
+    requestAnimationFrame(() => {
+      redessinerOverlay();
+    });
+  }, [donneesCompletes, indexCourant, estEnLecture, redessinerOverlay]);
 
   // Désactive temporairement le défilement et le zoom du graphique de Lightweight Charts
   // pendant qu'une poignée de position custom est en train d'être déplacée (dragAction actif).
@@ -1513,6 +1628,41 @@ export const BacktestChart = React.forwardRef<
 
           // Ajouter localement et dans le store Zustand
           setPositionsCanvas((prev) => [...prev.filter((p) => p.id !== 'active-position'), nouvellePosition]);
+
+          // Récupération des données télémétriques depuis les résultats des scripts actifs
+          const scriptsRes = stateRef.current.resultatsScriptsActifs || [];
+          const smcItem = scriptsRes.find((r) => r.script.id === 'script-luxalgo-smc' || r.resultat.typeSpecial === 'luxalgo-smc');
+          const swingsItem = scriptsRes.find((r) => r.script.id === 'script-protected-swings' || r.resultat.typeSpecial === 'protected-swings');
+          const uvpItem = scriptsRes.find((r) => r.script.id === 'script-unmitigated-profile' || r.resultat.typeSpecial === 'unmitigated-profile');
+          const zzItem = scriptsRes.find((r) => r.script.id === 'script-zigzag-smc' || r.resultat.typeSpecial === 'zigzag');
+
+          // 🛡️ Télémétrie : Capture automatique de l'état de l'indicateur Protected Swings
+          const snapshotPS = swingsItem?.resultat.donnees
+            ? capturerSnapshotProtectedSwings(swingsItem.resultat.donnees as any, stateRef.current.indexCourant)
+            : undefined;
+
+          // 📊 Télémétrie : Capture automatique de l'état du profil de volume non mitigué (UVP)
+          const snapshotUVP = uvpItem?.resultat.donnees
+            ? capturerSnapshotUVP(uvpItem.resultat.donnees as any, nouvellePosition.prixEntree)
+            : undefined;
+
+          // 📐 Télémétrie : Capture automatique de la structure de marché ZigZag
+          const snapshotZZ = zzItem?.resultat.donnees
+            ? capturerSnapshotZigZag(
+                zzItem.resultat.donnees as any,
+                nouvellePosition.prixEntree,
+                stateRef.current.indexCourant
+              )
+            : undefined;
+
+          // 💎 Télémétrie : Capture automatique de l'état technique LuxAlgo SMC
+          const snapshotSMC = smcItem?.resultat.donnees
+            ? capturerSnapshotSMC(
+                smcItem.resultat.donnees as any,
+                nouvellePosition.prixEntree
+              )
+            : undefined;
+
           ouvrirPosition(
             direction,
             nouvellePosition.prixEntree,
@@ -1520,7 +1670,11 @@ export const BacktestChart = React.forwardRef<
             nouvellePosition.prixTP,
             heuresEstim,
             defBougies,
-            30
+            30,
+            snapshotPS,
+            snapshotUVP,
+            snapshotZZ,
+            snapshotSMC
           );
           // Sélectionner immédiatement pour pouvoir manipuler les poignées
           setPositionSelectionneeId('active-position');
@@ -1648,6 +1802,52 @@ export const BacktestChart = React.forwardRef<
           className="absolute inset-0 pointer-events-none"
           style={{ zIndex: 10 }}
         />
+
+        {/* ── Légende Flottante des Indicateurs Actifs (Style TradingView) ── */}
+        <div className="absolute top-2 left-2 z-20 flex flex-col gap-1 pointer-events-auto select-none max-h-56 overflow-y-auto pr-1">
+          {scriptsIndicateurs.filter((s) => s.visibleSurGraphique).map((script) => (
+            <div
+              key={script.id}
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#131722]/90 border border-[#2a2e39] text-[11px] text-slate-200 shadow-md backdrop-blur-xs hover:border-slate-500 transition-colors"
+            >
+              <span className="font-semibold truncate max-w-[130px]" title={script.nom}>
+                {script.nom}
+              </span>
+              <button
+                onClick={() => toggleVisibiliteScript(script.id)}
+                className="hover:text-sky-400 text-slate-400 transition-colors px-0.5 text-[10px]"
+                title={script.visibleSurGraphique ? 'Masquer le tracé' : 'Réafficher le tracé'}
+              >
+                {script.visibleSurGraphique ? '👁️' : '👁️‍🗨️'}
+              </button>
+              {onOpenIndicatorModal && (
+                <button
+                  onClick={() => onOpenIndicatorModal(script.id, 'configuration')}
+                  className="hover:text-amber-400 text-slate-400 transition-colors px-0.5 text-[10px]"
+                  title="Configurer les variables externes et paramètres"
+                >
+                  ⚙️
+                </button>
+              )}
+              <button
+                onClick={() => retirerScriptDuGraphique(script.id)}
+                className="hover:text-red-400 text-slate-400 font-bold px-0.5 text-[11px] transition-colors"
+                title="Retirer l'indicateur du graphique"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          {scriptsIndicateurs.filter((s) => s.visibleSurGraphique).length === 0 && onOpenIndicatorModal && (
+            <button
+              onClick={() => onOpenIndicatorModal(undefined, 'indicateurs')}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-[#131722]/70 border border-dashed border-[#2a2e39] hover:border-sky-500 text-[10px] text-slate-400 hover:text-sky-300 transition-colors shadow-sm backdrop-blur-xs"
+              title="Ajouter un indicateur sur le graphique"
+            >
+              <span className="text-sky-400 font-bold">fx</span> + Indicateurs
+            </button>
+          )}
+        </div>
 
         {/* Barre d'outils d'actions flottante (dessin sélectionné OU position canvas) */}
         {(idDessinSelectionne || positionSelectionneeId) && activeTool === null && (

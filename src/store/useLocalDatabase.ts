@@ -43,8 +43,11 @@ export const useLocalDatabase = create<LocalDatabaseState>()(
       catalogItems: [],
 
       setTrades: (trades) => setZustand({ trades }),
+      // Ajoute ou remplace le trade sans jamais créer de doublon par identifiant (idempotence)
       addTrade: (trade) =>
-        setZustand((state) => ({ trades: [trade, ...state.trades] })),
+        setZustand((state) => ({
+          trades: [trade, ...state.trades.filter((t) => t.id !== trade.id)],
+        })),
       updateTrade: (id, updatedFields) =>
         setZustand((state) => ({
           trades: state.trades.map((t) => (t.id === id ? { ...t, ...updatedFields } : t)),

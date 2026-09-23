@@ -69,7 +69,7 @@ export const MacroCSVUploader: React.FC<MacroCSVUploaderProps> = ({ onClose }) =
   };
 
   return (
-    <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl max-w-md w-full text-slate-200">
+    <div className="p-3.5 sm:p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl max-w-md w-full text-slate-200 max-h-[88dvh] overflow-y-auto">
       <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
         <div className="flex items-center gap-2 font-bold text-sm text-slate-100">
           <span>📊 Importation Données Macro (CSV)</span>

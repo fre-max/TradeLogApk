@@ -291,28 +291,26 @@ export function TradeDrawer({
     setSaving(true)
 
     try {
-      // Récupère l'utilisateur uniquement si en ligne pour éviter tout timeout réseau bloquant
+      // Récupère l'utilisateur connecté via la session locale Supabase (fonctionne même hors-ligne !)
       let user = null
-      if (navigator.onLine) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession()
-          user = session?.user || null
-        } catch (sessionErr) {
-          console.warn('⚠️ [TradeDrawer] Impossible de récupérer la session locale :', sessionErr)
-        }
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        user = session?.user || null
+      } catch (sessionErr) {
+        console.warn('⚠️ [TradeDrawer] Impossible de récupérer la session locale :', sessionErr)
+      }
 
-        // Si pas de session locale en cache et en ligne, on tente d'appeler getUser()
-        if (!user) {
-          try {
-            const { data: { user: fetchedUser } } = await supabase.auth.getUser()
-            user = fetchedUser
-          } catch (userErr) {
-            console.warn('⚠️ [TradeDrawer] Impossible de contacter Supabase pour getUser() :', userErr)
-          }
+      // Si pas de session locale en cache et en ligne, on tente d'appeler getUser()
+      if (!user && navigator.onLine) {
+        try {
+          const { data: { user: fetchedUser } } = await supabase.auth.getUser()
+          user = fetchedUser
+        } catch (userErr) {
+          console.warn('⚠️ [TradeDrawer] Impossible de contacter Supabase pour getUser() :', userErr)
         }
       }
 
-      // En mode offline, on utilise 'local-user' si aucun utilisateur n'est connecté
+      // En mode offline sans session active, on utilise 'local-user'
       const userId = user?.id || 'local-user'
 
       const { useLocalDatabase } = await import('@/store/useLocalDatabase')
@@ -385,7 +383,7 @@ export function TradeDrawer({
         ajouterALaFile({
           tradeId: positionActive.tradeIdSupabase,
           action: 'UPDATE',
-          tradeData: tradePayload,
+          tradeData: { id: positionActive.tradeIdSupabase, ...tradePayload },
           steps: stepsPayload,
           reasons: selectedReasons,
           images: imagesPourSauvegarde

@@ -11,6 +11,7 @@ import { useTradeReasons } from '@/hooks/useTradeReasons'
 import { useTradeImages } from '@/hooks/useTradeImages'
 import { useCatalog } from '@/hooks/useCatalog'
 import { useLocalDatabase } from '@/store/useLocalDatabase'
+import { extraireContexteReplay } from '@/lib/replayHelper'
 
 /**
  * Panneau latéral qui affiche le détail complet d'un trade.
@@ -31,6 +32,9 @@ export function TradeDetail() {
   const [generationPdf, setGenerationPdf] = useState(false)
   const navigate = useNavigate()
   const lancerRestaurationContexte = useBacktestStore((s) => s.lancerRestaurationContexte)
+
+  // Reconstitution intelligente du contexte de replay (compatible avec toutes les positions en DB)
+  const contexteReplay = useMemo(() => extraireContexteReplay(selectedTrade), [selectedTrade])
 
   // 1️⃣ Hooks pour les données associées (Raisons, Images, Stratégies, Familles)
   const { data: tradeReasons } = useTradeReasons(selectedTrade?.id)
@@ -198,15 +202,15 @@ export function TradeDetail() {
                 <span className="hidden sm:inline">PDF</span>
               </button>
 
-              {selectedTrade.backtest_context && (
+              {contexteReplay && (
                 <button
                   onClick={() => {
-                    lancerRestaurationContexte(selectedTrade.backtest_context)
+                    lancerRestaurationContexte(contexteReplay)
                     closeDetail()
                     navigate('/backtest')
                   }}
-                  title="Revenir au moment exact où ce backtest a été pris"
-                  className="px-2.5 py-1.5 bg-accent/25 border border-accent/40 text-accent rounded-md text-[12px] font-semibold hover:bg-accent/40 hover:text-white transition-all flex items-center gap-1"
+                  title="Rejouer ce trade sur le graphique du Backtest au moment précis de l'entrée"
+                  className="px-2.5 py-1.5 bg-accent/25 border border-accent/40 text-accent rounded-md text-[12px] font-semibold hover:bg-accent/40 hover:text-white transition-all flex items-center gap-1 shadow-sm"
                 >
                   🔄 <span className="hidden sm:inline">Rejouer</span>
                 </button>

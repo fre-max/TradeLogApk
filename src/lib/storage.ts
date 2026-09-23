@@ -91,7 +91,12 @@ export async function fileToBase64(file: File | Blob): Promise<string> {
  */
 export async function compresserEtConvertirEnBase64(file: File | Blob): Promise<string> {
   try {
-    // 1. Compression rapide (1000px max, qualité 0.65) idéale pour les captures de graphiques
+    // Si l'image est déjà un JPEG optimisé de moins de 400Ko, conversion directe sans recompression
+    if (file.size < 400 * 1024 && (file.type === 'image/jpeg' || file.type === 'image/webp')) {
+      return await fileToBase64(file)
+    }
+
+    // Sinon, compression rapide (1000px max, qualité 0.65)
     const compressedBlob = await compresserImage(file, 1000, 0.65)
     return await fileToBase64(compressedBlob)
   } catch (err) {

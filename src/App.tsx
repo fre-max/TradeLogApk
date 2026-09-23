@@ -11,7 +11,6 @@ import Catalog from '@/pages/Catalog'
 import Playbook from '@/pages/Playbook'
 import Backtest from '@/pages/Backtest'
 import { ToastContainer } from '@/components/ui/Toast'
-import { BrouillonButton } from '@/components/trade/BrouillonButton'
 import { useOfflineSyncManager } from '@/hooks/useOfflineSyncManager'
 import { PinGuard } from '@/components/auth/PinGuard'
 
@@ -78,9 +77,6 @@ export function AppContent() {
 
         {/* Toasts globaux — visibles sur toutes les pages */}
         <ToastContainer />
-
-        {/* Bouton brouillons — visible en permanence en mode offline */}
-        <BrouillonButton />
       </HashRouter>
     </PinGuard>
   )
