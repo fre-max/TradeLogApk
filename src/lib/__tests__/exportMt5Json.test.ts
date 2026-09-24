@@ -64,7 +64,7 @@ describe('exportMt5Json - Exportation des trades pour MetaTrader 5', () => {
     expect(item.timestamp_unix).toBeGreaterThan(0);
   });
 
-  it('lève une erreur si la liste des trades est vide lors du téléchargement', () => {
-    expect(() => exporterTradesPourMT5Json([])).toThrow('Aucun trade disponible à exporter.');
+  it('lève une erreur si la liste des trades est vide lors du téléchargement', async () => {
+    await expect(exporterTradesPourMT5Json([])).rejects.toThrow('Aucun trade disponible à exporter.');
   });
 });

@@ -10,6 +10,7 @@ import { exportCsv } from '@/lib/exportCsv'
 import { exporterTradesPourMT5Json } from '@/lib/exportMt5Json'
 import type { Session } from '@supabase/supabase-js'
 import { useOfflineSyncManager } from '@/hooks/useOfflineSyncManager'
+import { DatabaseDiagnosticModal } from '@/components/settings/DatabaseDiagnosticModal'
 
 export default function Settings() {
   const navigate = useNavigate()
@@ -19,6 +20,7 @@ export default function Settings() {
   const [session, setSession] = useState<Session | null>(null)
   const [newPin, setNewPin] = useState('')
   const [syncEnCours, setSyncEnCours] = useState(false)
+  const [isDiagnosticOpen, setIsDiagnosticOpen] = useState(false)
 
   // Récupère la fonction syncAll du SyncManager pour déclencher manuellement
   const { syncAll } = useOfflineSyncManager()
@@ -126,25 +128,30 @@ export default function Settings() {
     }
   }
 
-  // ─── Export CSV enrichi (avec liens images) ──────────────────────
-  const handleExportCSV = () => {
-    if (trades.length === 0) {
-      addToast('Aucun trade à exporter', 'error')
-      return
-    }
-    exportCsv(trades)
-    addToast(`${trades.length} trade(s) exporté(s) en CSV !`, 'success')
-  }
-
-  // ─── Export JSON MetaTrader 5 (Dataset IA) ──────────────────────
-  const handleExportMT5JSON = () => {
+  // ─── Export CSV enrichi (avec liens images & support mobile natif) ──────
+  const handleExportCSV = async () => {
     if (trades.length === 0) {
       addToast('Aucun trade à exporter', 'error')
       return
     }
     try {
-      exporterTradesPourMT5Json(trades)
-      addToast(`${trades.length} trade(s) exporté(s) pour MetaTrader 5 !`, 'success')
+      const res = await exportCsv(trades)
+      addToast(res.message || `${trades.length} trade(s) exporté(s) en CSV !`, res.succes ? 'success' : 'error')
+    } catch (e: any) {
+      console.error('❌ Erreur export CSV:', e)
+      addToast("Erreur lors de l'exportation CSV", 'error')
+    }
+  }
+
+  // ─── Export JSON MetaTrader 5 (Dataset IA & support mobile natif) ───
+  const handleExportMT5JSON = async () => {
+    if (trades.length === 0) {
+      addToast('Aucun trade à exporter', 'error')
+      return
+    }
+    try {
+      const res = await exporterTradesPourMT5Json(trades)
+      addToast(res.message || `${trades.length} trade(s) exporté(s) pour MetaTrader 5 !`, res.succes ? 'success' : 'error')
     } catch (error) {
       console.error('❌ [Settings] Erreur export MT5 :', error)
       addToast("Erreur lors de l'exportation des trades pour MT5", 'error')
@@ -293,20 +300,57 @@ export default function Settings() {
                   </button>
                 </div>
               </div>
+              {/* Bouton de diagnostic Supabase & données */}
+              <div className="border-t border-border pt-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-txt text-[13.5px] font-medium">Diagnostic Supabase & Données</p>
+                    <p className="text-txt3 text-[12px] mt-0.5">
+                      Vérifie l'état de la connexion au cloud, l'authentification et compare les données locales avec Supabase.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsDiagnosticOpen(true)}
+                    className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-md text-[13px] font-medium bg-surface2 text-txt hover:bg-border border border-border transition-all active:scale-95 whitespace-nowrap"
+                  >
+                    <span>🩺</span>
+                    Diagnostiquer
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
-            <SettingRow
-              label="Mode Hors-ligne"
-              description="Connectez-vous pour synchroniser vos trades sur le cloud et activer l'IA."
-              action={
-                <button
-                  onClick={() => navigate('/auth')}
-                  className="px-4 py-2 bg-accent text-white rounded-md text-[13px] font-medium hover:bg-accent/90 transition-colors"
-                >
-                  Se connecter
-                </button>
-              }
-            />
+            <div className="space-y-3">
+              <SettingRow
+                label="Mode Hors-ligne"
+                description="Connectez-vous pour synchroniser vos trades sur le cloud et activer l'IA."
+                action={
+                  <button
+                    onClick={() => navigate('/auth')}
+                    className="px-4 py-2 bg-accent text-white rounded-md text-[13px] font-medium hover:bg-accent/90 transition-colors"
+                  >
+                    Se connecter
+                  </button>
+                }
+              />
+              <div className="border-t border-border pt-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-txt text-[13.5px] font-medium">Diagnostic Supabase & Données</p>
+                    <p className="text-txt3 text-[12px] mt-0.5">
+                      Vérifie la disponibilité du serveur Supabase et inspecte la base locale.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsDiagnosticOpen(true)}
+                    className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-md text-[13px] font-medium bg-surface2 text-txt hover:bg-border border border-border transition-all active:scale-95 whitespace-nowrap"
+                  >
+                    <span>🩺</span>
+                    Diagnostiquer
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </Section>
 
@@ -510,6 +554,12 @@ export default function Settings() {
         </Section>
 
       </div>
+
+      {/* Modale de Diagnostic Backend & Supabase */}
+      <DatabaseDiagnosticModal
+        isOpen={isDiagnosticOpen}
+        onClose={() => setIsDiagnosticOpen(false)}
+      />
     </AppLayout>
   )
 }
