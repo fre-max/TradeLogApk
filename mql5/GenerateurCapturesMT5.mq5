@@ -22,10 +22,10 @@ input group "─── Template et Style Graphique ───"
 input bool   InpUtiliserTemplateExistant = true;             // Appliquer le template TradeLog.tpl ?
 input string InpNomTemplate              = "TradeLog.tpl";   // Nom du fichier template (.tpl) si utilisé
 input bool   InpSauvegarderTemplate      = false;            // Sauvegarder ce style comme template officiel TradeLog.tpl ?
-input color  InpCouleurFond              = C'19,23,34';      // Fond sombre standard TradeLog
+input color  InpCouleurFond              = C'19,23,34';      // Fond sombre (#131722) identique à l'application
 input color  InpCouleurTexte             = clrWhite;         // Texte et échelles de prix
-input color  InpCouleurHausse            = clrLimeGreen;     // Bougies haussières
-input color  InpCouleurBaisse            = clrCrimson;       // Bougies baissières
+input color  InpCouleurHausse            = C'38,166,154';    // Bougies haussières (#26a69a) identiques à l'application
+input color  InpCouleurBaisse            = C'239,83,80';     // Bougies baissières (#ef5350) identiques à l'application
 input bool   InpAfficherGrille           = false;            // Afficher la grille (désactivée pour l'IA)
 input bool   InpSupprimerIndicateurs     = true;             // Retirer systématiquement tous les indicateurs (Graphique 100% nu)
 input bool   InpTracerNiveauxTrade       = false;            // Tracer les lignes Entrée, SL et TP (false = bougies 100% nues)
@@ -356,6 +356,10 @@ void OnStart()
          continue;
       }
       
+      // Désactiver impérativement l'autoscroll pour éviter que le graphique ne revienne aux bougies en direct
+      ChartSetInteger(chart_id, CHART_AUTOSCROLL, false);
+      ChartSetInteger(chart_id, CHART_SHIFT, false);
+      
       // Application du template
       AppliquerStyleOuTemplate(chart_id);
       
@@ -411,7 +415,9 @@ void OnStart()
       string nomImage = InpDossierSortie + "\\tous\\" + symbole + "_" + tfStr + "_" + dateLisible + "_" + resultat + "_" + idTrade + ".png";
       
       // Prise de la capture d'écran
-      bool captureOk = ChartScreenShot(chart_id, nomImage, InpLargeurImage, InpHauteurImage, ALIGN_RIGHT);
+      // ⚠️ Utiliser ALIGN_LEFT pour que la capture respecte le positionnement historique
+      // et ne force pas un saut vers la bougie courante (temps réel)
+      bool captureOk = ChartScreenShot(chart_id, nomImage, InpLargeurImage, InpHauteurImage, ALIGN_LEFT);
       
       if(captureOk)
       {
@@ -419,12 +425,12 @@ void OnStart()
          if(resultat == "win")
          {
             string nomWin = InpDossierSortie + "\\wins\\" + symbole + "_" + tfStr + "_" + dateLisible + "_" + idTrade + ".png";
-            ChartScreenShot(chart_id, nomWin, InpLargeurImage, InpHauteurImage, ALIGN_RIGHT);
+            ChartScreenShot(chart_id, nomWin, InpLargeurImage, InpHauteurImage, ALIGN_LEFT);
          }
          else if(resultat == "loss")
          {
             string nomLoss = InpDossierSortie + "\\losses\\" + symbole + "_" + tfStr + "_" + dateLisible + "_" + idTrade + ".png";
-            ChartScreenShot(chart_id, nomLoss, InpLargeurImage, InpHauteurImage, ALIGN_RIGHT);
+            ChartScreenShot(chart_id, nomLoss, InpLargeurImage, InpHauteurImage, ALIGN_LEFT);
          }
          
          nbCapturesReussies++;

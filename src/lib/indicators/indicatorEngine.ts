@@ -7,11 +7,16 @@ import { calculerDetectionLiquidite } from './detectionLiquidite';
 import { calculerSweepSpringValidation } from './sweepSpringValidation';
 import { calculerDetectionLiquiditeEQ } from './detectionLiquiditeEQ';
 import { calculerDetectionLiquiditeSRTL } from './detectionLiquiditeSRTL';
+import { calculerShvedSupplyDemand } from './shvedSupplyDemand';
+import { calculerOverMitigationHighway } from './overMitigationHighway';
+import { calculerMethodeACompression } from './methodeACompressionRatio';
+import { calculerMethodeBOverlap } from './methodeBOverlapSurface';
+import { calculerMethodeCSlice } from './methodeCSliceDensity';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
-const VERSION_CATALOGUE_INDICATEURS = '2.4.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.2.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -614,15 +619,17 @@ return {
   },
   {
     id: 'script-sweep-spring-validation',
-    nom: 'Sweep / Spring Wyckoff Validator',
-    description: 'Valide les prises de liquidité (Sweep/Spring) avec règle de proportionnalité temporelle et confirmation par bougies de consolidation. Signaux achat (Spring) et vente (UTAD).',
+    nom: 'Détection de Liquidation (Sweep / Spring)',
+    description: 'Valide les liquidations et balayages de liquidité (Springs/UTAD). Détecte automatiquement l\'indicateur de liquidité binôme actif sur le graphique (Shved, Zones S/R, EQH/EQL, etc.).',
     auteur: 'Wyckoff Bot / TradeLog',
-    version: '1.0.0',
+    version: '2.0.0',
     type: 'overlay',
     actif: true,
     visibleSurGraphique: false,
     collecteActive: true,
     parametres: {
+      sourceLiquidite: 'auto',
+      timeframeLiquidite: 'M15',
       sensibilitePivot: 5,
       maxLookbackBars: 1000,
       ratioMaxTemps: 0.10,
@@ -632,15 +639,46 @@ return {
     },
     definitionsVariables: [
       {
+        cle: 'sourceLiquidite',
+        label: 'Module Source de Liquidité',
+        description: 'Module de liquidité à analyser. En mode Automatique, détecte automatiquement l\'indicateur de liquidité actif sur le graphique.',
+        type: 'select',
+        valeurParDefaut: 'auto',
+        options: [
+          { label: 'Automatique (Détecte le binôme sur le graphique)', value: 'auto' },
+          { label: 'Forcer Shved Supply & Demand', value: 'shved' },
+          { label: 'Forcer Pivots Hauts/Bas Standards', value: 'pivots' },
+        ],
+        groupe: 'Connexion au Module Liquidité (Binôme)',
+      },
+      {
+        cle: 'timeframeLiquidite',
+        label: 'Unité de Temps de la Liquidité (Option B / MTF)',
+        description: 'Unité de temps de la liquidité interne analysée (ex: M15 sur graphique H4)',
+        type: 'select',
+        valeurParDefaut: 'M15',
+        options: [
+          { label: 'Graphique Actuel', value: 'ACTUEL' },
+          { label: 'M1 (1 minute)', value: 'M1' },
+          { label: 'M5 (5 minutes)', value: 'M5' },
+          { label: 'M15 (15 minutes)', value: 'M15' },
+          { label: 'M30 (30 minutes)', value: 'M30' },
+          { label: 'H1 (1 heure)', value: 'H1' },
+          { label: 'H4 (4 heures)', value: 'H4' },
+          { label: 'D1 (Journalier)', value: 'D1' },
+        ],
+        groupe: 'Connexion au Module Liquidité (Binôme)',
+      },
+      {
         cle: 'sensibilitePivot',
-        label: 'Sensibilité des Pivots (Module Liquidité)',
+        label: 'Sensibilité des Pivots (si mode Pivots)',
         description: 'Nombre de bougies pour valider un pivot du module de détection de liquidité',
         type: 'number',
         valeurParDefaut: 5,
         min: 2,
         max: 20,
         step: 1,
-        groupe: 'Connexion au Module Liquidité',
+        groupe: 'Connexion au Module Liquidité (Binôme)',
       },
       {
         cle: 'maxLookbackBars',
@@ -651,7 +689,7 @@ return {
         min: 100,
         max: 5000,
         step: 100,
-        groupe: 'Connexion au Module Liquidité',
+        groupe: 'Connexion au Module Liquidité (Binôme)',
       },
       {
         cle: 'ratioMaxTemps',
@@ -693,17 +731,22 @@ return {
       },
     ],
     creeLe: '2026-09-23T00:00:00.000Z',
-    misAJourLe: '2026-09-23T00:00:00.000Z',
+    misAJourLe: '2026-09-24T00:00:00.000Z',
     code: `/**
  * Indicateur Scriptable : Sweep / Spring Wyckoff Validator
  * Valide les prises de liquidité avec ratio temporel et confirmation
  */
 return {
   calculer: function(contexte) {
-    const { bougies, parametres } = contexte;
+    const { bougies, parametres, donneesM1, resultatsPrecedents, scriptsActifs } = contexte;
     if (!bougies || bougies.length < 50) return { donnees: {}, primitives: {} };
 
     const resultat = calculerSweepSpringValidation(bougies, {
+      sourceLiquidite: (parametres.sourceLiquidite || 'auto'),
+      timeframeLiquidite: String(parametres.timeframeLiquidite || 'M15'),
+      donneesM1: donneesM1,
+      resultatsPrecedents: resultatsPrecedents,
+      scriptsActifs: scriptsActifs,
       sensibilitePivot: Number(parametres.sensibilitePivot || 5),
       maxLookbackBars: Number(parametres.maxLookbackBars || 1000),
       ratioMaxTemps: Number(parametres.ratioMaxTemps || 0.10),
@@ -1082,6 +1125,614 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-shved-supply-demand',
+    nom: 'Détection de Liquidité : Shved Supply & Demand',
+    description: 'Détecte les zones institutionnelles de Demande (Support/SSL) et d\'Offre (Supply/BSL) via ATR dynamique. Retire les zones cassées et masque par défaut les zones non retestées.',
+    auteur: 'Shved / TradeLog AI',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      timeframeSource: 'M15',
+      supprimerZonesCassees: true,
+      afficherNonRetestees: false,
+      minRetests: 1,
+      afficherFaibles: false,
+      zoneFuzzFactor: 0.75,
+      zoneExtend: true,
+      fractalFastFactor: 3.0,
+      fractalSlowFactor: 6.0,
+      zoneMerge: true,
+      maxLookbackBars: 800,
+      afficherZones: true,
+      afficherLignes: true,
+      afficherEtiquettes: true,
+    },
+    definitionsVariables: [
+      {
+        cle: 'timeframeSource',
+        label: 'Unité de Temps de la Liquidité (Option B / MTF)',
+        description: 'Calcule les zones de liquidité sur la basse unité de temps (M15, M30, M5) et les projette sur le graphique actuel (ex: H4)',
+        type: 'select',
+        valeurParDefaut: 'M15',
+        options: [
+          { label: 'Graphique Actuel', value: 'ACTUEL' },
+          { label: 'M1 (1 minute)', value: 'M1' },
+          { label: 'M5 (5 minutes)', value: 'M5' },
+          { label: 'M15 (15 minutes)', value: 'M15' },
+          { label: 'M30 (30 minutes)', value: 'M30' },
+          { label: 'H1 (1 heure)', value: 'H1' },
+          { label: 'H4 (4 heures)', value: 'H4' },
+          { label: 'D1 (Journalier)', value: 'D1' },
+        ],
+        groupe: 'Multi-Timeframe (MTF / Option B)',
+      },
+      {
+        cle: 'supprimerZonesCassees',
+        label: 'Retirer les Zones Cassées',
+        description: 'Supprime immédiatement les supports ou résistances dès qu\'une bougie clôture au-delà (pas de Turncoat conservé)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Règles de Liquidité & Invalidation',
+      },
+      {
+        cle: 'afficherNonRetestees',
+        label: 'Afficher les Zones Non Retestées',
+        description: 'Affiche ou masque les zones neuves sans rebond (Désactivé par défaut car la liquidité nécessite un retest)',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Règles de Liquidité & Invalidation',
+      },
+      {
+        cle: 'minRetests',
+        label: 'Retests Minima Requis',
+        description: 'Nombre minimum de rebonds pour valider une zone de liquidité',
+        type: 'number',
+        valeurParDefaut: 1,
+        min: 1,
+        max: 5,
+        step: 1,
+        groupe: 'Règles de Liquidité & Invalidation',
+      },
+      {
+        cle: 'afficherFaibles',
+        label: 'Afficher les Zones Faibles',
+        description: 'Affiche les zones issues uniquement de micro-fractals rapides',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Règles de Liquidité & Invalidation',
+      },
+      {
+        cle: 'zoneFuzzFactor',
+        label: 'Facteur ATR Épaisseur Zone',
+        description: 'Multiplicateur de l\'ATR pour l\'épaisseur et la marge de tolérance du rectangle',
+        type: 'number',
+        valeurParDefaut: 0.75,
+        min: 0.25,
+        max: 2.5,
+        step: 0.05,
+        groupe: 'Sensibilité & Épaisseur',
+      },
+      {
+        cle: 'zoneExtend',
+        label: 'Étendre la Zone au-delà de la Mèche',
+        description: 'Étend la zone pour englober la mèche extrême et son buffer ATR',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sensibilité & Épaisseur',
+      },
+      {
+        cle: 'fractalFastFactor',
+        label: 'Sensibilité Fractale Rapide',
+        description: 'Rayon de bougies pour les sommets/creux réactifs',
+        type: 'number',
+        valeurParDefaut: 3.0,
+        min: 2.0,
+        max: 10.0,
+        step: 0.5,
+        groupe: 'Structure & Pivots',
+      },
+      {
+        cle: 'fractalSlowFactor',
+        label: 'Sensibilité Fractale Majeure',
+        description: 'Rayon de bougies pour les sommets/creux majeurs solides',
+        type: 'number',
+        valeurParDefaut: 6.0,
+        min: 3.0,
+        max: 20.0,
+        step: 0.5,
+        groupe: 'Structure & Pivots',
+      },
+      {
+        cle: 'zoneMerge',
+        label: 'Fusionner les Zones Superposées',
+        description: 'Combine les zones qui se chevauchent sur la même tranche de prix',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Agrégation & Nettoyage',
+      },
+      {
+        cle: 'afficherZones',
+        label: 'Afficher les Boîtes Rectangulaires',
+        description: 'Dessine les rectangles vert (Demand/SSL) et rouge (Supply/BSL)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherLignes',
+        label: 'Afficher les Lignes Médianes',
+        description: 'Trace la ligne médiane horizontale de chaque zone',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherEtiquettes',
+        label: 'Afficher les Badges de Force',
+        description: 'Affiche le nombre de retests et le statut (Vérifié / Prouvé)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+    ],
+    creeLe: '2026-09-24T00:00:00.000Z',
+    misAJourLe: '2026-09-24T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Shved Supply & Demand
+ * Détecte les zones de liquidité horizontales avec ATR dynamique.
+ * Élimine les zones cassées et masque par défaut les zones non retestées.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres, donneesM1, timeframe } = contexte;
+    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };
+
+    const res = calculerShvedSupplyDemand(bougies, {
+      timeframeSource: String(parametres.timeframeSource || 'M15'),
+      donneesM1: donneesM1,
+      chartTimeframe: timeframe,
+      supprimerZonesCassees: parametres.supprimerZonesCassees !== false,
+      afficherNonRetestees: Boolean(parametres.afficherNonRetestees),
+      minRetests: Number(parametres.minRetests || 1),
+      afficherFaibles: Boolean(parametres.afficherFaibles),
+      zoneFuzzFactor: Number(parametres.zoneFuzzFactor || 0.75),
+      zoneExtend: parametres.zoneExtend !== false,
+      fractalFastFactor: Number(parametres.fractalFastFactor || 3.0),
+      fractalSlowFactor: Number(parametres.fractalSlowFactor || 6.0),
+      zoneMerge: parametres.zoneMerge !== false,
+      maxLookbackBars: Number(parametres.maxLookbackBars || 800),
+      afficherZones: parametres.afficherZones !== false,
+      afficherLignes: parametres.afficherLignes !== false,
+      afficherEtiquettes: parametres.afficherEtiquettes !== false,
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'shved-supply-demand'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-overmitigation-highway',
+    nom: 'Couloir d\'Over-Mitigation (Autoroute vers le TP)',
+    description: 'Analyse l\'espace entre le prix actuel et la liquidité opposée (TP). Vérifie l\'absence d\'imbalances (FVG) et calcule le score d\'autoroute dégagée (Highway Score).',
+    auteur: 'Wyckoff SMC / TradeLog',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      direction: 'achat',
+      seuilAutoroutePourcent: 80,
+      prixTPManuel: 0,
+      nbPaliersAnalyse: 15,
+      maxLookbackBars: 300,
+    },
+    definitionsVariables: [
+      {
+        cle: 'direction',
+        label: 'Direction du Setup',
+        description: 'Direction du trade anticipé vers la cible',
+        type: 'select',
+        valeurParDefaut: 'achat',
+        options: [
+          { label: 'Achat (Vers Résistance / BSL)', value: 'achat' },
+          { label: 'Vente (Vers Support / SSL)', value: 'vente' },
+        ],
+        groupe: 'Configuration du Couloir',
+      },
+      {
+        cle: 'seuilAutoroutePourcent',
+        label: 'Seuil de Validation de l\'Autoroute (%)',
+        description: 'Pourcentage minimum de mitigation requis pour valider le couloir libre',
+        type: 'number',
+        valeurParDefaut: 80,
+        min: 50,
+        max: 100,
+        step: 5,
+        groupe: 'Règles de Décision',
+      },
+      {
+        cle: 'prixTPManuel',
+        label: 'Prix TP Manuel (0 = Auto)',
+        description: 'Si 0, l\'indicateur cible automatiquement la liquidité opposée la plus proche',
+        type: 'number',
+        valeurParDefaut: 0,
+        min: 0,
+        max: 100000,
+        step: 0.0001,
+        groupe: 'Cible de Prix',
+      },
+      {
+        cle: 'nbPaliersAnalyse',
+        label: 'Nombre de Paliers Verticaux',
+        description: 'Précision du découpage du couloir de prix pour évaluer les traversées',
+        type: 'number',
+        valeurParDefaut: 15,
+        min: 5,
+        max: 30,
+        step: 1,
+        groupe: 'Sensibilité Mathématique',
+      },
+      {
+        cle: 'maxLookbackBars',
+        label: 'Historique des Bougies (Lookback)',
+        description: 'Nombre de bougies passées analysées pour mesurer l\'historique d\'échange',
+        type: 'number',
+        valeurParDefaut: 300,
+        min: 50,
+        max: 800,
+        step: 25,
+        groupe: 'Sensibilité Mathématique',
+      },
+    ],
+    creeLe: '2026-09-26T00:00:00.000Z',
+    misAJourLe: '2026-09-26T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Couloir d'Over-Mitigation & Autoroute vers le TP
+ * Évalue la propreté du chemin vers la liquidité opposée.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres, resultatsPrecedents } = contexte;
+    if (!bougies || bougies.length < 15) return { donnees: {}, primitives: {} };
+
+    const res = calculerOverMitigationHighway(bougies, {
+      direction: String(parametres.direction || 'achat'),
+      prixTPManuel: Number(parametres.prixTPManuel || 0),
+      seuilAutoroutePourcent: Number(parametres.seuilAutoroutePourcent || 80),
+      nbPaliersAnalyse: Number(parametres.nbPaliersAnalyse || 15),
+      maxLookbackBars: Number(parametres.maxLookbackBars || 300),
+      resultatsPrecedents: resultatsPrecedents,
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'overmitigation-highway'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-methode-a-compression',
+    nom: '[Test 1/3] Bougie Mère Non-Mitigée : Chevauchement Direct (Méthode A)',
+    description: 'Partitionne la zone de prix par bougies mères non-mitigées et compte uniquement les bougies qui la suivent directement (arrêt au premier saut/imbalance).',
+    auteur: 'TradeLog AI / Research',
+    version: '2.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      lookbackBars: 500,
+      seuilOverlapPourcent: 50,
+      minBougiesDirectes: 3,
+      uniquementNonMitigues: false,
+      prolongerNonMitigues: true,
+    },
+    definitionsVariables: [
+      {
+        cle: 'lookbackBars',
+        label: 'Historique Analysé (Bougies)',
+        description: 'Nombre de bougies récentes analysées depuis la bougie courante (ex: 500 bougies)',
+        type: 'number',
+        valeurParDefaut: 500,
+        min: 50,
+        max: 1000,
+        step: 50,
+        groupe: 'Historique',
+      },
+      {
+        cle: 'seuilOverlapPourcent',
+        label: 'Seuil Chevauchement Direct (%)',
+        description: 'Pourcentage minimal de surface commune entre deux bougies directes',
+        type: 'number',
+        valeurParDefaut: 50,
+        min: 25,
+        max: 85,
+        step: 5,
+        groupe: 'Règles de Détection',
+      },
+      {
+        cle: 'minBougiesDirectes',
+        label: 'Bougies Directes Minimum (Fort Trafic)',
+        description: 'Nombre de bougies consécutives directes pour qualifier un fort trafic (ex: 3 bougies)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 2,
+        max: 8,
+        step: 1,
+        groupe: 'Règles de Détection',
+      },
+      {
+        cle: 'uniquementNonMitigues',
+        label: 'Uniquement Non-Mitigés',
+        description: 'Ne conserver que les bougies mères dont la tranche n\'a jamais été revisitée par le futur',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Filtre de Mitigation',
+      },
+      {
+        cle: 'prolongerNonMitigues',
+        label: 'Prolonger vers la Droite',
+        description: 'Étendre les bougies mères non mitigées jusqu\'à la bougie courante',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre de Mitigation',
+      },
+    ],
+    creeLe: '2026-09-26T00:00:00.000Z',
+    misAJourLe: '2026-09-28T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Méthode A - Bougie Mère Non-Mitigée & Chevauchement Direct
+ * Séquence contiguë stricte : arrêt au premier saut/imbalance et prolongation des zones vierges
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 3) return { donnees: {}, primitives: {} };
+
+    const res = calculerMethodeACompression(bougies, {
+      lookbackBars: Number(parametres.lookbackBars || 500),
+      seuilOverlapPourcent: Number(parametres.seuilOverlapPourcent || 50),
+      minBougiesDirectes: Number(parametres.minBougiesDirectes || 3),
+      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),
+      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'methode-a-compression'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-methode-b-overlap',
+    nom: '[Test 2/3] Chevauchement Non-Mitigé : Surface Commune (Méthode B)',
+    description: 'Mesure l\'intersection géométrique exacte entre bougies successives. Met en valeur les chaînes où 3+ bougies partagent plus de 55% de leur surface de prix et prolonge les bandes non mitigées.',
+    auteur: 'TradeLog AI / Research',
+    version: '1.1.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      minBougiesChaine: 3,
+      seuilOverlapPourcent: 55,
+      uniquementNonMitigues: false,
+      prolongerNonMitigues: true,
+      maxLookbackBars: 300,
+    },
+    definitionsVariables: [
+      {
+        cle: 'minBougiesChaine',
+        label: 'Longueur Minimale de la Chaîne',
+        description: 'Nombre minimum de bougies successives qui doivent se chevaucher (ex: 3 bougies)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 2,
+        max: 8,
+        step: 1,
+        groupe: 'Règles de la Chaîne',
+      },
+      {
+        cle: 'seuilOverlapPourcent',
+        label: 'Seuil de Surface Commune (%)',
+        description: 'Pourcentage minimal d\'intersection entre deux bougies consécutives pour valider le contact',
+        type: 'number',
+        valeurParDefaut: 55,
+        min: 30,
+        max: 90,
+        step: 5,
+        groupe: 'Règles de la Chaîne',
+      },
+      {
+        cle: 'uniquementNonMitigues',
+        label: 'Uniquement Non-Mitigés',
+        description: 'Ne conserver que les couloirs qui n\'ont jamais été revisités par le prix futur',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Filtre de Mitigation',
+      },
+      {
+        cle: 'prolongerNonMitigues',
+        label: 'Prolonger vers la Droite',
+        description: 'Étendre la surface commune non mitigée jusqu\'à la bougie courante',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre de Mitigation',
+      },
+      {
+        cle: 'maxLookbackBars',
+        label: 'Historique des Bougies (Lookback)',
+        description: 'Nombre de bougies récentes analysées sur le graphique',
+        type: 'number',
+        valeurParDefaut: 300,
+        min: 50,
+        max: 800,
+        step: 25,
+        groupe: 'Historique',
+      },
+    ],
+    creeLe: '2026-09-26T00:00:00.000Z',
+    misAJourLe: '2026-09-27T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Méthode B - Surface Commune Bougie à Bougie Non-Mitigée
+ * Intersection géométrique entre bougies avec prolongation des couloirs vierges
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 3) return { donnees: {}, primitives: {} };
+
+    const res = calculerMethodeBOverlap(bougies, {
+      minBougiesChaine: Number(parametres.minBougiesChaine || 3),
+      seuilOverlapPourcent: Number(parametres.seuilOverlapPourcent || 55),
+      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),
+      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,
+      maxLookbackBars: Number(parametres.maxLookbackBars || 300),
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'methode-b-overlap'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-methode-c-slice',
+    nom: '[Test 3/3] Chevauchement Non-Mitigé : Tranches Couloir (Méthode C)',
+    description: 'Découpe l\'espace vertical en tranches horizontales, calcule le trafic de bougies par niveau et prolonge les tranches denses non mitigées.',
+    auteur: 'TradeLog AI / Research',
+    version: '1.1.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      direction: 'achat',
+      nbTranches: 12,
+      minBougiesParTranche: 3,
+      prixTPManuel: 0,
+      uniquementNonMitigues: false,
+      prolongerNonMitigues: true,
+      maxLookbackBars: 300,
+    },
+    definitionsVariables: [
+      {
+        cle: 'direction',
+        label: 'Direction de l\'Analyse',
+        description: 'Sens du couloir vers l\'objectif',
+        type: 'select',
+        valeurParDefaut: 'achat',
+        options: [
+          { label: 'Achat (Vers le Haut)', value: 'achat' },
+          { label: 'Vente (Vers le Bas)', value: 'vente' },
+        ],
+        groupe: 'Orientation',
+      },
+      {
+        cle: 'nbTranches',
+        label: 'Nombre de Tranches Horizontales',
+        description: 'Nombre de niveaux découpant le couloir de prix',
+        type: 'number',
+        valeurParDefaut: 12,
+        min: 5,
+        max: 25,
+        step: 1,
+        groupe: 'Résolution',
+      },
+      {
+        cle: 'minBougiesParTranche',
+        label: 'Bougies Minimum par Tranche',
+        description: 'Seuil de bougies pour qu\'une tranche soit déclarée dense (en vert)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 2,
+        max: 10,
+        step: 1,
+        groupe: 'Règles de Densité',
+      },
+      {
+        cle: 'uniquementNonMitigues',
+        label: 'Uniquement Non-Mitigés',
+        description: 'Ne tracer que les tranches à fort trafic non revisitées',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Filtre de Mitigation',
+      },
+      {
+        cle: 'prolongerNonMitigues',
+        label: 'Prolonger vers la Droite',
+        description: 'Prolonger les niveaux non mitigés vers la bougie courante',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre de Mitigation',
+      },
+      {
+        cle: 'prixTPManuel',
+        label: 'Prix Cible Manuel (0 = Auto)',
+        description: 'Niveau TP haut du couloir (si 0, calculé automatiquement)',
+        type: 'number',
+        valeurParDefaut: 0,
+        min: 0,
+        max: 100000,
+        step: 0.0001,
+        groupe: 'Cible de Prix',
+      },
+      {
+        cle: 'maxLookbackBars',
+        label: 'Historique des Bougies (Lookback)',
+        description: 'Nombre de bougies récentes analysées sur le graphique',
+        type: 'number',
+        valeurParDefaut: 300,
+        min: 50,
+        max: 800,
+        step: 25,
+        groupe: 'Historique',
+      },
+    ],
+    creeLe: '2026-09-26T00:00:00.000Z',
+    misAJourLe: '2026-09-27T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Méthode C - Tranches Horizontales de Trafic Non-Mitigées
+ * Découpe du couloir avec calcul du trafic de bougies et mise en avant des niveaux vierges
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 15) return { donnees: {}, primitives: {} };
+
+    const res = calculerMethodeCSlice(bougies, {
+      direction: String(parametres.direction || 'achat'),
+      nbTranches: Number(parametres.nbTranches || 12),
+      minBougiesParTranche: Number(parametres.minBougiesParTranche || 3),
+      prixTPManuel: Number(parametres.prixTPManuel || 0),
+      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),
+      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,
+      maxLookbackBars: Number(parametres.maxLookbackBars || 300),
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'methode-c-slice'
+    };
+  }
+};`
   }
 ];
 
@@ -1226,6 +1877,17 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
           if (!idsExistants.has(indDefaut.id)) {
             scripts.push(indDefaut);
             aModifie = true;
+          } else if (indDefaut.id.startsWith('script-')) {
+            // Mise à jour du code, du nom et des variables de l'indicateur officiel
+            const idx = scripts.findIndex((s) => s.id === indDefaut.id);
+            if (idx !== -1) {
+              scripts[idx] = {
+                ...indDefaut,
+                visibleSurGraphique: scripts[idx].visibleSurGraphique !== undefined ? scripts[idx].visibleSurGraphique : indDefaut.visibleSurGraphique,
+                parametres: { ...indDefaut.parametres, ...scripts[idx].parametres },
+              };
+              aModifie = true;
+            }
           }
         }
         localStorage.setItem(CLE_STORAGE_VERSION_INDICATEURS, VERSION_CATALOGUE_INDICATEURS);
@@ -1336,6 +1998,11 @@ export function evaluerIndicateurScript(
       'calculerSweepSpringValidation',
       'calculerDetectionLiquiditeEQ',
       'calculerDetectionLiquiditeSRTL',
+      'calculerShvedSupplyDemand',
+      'calculerOverMitigationHighway',
+      'calculerMethodeACompression',
+      'calculerMethodeBOverlap',
+      'calculerMethodeCSlice',
       codeScript
     );
 
@@ -1348,7 +2015,12 @@ export function evaluerIndicateurScript(
       calculerDetectionLiquidite,
       calculerSweepSpringValidation,
       calculerDetectionLiquiditeEQ,
-      calculerDetectionLiquiditeSRTL
+      calculerDetectionLiquiditeSRTL,
+      calculerShvedSupplyDemand,
+      calculerOverMitigationHighway,
+      calculerMethodeACompression,
+      calculerMethodeBOverlap,
+      calculerMethodeCSlice
     );
 
     // 2️⃣ Si le script expose une méthode calculer()

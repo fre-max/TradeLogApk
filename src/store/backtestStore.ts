@@ -81,6 +81,7 @@ interface BacktestState {
   // Informations de session
   actif: string;
   donneesCompletes: Bougie[];
+  donneesM1: Bougie[]; // Données M1 brutes utilisées pour les indicateurs Multi-Timeframe (MTF)
   indexCourant: number; // L'index de la dernière bougie visible sur le graphique
 
   // Paramètres de la source de données (utiles pour recharger après navigation)
@@ -133,6 +134,7 @@ interface BacktestState {
   couperReplayAIndex: (index: number) => void;
   injecterDonneesPrecedentes: (anciennesDonnees: Bougie[]) => void;
   mettreAJourDonneesMtf: (nouvellesDonnees: Bougie[]) => void;
+  setDonneesM1: (bougies: Bougie[]) => void;
   contexteRestauration: ContexteRestaurationReplay | null;
 
   // State et Actions pour l'Analyse Fondamentale
@@ -183,6 +185,8 @@ export const useBacktestStore = create<BacktestState>()(
     (set, get) => ({
   actif: 'Aucun actif',
   donneesCompletes: [], // Jamais persisté (trop lourd pour le sessionStorage)
+  donneesM1: [],        // Données M1 brutes pour les calculs multi-timeframe (MTF)
+  setDonneesM1: (bougies) => set({ donneesM1: bougies }),
   indexCourant: 0,
   estEnLecture: false,
   vitesseLecture: 1000, // Par défaut : 1 bougie par seconde

@@ -1,0 +1,152 @@
+{
+  "nom": "Détection Liquidité : Shved Supply & Demand",
+  "description": "Portage optimisé de l'indicateur Shved Supply & Demand pour le trading de liquidité (SMC/Wyckoff). Les zones cassées sont immédiatement retirées et les zones non retestées sont désactivées par défaut.",
+  "auteur": "Shved / TradeLog AI",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "timeframeSource": "M15",
+    "supprimerZonesCassees": true,
+    "afficherNonRetestees": false,
+    "minRetests": 1,
+    "afficherFaibles": false,
+    "zoneFuzzFactor": 0.75,
+    "zoneExtend": true,
+    "fractalFastFactor": 3.0,
+    "fractalSlowFactor": 6.0,
+    "zoneMerge": true,
+    "maxLookbackBars": 800,
+    "afficherZones": true,
+    "afficherLignes": true,
+    "afficherEtiquettes": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "timeframeSource",
+      "label": "Unité de Temps de la Liquidité (Option B / MTF)",
+      "description": "Calcule les zones de liquidité sur la basse unité de temps (M15, M30, M5) et les projette sur le graphique actuel (ex: H4)",
+      "type": "select",
+      "valeurParDefaut": "M15",
+      "options": [
+        { "label": "Graphique Actuel", "value": "ACTUEL" },
+        { "label": "M1 (1 minute)", "value": "M1" },
+        { "label": "M5 (5 minutes)", "value": "M5" },
+        { "label": "M15 (15 minutes)", "value": "M15" },
+        { "label": "M30 (30 minutes)", "value": "M30" },
+        { "label": "H1 (1 heure)", "value": "H1" },
+        { "label": "H4 (4 heures)", "value": "H4" },
+        { "label": "D1 (Journalier)", "value": "D1" }
+      ],
+      "groupe": "Multi-Timeframe (MTF / Option B)"
+    },
+    {
+      "cle": "supprimerZonesCassees",
+      "label": "Retirer les Zones Cassées",
+      "description": "Supprime immédiatement les zones lorsqu'une bougie clôture au-delà (pas de Turncoat conservé)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Règles de Liquidité & Invalidation"
+    },
+    {
+      "cle": "afficherNonRetestees",
+      "label": "Afficher les Zones Non Retestées",
+      "description": "Affiche ou masque les zones neuves sans rebond (Désactivé par défaut car la liquidité nécessite un retest)",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Règles de Liquidité & Invalidation"
+    },
+    {
+      "cle": "minRetests",
+      "label": "Retests Minima Requis",
+      "description": "Nombre minimum de rebonds pour valider une zone de liquidité",
+      "type": "number",
+      "valeurParDefaut": 1,
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "groupe": "Règles de Liquidité & Invalidation"
+    },
+    {
+      "cle": "afficherFaibles",
+      "label": "Afficher les Zones Faibles",
+      "description": "Affiche les zones issues uniquement de micro-fractals rapides",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Règles de Liquidité & Invalidation"
+    },
+    {
+      "cle": "zoneFuzzFactor",
+      "label": "Facteur ATR Épaisseur Zone",
+      "description": "Multiplicateur de l'ATR pour l'épaisseur et la marge de tolérance du rectangle",
+      "type": "number",
+      "valeurParDefaut": 0.75,
+      "min": 0.25,
+      "max": 2.5,
+      "step": 0.05,
+      "groupe": "Sensibilité & Épaisseur"
+    },
+    {
+      "cle": "zoneExtend",
+      "label": "Étendre la Zone au-delà de la Mèche",
+      "description": "Étend la zone pour englober la mèche extrême et son buffer ATR",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Sensibilité & Épaisseur"
+    },
+    {
+      "cle": "fractalFastFactor",
+      "label": "Sensibilité Fractale Rapide",
+      "description": "Rayon de bougies pour les sommets/creux réactifs",
+      "type": "number",
+      "valeurParDefaut": 3.0,
+      "min": 2.0,
+      "max": 10.0,
+      "step": 0.5,
+      "groupe": "Structure & Pivots"
+    },
+    {
+      "cle": "fractalSlowFactor",
+      "label": "Sensibilité Fractale Majeure",
+      "description": "Rayon de bougies pour les sommets/creux majeurs solides",
+      "type": "number",
+      "valeurParDefaut": 6.0,
+      "min": 3.0,
+      "max": 20.0,
+      "step": 0.5,
+      "groupe": "Structure & Pivots"
+    },
+    {
+      "cle": "zoneMerge",
+      "label": "Fusionner les Zones Superposées",
+      "description": "Combine les zones qui se chevauchent sur la même tranche de prix",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Agrégation & Nettoyage"
+    },
+    {
+      "cle": "afficherZones",
+      "label": "Afficher les Boîtes Rectangulaires",
+      "description": "Dessine les rectangles vert (Demand/SSL) et rouge (Supply/BSL)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherLignes",
+      "label": "Afficher les Lignes Médianes",
+      "description": "Trace la ligne médiane horizontale de chaque zone",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherEtiquettes",
+      "label": "Afficher les Badges de Force",
+      "description": "Affiche le nombre de retests et le statut (Vérifié / Prouvé)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    if (typeof calculerShvedSupplyDemand === 'function') {\n      return {\n        donnees: calculerShvedSupplyDemand(contexte.bougies, contexte.parametres),\n        primitives: calculerShvedSupplyDemand(contexte.bougies, contexte.parametres).primitives,\n        typeSpecial: 'shved-supply-demand'\n      };\n    }\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: { boites: [], lignes: [], labels: [] } };\n\n    const supprimerZonesCassees = parametres.supprimerZonesCassees !== false;\n    const afficherNonRetestees = Boolean(parametres.afficherNonRetestees);\n    const afficherFaibles = Boolean(parametres.afficherFaibles);\n    const minRetests = Math.max(0, parametres.minRetests !== undefined ? Number(parametres.minRetests) : (afficherNonRetestees ? 0 : 1));\n    const zoneFuzzFactor = Number(parametres.zoneFuzzFactor || 0.75);\n    const zoneExtend = parametres.zoneExtend !== false;\n    const fastFactor = Math.max(2, Math.round(Number(parametres.fractalFastFactor || 3.0)));\n    const slowFactor = Math.max(3, Math.round(Number(parametres.fractalSlowFactor || 6.0)));\n    const zoneMerge = parametres.zoneMerge !== false;\n    const maxHistorique = Number(parametres.maxLookbackBars || 800);\n    const afficherZones = parametres.afficherZones !== false;\n    const afficherLignes = parametres.afficherLignes !== false;\n    const afficherEtiquettes = parametres.afficherEtiquettes !== false;\n\n    const total = bougies.length;\n    const atr = new Array(total).fill(0);\n    const tr = new Array(total).fill(0);\n    tr[0] = Math.max(0.0001, bougies[0].high - bougies[0].low);\n    for (let i = 1; i < total; i++) {\n      tr[i] = Math.max(bougies[i].high - bougies[i].low, Math.abs(bougies[i].high - bougies[i - 1].close), Math.abs(bougies[i].low - bougies[i - 1].close));\n    }\n    let somme = 0;\n    const limite = Math.min(7, total);\n    for (let i = 0; i < limite; i++) {\n      somme += tr[i];\n      atr[i] = somme / (i + 1);\n    }\n    for (let i = 7; i < total; i++) {\n      atr[i] = (atr[i - 1] * 6 + tr[i]) / 7;\n    }\n\n    function estHaut(idx, p) {\n      if (idx < p || idx >= total - p) return false;\n      const ph = bougies[idx].high;\n      for (let k = 1; k <= p; k++) {\n        if (bougies[idx - k].high > ph || bougies[idx + k].high >= ph) return false;\n      }\n      return true;\n    }\n\n    function estBas(idx, p) {\n      if (idx < p || idx >= total - p) return false;\n      const pl = bougies[idx].low;\n      for (let k = 1; k <= p; k++) {\n        if (bougies[idx - k].low < pl || bougies[idx + k].low <= pl) return false;\n      }\n      return true;\n    }\n\n    const debut = Math.max(slowFactor, total - maxHistorique);\n    const fin = total - fastFactor - 1;\n    const candidates = [];\n\n    for (let i = debut; i <= fin; i++) {\n      const fu = ((atr[i] || (bougies[i].high - bougies[i].low)) / 2) * zoneFuzzFactor;\n\n      if (estHaut(i, fastFactor)) {\n        const estFaible = !estHaut(i, slowFactor);\n        let hival = bougies[i].high + (zoneExtend ? fu : 0);\n        let loval = Math.max(Math.min(bougies[i].close, bougies[i].high - fu), bougies[i].high - fu * 2);\n\n        let hits = 0;\n        let estCassee = false;\n        let lastHit = i;\n        let dateFin = bougies[total - 1].time;\n\n        for (let k = i + 1; k < total; k++) {\n          const b = bougies[k];\n          if (b.high >= loval && b.low <= hival) {\n            if (k - lastHit >= 6) {\n              hits++;\n              lastHit = k;\n            }\n          }\n          if (b.close > hival) {\n            estCassee = true;\n            dateFin = b.time;\n            break;\n          }\n        }\n\n        if (estCassee && supprimerZonesCassees) continue;\n        if (hits === 0 && !afficherNonRetestees) continue;\n        if (estFaible && !afficherFaibles) continue;\n        if (hits < minRetests) continue;\n\n        const force = hits > 3 ? 'PROVEN' : (hits >= 1 ? 'VERIFIED' : (estFaible ? 'WEAK' : 'UNTESTED'));\n        candidates.push({\n          id: 'shved-res-' + i,\n          type: 'RESISTANCE',\n          prixHaut: hival,\n          prixBas: loval,\n          prixMedian: (hival + loval) / 2,\n          retests: hits,\n          force: force,\n          dateDebut: bougies[i].time,\n          dateFin: dateFin\n        });\n      }\n\n      if (estBas(i, fastFactor)) {\n        const estFaible = !estBas(i, slowFactor);\n        let loval = bougies[i].low - (zoneExtend ? fu : 0);\n        let hival = Math.min(Math.max(bougies[i].close, bougies[i].low + fu), bougies[i].low + fu * 2);\n\n        let hits = 0;\n        let estCassee = false;\n        let lastHit = i;\n        let dateFin = bougies[total - 1].time;\n\n        for (let k = i + 1; k < total; k++) {\n          const b = bougies[k];\n          if (b.low <= hival && b.high >= loval) {\n            if (k - lastHit >= 6) {\n              hits++;\n              lastHit = k;\n            }\n          }\n          if (b.close < loval) {\n            estCassee = true;\n            dateFin = b.time;\n            break;\n          }\n        }\n\n        if (estCassee && supprimerZonesCassees) continue;\n        if (hits === 0 && !afficherNonRetestees) continue;\n        if (estFaible && !afficherFaibles) continue;\n        if (hits < minRetests) continue;\n\n        const force = hits > 3 ? 'PROVEN' : (hits >= 1 ? 'VERIFIED' : (estFaible ? 'WEAK' : 'UNTESTED'));\n        candidates.push({\n          id: 'shved-sup-' + i,\n          type: 'SUPPORT',\n          prixHaut: hival,\n          prixBas: loval,\n          prixMedian: (hival + loval) / 2,\n          retests: hits,\n          force: force,\n          dateDebut: bougies[i].time,\n          dateFin: dateFin\n        });\n      }\n    }\n\n    let finales = candidates;\n    if (zoneMerge && candidates.length > 1) {\n      const fusionnees = [];\n      const traitees = new Set();\n      for (let a = 0; a < candidates.length; a++) {\n        const zA = candidates[a];\n        if (traitees.has(zA.id)) continue;\n        let hi = zA.prixHaut;\n        let lo = zA.prixBas;\n        let totalHits = zA.retests;\n        let force = zA.force;\n        traitees.add(zA.id);\n\n        for (let b = a + 1; b < candidates.length; b++) {\n          const zB = candidates[b];\n          if (traitees.has(zB.id) || zA.type !== zB.type) continue;\n          if ((hi >= zB.prixBas && hi <= zB.prixHaut) || (lo <= zB.prixHaut && lo >= zB.prixBas)) {\n            hi = Math.max(hi, zB.prixHaut);\n            lo = Math.min(lo, zB.prixBas);\n            totalHits += zB.retests;\n            traitees.add(zB.id);\n            if (totalHits > 3) force = 'PROVEN';\n            else if (totalHits >= 1) force = 'VERIFIED';\n          }\n        }\n        fusionnees.push({\n          ...zA,\n          prixHaut: hi,\n          prixBas: lo,\n          prixMedian: (hi + lo) / 2,\n          retests: totalHits,\n          force: force\n        });\n      }\n      finales = fusionnees;\n    }\n\n    const boites = [];\n    const lignes = [];\n    const labels = [];\n\n    for (const z of finales) {\n      const estSup = z.type === 'SUPPORT';\n      const colBorder = estSup ? '#10b981' : '#ef4444';\n      const colBg = estSup\n        ? (z.force === 'PROVEN' ? 'rgba(16, 185, 129, 0.22)' : 'rgba(16, 185, 129, 0.12)')\n        : (z.force === 'PROVEN' ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.12)');\n\n      const badge = z.force === 'PROVEN' ? '⭐ Prouvé' : (z.force === 'VERIFIED' ? '✓ Vérifié' : '⏳ Non retesté');\n      const tag = estSup ? '🛡️ SSL Demand' : '🧱 BSL Supply';\n      const lbl = tag + ' [' + z.retests + 'x] (' + badge + ')';\n\n      if (afficherZones) {\n        boites.push({\n          id: 'box-' + z.id,\n          prixHaut: z.prixHaut,\n          prixBas: z.prixBas,\n          dateDebut: z.dateDebut,\n          dateFin: z.dateFin,\n          couleurFond: colBg,\n          couleurBordure: colBorder,\n          label: lbl\n        });\n      }\n      if (afficherLignes) {\n        lignes.push({\n          id: 'line-' + z.id,\n          prix: z.prixMedian,\n          dateDebut: z.dateDebut,\n          dateFin: z.dateFin,\n          couleur: colBorder,\n          style: z.force === 'PROVEN' ? 'solid' : 'dashed',\n          label: (estSup ? 'Support' : 'Résistance') + ' (' + z.prixMedian.toFixed(4) + ')'\n        });\n      }\n      if (afficherEtiquettes) {\n        labels.push({\n          id: 'lbl-' + z.id,\n          prix: estSup ? z.prixBas : z.prixHaut,\n          date: z.dateDebut,\n          texte: lbl,\n          couleur: colBorder,\n          position: estSup ? 'below' : 'above'\n        });\n      }\n    }\n\n    return {\n      donnees: {\n        supports: finales.filter(z => z.type === 'SUPPORT'),\n        resistances: finales.filter(z => z.type === 'RESISTANCE'),\n        totalZones: finales.length\n      },\n      primitives: { boites, lignes, labels },\n      typeSpecial: 'shved-supply-demand'\n    };\n  }\n};"
+}

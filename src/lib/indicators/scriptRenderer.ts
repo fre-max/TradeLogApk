@@ -67,14 +67,14 @@ export function dessinerPrimitivesIndicateur(
   // 1️⃣ Rendu des Boîtes de Zone (Order Blocks, FVG, Ranges)
   if (primitives.boites && primitives.boites.length > 0) {
     for (const boite of primitives.boites) {
-      dessinerBoiteZone(ctx, boite, timeScale, series, xDerniere);
+      dessinerBoiteZone(ctx, boite, timeScale, series, xDerniere, bougies);
     }
   }
 
   // 2️⃣ Rendu des Lignes de Structure (BOS, CHoCH, Niveaux clés)
   if (primitives.lignes && primitives.lignes.length > 0) {
     for (const ligne of primitives.lignes) {
-      dessinerLigneStructure(ctx, ligne, timeScale, series, xDerniere);
+      dessinerLigneStructure(ctx, ligne, timeScale, series, xDerniere, bougies);
     }
   }
 
@@ -88,11 +88,75 @@ export function dessinerPrimitivesIndicateur(
   // 4️⃣ Rendu des Étiquettes Textuelles (Labels, Signaux)
   if (primitives.labels && primitives.labels.length > 0) {
     for (const label of primitives.labels) {
-      dessinerEtiquetteLabel(ctx, label, timeScale, series);
+      dessinerEtiquetteLabel(ctx, label, timeScale, series, bougies);
     }
   }
 
   ctx.restore();
+}
+
+/**
+ * Calcule la coordonnée X sur le canvas pour une date donnée.
+ * Si la date ne correspond pas exactement à une bougie HTF (ex: bougie M15 projetée sur H4)
+ * ou si le niveau a été créé avant la première bougie affichée,
+ * trouve intelligemment la position X correspondante sans jamais masquer le support/résistance.
+ */
+function obtenirXPourTemps(
+  timeScale: any,
+  dateTemps: string | number,
+  bougies: Bougie[]
+): number | null {
+  // 1️⃣ Tentative directe via le moteur Lightweight Charts
+  const coordDirecte = timeScale.timeToCoordinate(dateTemps as Time);
+  if (coordDirecte !== null) return coordDirecte;
+
+  if (!bougies || bougies.length === 0) return null;
+
+  const tSec = typeof dateTemps === 'number'
+    ? dateTemps
+    : Math.floor(Date.parse(dateTemps) / 1000);
+
+  const premiere = bougies[0];
+  const tPremiere: number = typeof premiere.time === 'number'
+    ? premiere.time
+    : Math.floor(Date.parse(premiere.time as string) / 1000);
+
+  // 2️⃣ Si le niveau a été créé dans le passé avant la première bougie visible,
+  // on l'ancre au début de l'écran visible pour que le trader voie la ligne sur tout le graphique
+  if (tSec <= tPremiere) {
+    const xPremiere = timeScale.timeToCoordinate(premiere.time as Time);
+    return xPremiere !== null ? xPremiere : 0;
+  }
+
+  const derniere = bougies[bougies.length - 1];
+  const tDerniere: number = typeof derniere.time === 'number'
+    ? derniere.time
+    : Math.floor(Date.parse(derniere.time as string) / 1000);
+
+  // 3️⃣ Si le temps est postérieur à la dernière bougie, ancre sur la dernière
+  if (tSec >= tDerniere) {
+    return timeScale.timeToCoordinate(derniere.time as Time);
+  }
+
+  // 4️⃣ Interpolation intelligente : trouve la bougie HTF contenant cette date LTF (la plus proche <= tSec)
+  let indexProche = -1;
+  for (let i = 0; i < bougies.length; i++) {
+    const timeVal = bougies[i].time;
+    const tB: number = typeof timeVal === 'number'
+      ? timeVal
+      : Math.floor(Date.parse(timeVal as string) / 1000);
+    if (tB <= tSec) {
+      indexProche = i;
+    } else {
+      break;
+    }
+  }
+
+  if (indexProche !== -1) {
+    return timeScale.timeToCoordinate(bougies[indexProche].time as Time);
+  }
+
+  return null;
 }
 
 /**
@@ -103,10 +167,11 @@ function dessinerBoiteZone(
   boite: VisualBox,
   timeScale: any,
   series: ISeriesApi<'Candlestick'>,
-  xDerniere: number | null
+  xDerniere: number | null,
+  bougies: Bougie[]
 ): void {
-  const xDebut = timeScale.timeToCoordinate(boite.dateDebut as Time);
-  const xFin = boite.dateFin ? timeScale.timeToCoordinate(boite.dateFin as Time) : xDerniere;
+  const xDebut = obtenirXPourTemps(timeScale, boite.dateDebut, bougies);
+  const xFin = boite.dateFin ? obtenirXPourTemps(timeScale, boite.dateFin, bougies) : xDerniere;
   const yHaut = series.priceToCoordinate(boite.prixHaut);
   const yBas = series.priceToCoordinate(boite.prixBas);
 
@@ -144,10 +209,11 @@ function dessinerLigneStructure(
   ligne: VisualLine,
   timeScale: any,
   series: ISeriesApi<'Candlestick'>,
-  xDerniere: number | null
+  xDerniere: number | null,
+  bougies: Bougie[]
 ): void {
-  const xDebut = timeScale.timeToCoordinate(ligne.dateDebut as Time);
-  const xFin = ligne.dateFin ? timeScale.timeToCoordinate(ligne.dateFin as Time) : xDerniere;
+  const xDebut = obtenirXPourTemps(timeScale, ligne.dateDebut, bougies);
+  const xFin = ligne.dateFin ? obtenirXPourTemps(timeScale, ligne.dateFin, bougies) : xDerniere;
   const y1 = series.priceToCoordinate(ligne.prix);
   const y2 = ligne.prixFin !== undefined ? series.priceToCoordinate(ligne.prixFin) : y1;
 
@@ -190,9 +256,10 @@ function dessinerEtiquetteLabel(
   ctx: CanvasRenderingContext2D,
   label: VisualLabel,
   timeScale: any,
-  series: ISeriesApi<'Candlestick'>
+  series: ISeriesApi<'Candlestick'>,
+  bougies: Bougie[]
 ): void {
-  const x = timeScale.timeToCoordinate(label.date as Time);
+  const x = obtenirXPourTemps(timeScale, label.date, bougies);
   const y = series.priceToCoordinate(label.prix);
 
   if (x === null || y === null) return;

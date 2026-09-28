@@ -315,8 +315,8 @@ return {
 
   // 4️⃣ Supprimer un indicateur personnalisé
   const supprimerIndicateur = (id: string) => {
-    const ind = indicateurs.find(i => i.id === id);
-    const estOfficiel = ind?.id.startsWith('script-luxalgo') || ind?.id.startsWith('script-protected') || ind?.id.startsWith('script-zigzag') || ind?.id.startsWith('script-unmitigated');
+    const ind = indicateurs.find((i) => i.id === id);
+    const estOfficiel = ind ? (ind.id.startsWith('script-') || INDICATEURS_PAR_DEFAUT.some((def) => def.id === ind.id)) : false;
     if (estOfficiel) {
       afficherAlerte('⚠️ Les indicateurs officiels ne peuvent pas être supprimés (utilisez le bouton réinitialiser).');
       return;
@@ -452,7 +452,7 @@ return {
 
   // Filtrage de la liste
   const indicateursFiltres = indicateurs.filter(i => {
-    const estOfficiel = i.id.startsWith('script-luxalgo') || i.id.startsWith('script-protected') || i.id.startsWith('script-zigzag') || i.id.startsWith('script-unmitigated');
+    const estOfficiel = i.id.startsWith('script-') || INDICATEURS_PAR_DEFAUT.some((def) => def.id === i.id);
     if (filtreType === 'actifs') return estAfficheSurGraphique(i);
     if (filtreType === 'officiels') return estOfficiel;
     if (filtreType === 'custom') return !estOfficiel;
@@ -653,7 +653,7 @@ return {
                 {indicateursFiltres.map((ind) => {
                   const estAffiche = estAfficheSurGraphique(ind);
                   const estSelectionne = indicateurSelectionne?.id === ind.id;
-                  const estOfficiel = ind.id.startsWith('script-luxalgo') || ind.id.startsWith('script-protected') || ind.id.startsWith('script-zigzag') || ind.id.startsWith('script-unmitigated');
+                  const estOfficiel = ind.id.startsWith('script-') || INDICATEURS_PAR_DEFAUT.some((def) => def.id === ind.id);
 
                   return (
                     <div

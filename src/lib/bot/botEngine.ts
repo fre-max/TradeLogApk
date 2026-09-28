@@ -13,7 +13,7 @@ import {
 // Clé de stockage local pour persister les bots sur le téléphone sans recompiler
 const CLE_STORAGE_BOTS = 'tradelog_bots_extensions_v1';
 const CLE_STORAGE_VERSION_BOTS = 'tradelog_bots_catalogue_version';
-const VERSION_CATALOGUE_BOTS = '2.1.0';
+const VERSION_CATALOGUE_BOTS = '2.2.0';
 
 /**
  * 3 bots modèles pré-configurés pour démarrer immédiatement
@@ -295,6 +295,127 @@ return {
     }
 
     return null;
+  }
+};`
+  },
+  {
+    id: 'bot-wyckoff-smc-highway',
+    nom: 'Wyckoff Spring & Over-Mitigation Highway Bot',
+    description: 'Valide le Sweep d\'une liquidité LTF, le CHoCH, le range de consolidation ~4 bougies, sécurise le Low Protégé en Stop-Loss et s\'exécute si le couloir vers le TP est Over-Mitigated.',
+    auteur: 'Wyckoff SMC / TradeLog',
+    version: '1.0.0',
+    actif: true,
+    parametres: {
+      seuilAutoroutePourcent: 80,
+      ratioRRMin: 2.0,
+      risquePourcent: 1.0,
+    },
+    definitionsVariables: [
+      {
+        cle: 'seuilAutoroutePourcent',
+        label: 'Seuil d\'Over-Mitigation (%)',
+        description: 'Pourcentage minimum de couloir dégagé sans obstacle FVG pour autoriser l\'entrée',
+        type: 'number',
+        valeurParDefaut: 80,
+        min: 50,
+        max: 100,
+        step: 5,
+        groupe: 'Filtres de Stratégie',
+      },
+      {
+        cle: 'ratioRRMin',
+        label: 'Ratio R:R Minimal Exigé',
+        description: 'Ratio Récompense / Risque minimum pour valider l\'ouverture du trade',
+        type: 'number',
+        valeurParDefaut: 2.0,
+        min: 1.0,
+        max: 10.0,
+        step: 0.1,
+        groupe: 'Gestion du Risque',
+      },
+      {
+        cle: 'risquePourcent',
+        label: 'Risque par Position (% Capital)',
+        description: 'Pourcentage maximum du compte alloué au Stop Loss',
+        type: 'number',
+        valeurParDefaut: 1.0,
+        min: 0.1,
+        max: 5.0,
+        step: 0.1,
+        groupe: 'Gestion du Risque',
+      },
+    ],
+    creeLe: '2026-09-26T00:00:00.000Z',
+    misAJourLe: '2026-09-26T00:00:00.000Z',
+    code: `/**
+ * Bot Wyckoff Spring & Over-Mitigation Highway
+ * Exécute la stratégie en 5 phases :
+ * 1. Sweep d'une liquidité LTF (M15)
+ * 2. CHoCH confirmé
+ * 3. Range de consolidation post-CHoCH (~4 bougies)
+ * 4. Low Protégé comme Stop Loss strict
+ * 5. Couloir vers le TP Over-Mitigated (Autoroute)
+ */
+return {
+  onBar: function(contexte) {
+    const { bougie, historique, indicateurs, positionActive, parametres } = contexte;
+    if (positionActive) return null;
+
+    // Récupération des données des indicateurs
+    const sweepData = indicateurs['script-sweep-spring-validation'] || indicateurs.scripts?.['script-sweep-spring-validation'];
+    const highwayData = indicateurs['script-overmitigation-highway'] || indicateurs.scripts?.['script-overmitigation-highway'];
+
+    const seuilAutoroute = Number(parametres.seuilAutoroutePourcent || 80);
+    const ratioRRMin = Number(parametres.ratioRRMin || 2.0);
+
+    // 1️⃣ Vérification du signal de Sweep / Spring Wyckoff
+    let dernierSignalSpring = null;
+    if (sweepData && sweepData.signauxAchat && sweepData.signauxAchat.length > 0) {
+      const candidat = sweepData.signauxAchat[sweepData.signauxAchat.length - 1];
+      const distanceBougies = (contexte.index || historique.length - 1) - (candidat.indexSignal || 0);
+      if (distanceBougies >= 0 && distanceBougies <= 5) {
+        dernierSignalSpring = candidat;
+      }
+    }
+
+    if (!dernierSignalSpring) return null;
+
+    // 2️⃣ Vérification du Low Protégé (SL naturel)
+    const lowProtege = dernierSignalSpring.stopLoss;
+    if (bougie.low <= lowProtege) return null; // Invalidé si violé
+
+    // 3️⃣ Cible de Take-Profit (Liquidité BSL opposée)
+    let prixTP = dernierSignalSpring.prixEntree + Math.abs(dernierSignalSpring.prixEntree - lowProtege) * 3;
+    if (highwayData && highwayData.prixTP > bougie.close) {
+      prixTP = highwayData.prixTP;
+    }
+
+    // 4️⃣ Vérification du filtre décisif d'Autoroute (Over-Mitigation)
+    let scoreAutoroute = 100;
+    let autorouteDegagee = true;
+    if (highwayData) {
+      scoreAutoroute = Number(highwayData.scoreAutoroute || 0);
+      autorouteDegagee = Boolean(highwayData.estAutorouteDegagee) || scoreAutoroute >= seuilAutoroute;
+    }
+
+    if (!autorouteDegagee) return null;
+
+    // 5️⃣ Validation du Ratio R:R minimal
+    const distanceSL = Math.abs(bougie.close - lowProtege);
+    if (distanceSL <= 0.00001) return null;
+    const distanceTP = Math.abs(prixTP - bougie.close);
+    const ratioRR = distanceTP / distanceSL;
+
+    if (ratioRR < ratioRRMin) return null;
+
+    // 🚀 Signal d'Achat Haute Probabilité
+    return {
+      action: 'BUY',
+      prixEntree: bougie.close,
+      stopLoss: lowProtege,
+      takeProfit: prixTP,
+      commentaire: 'Wyckoff Spring + Range 4b + Autoroute Over-Mitigated (' + scoreAutoroute + '%)'
+    };
   }
 };`
   }

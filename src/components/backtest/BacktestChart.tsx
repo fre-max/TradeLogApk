@@ -193,6 +193,7 @@ export const BacktestChart = React.forwardRef<
   const fundamentalModeEnabled = useBacktestStore((s) => s.fundamentalModeEnabled);
   const macroEvents = useBacktestStore((s) => s.macroEvents);
   const scriptsIndicateurs = useBacktestStore((s) => s.scriptsIndicateurs);
+  const donneesM1 = useBacktestStore((s) => s.donneesM1);
   const chargerScriptsIndicateurs = useBacktestStore((s) => s.chargerScriptsIndicateurs);
   const toggleVisibiliteScript = useBacktestStore((s) => s.toggleVisibiliteScript);
   const retirerScriptDuGraphique = useBacktestStore((s) => s.retirerScriptDuGraphique);
@@ -208,14 +209,26 @@ export const BacktestChart = React.forwardRef<
     const bougiesVisibles = donneesCompletes.slice(0, indexCourant + 1);
     const scripts = scriptsIndicateurs.length > 0 ? scriptsIndicateurs : recupererIndicateursStockes();
 
+    // Trie les indicateurs pour que les sources de liquidité soient calculées avant le validateur de liquidation
+    const scriptsTries = [...scripts].sort((a, b) => {
+      const estLiquidateurA = a.id === 'script-sweep-spring-validation';
+      const estLiquidateurB = b.id === 'script-sweep-spring-validation';
+      if (estLiquidateurA && !estLiquidateurB) return 1;
+      if (!estLiquidateurA && estLiquidateurB) return -1;
+      return 0;
+    });
+
     const resultats: Array<{ script: IndicatorScript; resultat: IndicatorExecutionResult }> = [];
 
-    for (const script of scripts) {
+    for (const script of scriptsTries) {
       if (script.visibleSurGraphique) {
         try {
           const res = evaluerIndicateurScript(script.code, {
             bougies: bougiesVisibles,
             timeframe: timeframe,
+            donneesM1: donneesM1,
+            resultatsPrecedents: resultats,
+            scriptsActifs: scripts.filter((s) => s.visibleSurGraphique),
             parametres: script.parametres || {},
           });
           if (res) {
@@ -228,7 +241,7 @@ export const BacktestChart = React.forwardRef<
     }
 
     return resultats;
-  }, [donneesCompletes, indexCourant, scriptsIndicateurs, timeframe]);
+  }, [donneesCompletes, indexCourant, scriptsIndicateurs, timeframe, donneesM1]);
 
   // Référence mutable pour éviter le stale closure du scroll handler
   const scrollRef = useRef(onScrollToLeft);
@@ -1645,11 +1658,11 @@ export const BacktestChart = React.forwardRef<
           setPositionsCanvas((prev) => [...prev.filter((p) => p.id !== 'active-position'), nouvellePosition]);
 
           // Récupération des données télémétriques depuis les résultats des scripts actifs
-          const scriptsRes = stateRef.current.resultatsScriptsActifs || [];
-          const smcItem = scriptsRes.find((r) => r.script.id === 'script-luxalgo-smc' || r.resultat.typeSpecial === 'luxalgo-smc');
-          const swingsItem = scriptsRes.find((r) => r.script.id === 'script-protected-swings' || r.resultat.typeSpecial === 'protected-swings');
-          const uvpItem = scriptsRes.find((r) => r.script.id === 'script-unmitigated-profile' || r.resultat.typeSpecial === 'unmitigated-profile');
-          const zzItem = scriptsRes.find((r) => r.script.id === 'script-zigzag-smc' || r.resultat.typeSpecial === 'zigzag');
+          const scriptsRes: any[] = stateRef.current.resultatsScriptsActifs || [];
+          const smcItem = scriptsRes.find((r: any) => r.script.id === 'script-luxalgo-smc' || r.resultat.typeSpecial === 'luxalgo-smc');
+          const swingsItem = scriptsRes.find((r: any) => r.script.id === 'script-protected-swings' || r.resultat.typeSpecial === 'protected-swings');
+          const uvpItem = scriptsRes.find((r: any) => r.script.id === 'script-unmitigated-profile' || r.resultat.typeSpecial === 'unmitigated-profile');
+          const zzItem = scriptsRes.find((r: any) => r.script.id === 'script-zigzag-smc' || r.resultat.typeSpecial === 'zigzag');
 
           // 🛡️ Télémétrie : Capture automatique de l'état de l'indicateur Protected Swings
           const snapshotPS = swingsItem?.resultat.donnees

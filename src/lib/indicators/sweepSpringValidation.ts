@@ -1,5 +1,6 @@
 import type { Bougie } from '@/lib/chartDataHelper';
 import { calculerDetectionLiquidite, type NiveauLiquidite } from './detectionLiquidite';
+import { calculerShvedSupplyDemand } from './shvedSupplyDemand';
 
 // ─── 🎯 Types et Structures de données ────────────────────────────────────────
 
@@ -47,7 +48,12 @@ export interface BoiteSweep {
  * Options de configuration du valideur de Sweep / Spring
  */
 export interface OptionsSweepSpring {
-  sensibilitePivot?: number;       // Sensibilité des pivots du module de liquidité (défaut: 5)
+  sensibilitePivot?: number;       // Sensibilité des pivots si source = 'pivots' (défaut: 5)
+  sourceLiquidite?: 'auto' | 'shved' | 'pivots'; // 'auto' (défaut) détecte l'indicateur de liquidité actif sur le graphique !
+  timeframeLiquidite?: string;     // Timeframe de la liquidité MTF (défaut: 'M15')
+  donneesM1?: Bougie[];            // Données M1 brutes pour l'agrégation MTF
+  resultatsPrecedents?: Array<{ script: any; resultat: any }>; // Résultats des indicateurs précédents sur le graphique
+  scriptsActifs?: any[];           // Scripts actifs sur le graphique
   maxLookbackBars?: number;        // Nombre de bougies analysées (défaut: 1000)
   ratioMaxTemps?: number;          // Ratio max temps hors structure, ex: 0.10 = 1/10 (défaut: 0.10)
   nbBougiesConsolidation?: number; // Nombre de bougies de confirmation (défaut: 3)
@@ -71,14 +77,14 @@ export interface ResultatSweepSpring {
 
 /**
  * Valide les prises de liquidité (Sweep / Spring Wyckoff) en combinant :
- * 1. Les niveaux BSL/SSL détectés par le module de liquidité
+ * 1. Les niveaux BSL/SSL détectés automatiquement par l'indicateur binôme actif sur le graphique
  * 2. La règle de proportionnalité temporelle (le prix ne reste pas longtemps hors structure)
  * 3. La confirmation par N bougies de consolidation après réintégration
  * 
  * Traduction directe de Indicateur_Sweep_Spring_Validation.mq5.
  * 
  * Exemple :
- * const resultat = calculerSweepSpringValidation(bougies, { ratioMaxTemps: 0.10 });
+ * const resultat = calculerSweepSpringValidation(bougies, { sourceLiquidite: 'auto' });
  * console.log(resultat.signaux.length); // Nombre de signaux validés
  * console.log(resultat.signauxAchat[0]); // Premier signal d'achat (Spring)
  */
@@ -88,6 +94,8 @@ export function calculerSweepSpringValidation(
 ): ResultatSweepSpring {
   // 1️⃣ Paramètres par défaut (identiques aux inputs MQL5)
   const sensibilitePivot = options.sensibilitePivot ?? 5;
+  const sourceLiquidite = options.sourceLiquidite ?? 'auto';
+  const timeframeLiquidite = options.timeframeLiquidite ?? 'M15';
   const maxLookback = options.maxLookbackBars ?? 1000;
   const ratioMaxTemps = options.ratioMaxTemps ?? 0.10;
   const nbBougiesConsolidation = options.nbBougiesConsolidation ?? 3;
@@ -99,11 +107,162 @@ export function calculerSweepSpringValidation(
     return { signaux: [], boites: [], signauxAchat: [], signauxVente: [], niveauxLiquidite: [], totalSignaux: 0 };
   }
 
-  // 2️⃣ Appel au module 1 de détection de liquidité (équivalent iCustom() dans le MQL5)
-  const liquidite = calculerDetectionLiquidite(bougies, {
-    sensibilitePivot,
-    maxLookbackBars: maxLookback,
-  });
+  // 2️⃣ Récupération des niveaux de liquidité (Module de Liquidité Binôme avec Détection Automatique)
+  let niveauxDetectes: NiveauLiquidite[] = [];
+
+  // Helper pour trouver l'index de la bougie correspondante sur le graphique visible
+  const trouverIndexBougie = (timeRef: number | string): number => {
+    const tRef = typeof timeRef === 'number' ? timeRef : Math.floor(Date.parse(timeRef) / 1000);
+    const idx = bougies.findIndex(b => {
+      const t = typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time as string) / 1000);
+      return t >= tRef;
+    });
+    return idx === -1 ? 0 : idx;
+  };
+
+  const resPrecedents = options.resultatsPrecedents || [];
+  // 🔍 Recherche du dernier indicateur de liquidité ayant directement précédé sur le graphique
+  const dernierIndicateurLiquidite = [...resPrecedents].reverse().find(p =>
+    p.script?.id === 'script-shved-supply-demand' ||
+    p.script?.id === 'script-detection-liquidite-srtl' ||
+    p.script?.id === 'script-detection-liquidite-eq' ||
+    p.script?.id === 'script-detection-liquidite' ||
+    p.resultat?.typeSpecial === 'shved-supply-demand' ||
+    p.resultat?.typeSpecial === 'detection-liquidite-srtl' ||
+    p.resultat?.typeSpecial === 'detection-liquidite-eq' ||
+    p.resultat?.typeSpecial === 'detection-liquidite'
+  );
+
+  if (sourceLiquidite === 'auto') {
+    const estShved = dernierIndicateurLiquidite?.script?.id === 'script-shved-supply-demand' || dernierIndicateurLiquidite?.resultat?.typeSpecial === 'shved-supply-demand';
+    const estSRTL = dernierIndicateurLiquidite?.script?.id === 'script-detection-liquidite-srtl' || dernierIndicateurLiquidite?.resultat?.typeSpecial === 'detection-liquidite-srtl';
+    const estEQ = dernierIndicateurLiquidite?.script?.id === 'script-detection-liquidite-eq' || dernierIndicateurLiquidite?.resultat?.typeSpecial === 'detection-liquidite-eq';
+    const estBSLSSL = dernierIndicateurLiquidite?.script?.id === 'script-detection-liquidite' || dernierIndicateurLiquidite?.resultat?.typeSpecial === 'detection-liquidite';
+
+    if (estShved && dernierIndicateurLiquidite?.resultat?.donnees) {
+      // 🎯 Auto-détection : Shved Supply & Demand a précédé sur le graphique
+      const donnees = dernierIndicateurLiquidite.resultat.donnees;
+      for (const sup of (donnees.supports || [])) {
+        const idx = Math.min(bougies.length - 1, trouverIndexBougie(sup.dateDebut));
+        niveauxDetectes.push({
+          type: 'SSL',
+          prix: sup.prixBas,
+          indexOrigine: idx,
+          tempsOrigine: sup.dateDebut,
+          indexFin: bougies.length - 1,
+          tempsFin: bougies[bougies.length - 1].time,
+        });
+      }
+      for (const res of (donnees.resistances || [])) {
+        const idx = Math.min(bougies.length - 1, trouverIndexBougie(res.dateDebut));
+        niveauxDetectes.push({
+          type: 'BSL',
+          prix: res.prixHaut,
+          indexOrigine: idx,
+          tempsOrigine: res.dateDebut,
+          indexFin: bougies.length - 1,
+          tempsFin: bougies[bougies.length - 1].time,
+        });
+      }
+    } else if (estSRTL && dernierIndicateurLiquidite?.resultat?.donnees) {
+      // 🎯 Auto-détection : Zones S/R a précédé sur le graphique
+      const donnees = dernierIndicateurLiquidite.resultat.donnees;
+      for (const sup of (donnees.supports || [])) {
+        const idx = Math.min(bougies.length - 1, trouverIndexBougie(sup.tempsOrigine || sup.dateDebut));
+        niveauxDetectes.push({
+          type: 'SSL',
+          prix: sup.prixBas || sup.prix,
+          indexOrigine: idx,
+          tempsOrigine: sup.tempsOrigine || sup.dateDebut,
+          indexFin: bougies.length - 1,
+          tempsFin: bougies[bougies.length - 1].time,
+        });
+      }
+      for (const res of (donnees.resistances || [])) {
+        const idx = Math.min(bougies.length - 1, trouverIndexBougie(res.tempsOrigine || res.dateDebut));
+        niveauxDetectes.push({
+          type: 'BSL',
+          prix: res.prixHaut || res.prix,
+          indexOrigine: idx,
+          tempsOrigine: res.tempsOrigine || res.dateDebut,
+          indexFin: bougies.length - 1,
+          tempsFin: bougies[bougies.length - 1].time,
+        });
+      }
+    } else if (estEQ && dernierIndicateurLiquidite?.resultat?.donnees?.niveaux) {
+      niveauxDetectes = dernierIndicateurLiquidite.resultat.donnees.niveaux;
+    } else if (estBSLSSL && dernierIndicateurLiquidite?.resultat?.donnees?.niveaux) {
+      niveauxDetectes = dernierIndicateurLiquidite.resultat.donnees.niveaux;
+    } else {
+      // Aucun indicateur de liquidité n'a précédé : calcul direct de Shved
+      const shvedRes = calculerShvedSupplyDemand(bougies, {
+        timeframeSource: timeframeLiquidite,
+        donneesM1: options.donneesM1,
+        supprimerZonesCassees: true,
+        afficherNonRetestees: false,
+        maxLookbackBars: maxLookback,
+      });
+      for (const sup of shvedRes.supports) {
+        const idx = Math.min(bougies.length - 1, trouverIndexBougie(sup.dateDebut));
+        niveauxDetectes.push({
+          type: 'SSL',
+          prix: sup.prixBas,
+          indexOrigine: idx,
+          tempsOrigine: sup.dateDebut,
+          indexFin: bougies.length - 1,
+          tempsFin: bougies[bougies.length - 1].time,
+        });
+      }
+      for (const res of shvedRes.resistances) {
+        const idx = Math.min(bougies.length - 1, trouverIndexBougie(res.dateDebut));
+        niveauxDetectes.push({
+          type: 'BSL',
+          prix: res.prixHaut,
+          indexOrigine: idx,
+          tempsOrigine: res.dateDebut,
+          indexFin: bougies.length - 1,
+          tempsFin: bougies[bougies.length - 1].time,
+        });
+      }
+    }
+  } else if (sourceLiquidite === 'pivots') {
+    const liquidite = calculerDetectionLiquidite(bougies, {
+      sensibilitePivot,
+      maxLookbackBars: maxLookback,
+    });
+    niveauxDetectes = liquidite.niveaux;
+  } else {
+    // Mode forcé Shved
+    const shvedRes = calculerShvedSupplyDemand(bougies, {
+      timeframeSource: timeframeLiquidite,
+      donneesM1: options.donneesM1,
+      supprimerZonesCassees: true,
+      afficherNonRetestees: false,
+      maxLookbackBars: maxLookback,
+    });
+    for (const sup of shvedRes.supports) {
+      const idx = Math.min(bougies.length - 1, trouverIndexBougie(sup.dateDebut));
+      niveauxDetectes.push({
+        type: 'SSL',
+        prix: sup.prixBas,
+        indexOrigine: idx,
+        tempsOrigine: sup.dateDebut,
+        indexFin: bougies.length - 1,
+        tempsFin: bougies[bougies.length - 1].time,
+      });
+    }
+    for (const res of shvedRes.resistances) {
+      const idx = Math.min(bougies.length - 1, trouverIndexBougie(res.dateDebut));
+      niveauxDetectes.push({
+        type: 'BSL',
+        prix: res.prixHaut,
+        indexOrigine: idx,
+        tempsOrigine: res.dateDebut,
+        indexFin: bougies.length - 1,
+        tempsFin: bougies[bougies.length - 1].time,
+      });
+    }
+  }
 
   // Construction de buffers continus de BSL/SSL comme dans le MQL5
   // Pour chaque barre, on connaît le dernier niveau actif
@@ -118,7 +277,7 @@ export function calculerSweepSpringValidation(
   let dernierSSLPrix = 0;
   let dernierSSLBarre = -1;
 
-  for (const niveau of liquidite.niveaux) {
+  for (const niveau of niveauxDetectes) {
     if (niveau.type === 'BSL') {
       for (let i = niveau.indexOrigine; i <= niveau.indexFin && i < bougies.length; i++) {
         dernierBSLPrix = niveau.prix;
@@ -346,7 +505,7 @@ export function calculerSweepSpringValidation(
     boites,
     signauxAchat,
     signauxVente,
-    niveauxLiquidite: liquidite.niveaux,
+    niveauxLiquidite: niveauxDetectes,
     totalSignaux: signaux.length,
   };
 }

@@ -16,12 +16,12 @@ input bool   InpActiverDecalage      = true;           // Décaler le graphique 
 input double InpPourcentDecalage     = 12.0;           // Taille du décalage (en %)
 input bool   InpSupprimerIndicateurs = true;           // Retirer TOUS les indicateurs (Graphique 100% nu)
 
-input group "─── Couleurs et Visuel ───"
-input color  InpCouleurFond          = C'19,23,34';     // Fond sombre TradingView/TradeLog (RGB: 19, 23, 34)
+input group "─── Couleurs et Visuel (Strictement identiques à l'Application) ───"
+input color  InpCouleurFond          = C'19,23,34';     // Fond sombre (#131722) identique à l'application
 input color  InpCouleurTexte         = clrWhite;        // Couleur des prix et échelles
-input color  InpCouleurHausse        = clrLimeGreen;    // Bougies haussières (corps et mèches)
-input color  InpCouleurBaisse        = clrCrimson;      // Bougies baissières (corps et mèches)
-input bool   InpAfficherGrille       = false;           // Afficher la grille (recommandé: false pour l'IA)
+input color  InpCouleurHausse        = C'38,166,154';   // Bougies haussières (#26a69a) identiques à l'application
+input color  InpCouleurBaisse        = C'239,83,80';    // Bougies baissières (#ef5350) identiques à l'application
+input bool   InpAfficherGrille       = false;           // Grille désactivée (fond 100% propre pour l'IA)
 
 /**
  * Supprime absolument tous les indicateurs techniques et sous-fenêtres du graphique

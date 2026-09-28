@@ -17,7 +17,7 @@ input group "─── Dossier & Format des Captures ───"
 input string InpDossierSortie      = "dataset_ia";                           // Dossier d'export dans MQL5/Files
 input int    InpLargeurImage       = 640;                                    // Largeur de la capture en pixels
 input int    InpHauteurImage       = 640;                                    // Hauteur de la capture en pixels
-input bool   InpAvancerAutoApresCapture = true;                              // Passer automatiquement au trade suivant après la photo ?
+input bool   InpAvancerAutoApresCapture = false;                             // Passer automatiquement au trade suivant après la photo ? (false = reste sur le trade)
 
 input group "─── Affichage & Confort ───"
 input bool   InpAfficherLignesTrade= true;                                   // Afficher les lignes Entrée / SL / TP
@@ -769,7 +769,9 @@ void PrendreCaptureManuelle()
    string nomRelatif = InpDossierSortie + "\\tous\\" + _Symbol + "_" + tfActuel + "_" + dateLisible + "_" + t.resultat + "_" + t.id + ".png";
 
    // 4. Capture d'écran carrée
-   bool ok = ChartScreenShot(0, nomRelatif, InpLargeurImage, InpHauteurImage, ALIGN_RIGHT);
+   // ⚠️ Utiliser ALIGN_LEFT (et non ALIGN_RIGHT) pour que ChartScreenShot respecte la position
+   // naviguée dans le passé et ne saute pas vers la bougie courante tout à droite !
+   bool ok = ChartScreenShot(0, nomRelatif, InpLargeurImage, InpHauteurImage, ALIGN_LEFT);
 
    if(ok)
    {
@@ -777,12 +779,12 @@ void PrendreCaptureManuelle()
       if(t.resultat == "win")
       {
          string nomWin = InpDossierSortie + "\\wins\\" + _Symbol + "_" + tfActuel + "_" + dateLisible + "_" + t.id + ".png";
-         ChartScreenShot(0, nomWin, InpLargeurImage, InpHauteurImage, ALIGN_RIGHT);
+         ChartScreenShot(0, nomWin, InpLargeurImage, InpHauteurImage, ALIGN_LEFT);
       }
       else if(t.resultat == "loss")
       {
          string nomLoss = InpDossierSortie + "\\losses\\" + _Symbol + "_" + tfActuel + "_" + dateLisible + "_" + t.id + ".png";
-         ChartScreenShot(0, nomLoss, InpLargeurImage, InpHauteurImage, ALIGN_RIGHT);
+         ChartScreenShot(0, nomLoss, InpLargeurImage, InpHauteurImage, ALIGN_LEFT);
       }
 
       // Marque le trade comme capturé
@@ -823,6 +825,10 @@ int OnInit()
    Print("🚀 [TradeLog Studio v3] Initialisation du Studio de Capture Manuelle...");
    Print("📋 [TradeLog Studio] Symbole actuel du graphique : " + _Symbol);
    Print("📋 [TradeLog Studio] Timeframe actuel : " + TFToString((ENUM_TIMEFRAMES)_Period));
+
+   // Désactiver immédiatement l'autoscroll pour empêcher MT5 de revenir aux bougies courantes
+   ChartSetInteger(0, CHART_AUTOSCROLL, false);
+   ChartSetInteger(0, CHART_SHIFT, false);
 
    // Remise à zéro de l'état d'attente (important après un redémarrage par ChangerTimeframe)
    g_attenteHistorique = false;

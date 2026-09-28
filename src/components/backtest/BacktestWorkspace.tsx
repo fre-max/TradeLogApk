@@ -477,6 +477,7 @@ export function BacktestWorkspace() {
     fermerPositionManuellement,
     supprimerTradeHistorique,
     mettreAJourDonneesMtf,
+    setDonneesM1,
     paireCloud,
     anneeCloud,
     timeframeSauvegarde,
@@ -1021,6 +1022,7 @@ export function BacktestWorkspace() {
       const paireActuelle = nomActif.toUpperCase() || 'INCONNU';
 
       setDonneesM1Chargees(toutesBougiesM1);
+      setDonneesM1(toutesBougiesM1);
       setAnneeMinimumChargee(anneeStart);
       setPaireCloud(paireActuelle);
       setAnneeCloud(String(anneeStart));
@@ -1160,6 +1162,7 @@ export function BacktestWorkspace() {
       }
 
       setDonneesM1Chargees(bougiesM1);
+      setDonneesM1(bougiesM1);
       const anneeInt = parseInt(anneeSel);
       setAnneeMinimumChargee(anneeInt);
 
@@ -1274,6 +1277,7 @@ export function BacktestWorkspace() {
 
       const nouvellesBougiesM1 = [...anciennesBougiesM1, ...donneesM1Chargees];
       setDonneesM1Chargees(nouvellesBougiesM1);
+      setDonneesM1(nouvellesBougiesM1);
       setAnneeMinimumChargee(anneePrecedente);
 
       const anciennesBougiesAgregees = agregerBougies(anciennesBougiesM1, timeframe);

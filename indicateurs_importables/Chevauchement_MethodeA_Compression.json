@@ -1,0 +1,66 @@
+{
+  "nom": "[Test 1/3] Bougie Mère Non-Mitigée : Chevauchement Direct (Méthode A)",
+  "description": "Partitionne la zone de prix par bougies mères non-mitigées et compte uniquement les bougies qui la suivent directement (arrêt au premier saut/imbalance).",
+  "auteur": "TradeLog AI / Research",
+  "version": "2.0.0",
+  "type": "overlay",
+  "parametres": {
+    "lookbackBars": 500,
+    "seuilOverlapPourcent": 50,
+    "minBougiesDirectes": 3,
+    "uniquementNonMitigues": false,
+    "prolongerNonMitigues": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "lookbackBars",
+      "label": "Historique Analysé (Bougies)",
+      "description": "Nombre de bougies récentes analysées depuis la bougie courante (ex: 500 bougies)",
+      "type": "number",
+      "valeurParDefaut": 500,
+      "min": 50,
+      "max": 1000,
+      "step": 50,
+      "groupe": "Historique"
+    },
+    {
+      "cle": "seuilOverlapPourcent",
+      "label": "Seuil Chevauchement Direct (%)",
+      "description": "Pourcentage minimal de surface commune entre deux bougies directes",
+      "type": "number",
+      "valeurParDefaut": 50,
+      "min": 25,
+      "max": 85,
+      "step": 5,
+      "groupe": "Règles de Détection"
+    },
+    {
+      "cle": "minBougiesDirectes",
+      "label": "Bougies Directes Minimum (Fort Trafic)",
+      "description": "Nombre de bougies consécutives directes pour qualifier un fort trafic (ex: 3 bougies)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 2,
+      "max": 8,
+      "step": 1,
+      "groupe": "Règles de Détection"
+    },
+    {
+      "cle": "uniquementNonMitigues",
+      "label": "Uniquement Non-Mitigés",
+      "description": "Ne conserver que les bougies mères dont la tranche n'a jamais été revisitée par le futur",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "prolongerNonMitigues",
+      "label": "Prolonger vers la Droite",
+      "description": "Étendre les bougies mères non mitigées jusqu'à la bougie courante",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtre de Mitigation"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 3) return { donnees: {}, primitives: {} };\n\n    const res = calculerMethodeACompression(bougies, {\n      lookbackBars: Number(parametres.lookbackBars || 500),\n      seuilOverlapPourcent: Number(parametres.seuilOverlapPourcent || 50),\n      minBougiesDirectes: Number(parametres.minBougiesDirectes || 3),\n      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),\n      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'methode-a-compression'\n    };\n  }\n};"
+}

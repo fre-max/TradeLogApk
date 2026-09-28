@@ -68,8 +68,14 @@ export interface VisualPrimitives {
 export interface IndicatorContext {
   // Historique des bougies visibles jusqu'au moment présent
   bougies: Bougie[];
-  // Unité de temps actuelle (ex: 'M1', 'M5', 'H1')
+  // Unité de temps actuelle (ex: 'M1', 'M5', 'H1', 'H4')
   timeframe?: string;
+  // Données brutes M1 (optionnelles) pour le calcul Multi-Timeframe (MTF)
+  donneesM1?: Bougie[];
+  // Résultats des indicateurs précédemment évalués sur le graphique (pour binômes et interconnexions automatiques)
+  resultatsPrecedents?: Array<{ script: IndicatorScript; resultat: IndicatorExecutionResult }>;
+  // Liste des indicateurs actuellement cochés / visibles sur le graphique
+  scriptsActifs?: IndicatorScript[];
   // Paramètres personnalisables configurés par l'utilisateur
   parametres: Record<string, number | string | boolean>;
 }
