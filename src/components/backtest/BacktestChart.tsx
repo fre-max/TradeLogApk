@@ -44,6 +44,8 @@ import {
 import { recupererIndicateursStockes, evaluerIndicateurScript } from '@/lib/indicators/indicatorEngine';
 import { dessinerResultatIndicateur, dessinerPrimitivesIndicateur } from '@/lib/indicators/scriptRenderer';
 import type { IndicatorScript, IndicatorExecutionResult } from '@/types/indicatorScript';
+import { sonderSetupComplet } from '@/lib/bot/laboratoire/sondeurSetup';
+import { useLaboratoireStore } from '@/store/laboratoireStore';
 
 // ─── 🛠️ Seuils de détection tactile élargis ──────────────────────────────────
 // 30px de tolérance au lieu de 5px par défaut pour faciliter la sélection au doigt.
@@ -146,6 +148,11 @@ const CONFIG_OUTILS: Record<string, {
     instructions: ['✂️ Cliquez sur une bougie pour démarrer le replay à partir de ce point'],
     couleurPreview: '#f59e0b',
   },
+  'setup-probe': {
+    ancres: 1,
+    instructions: ['🎯 Cliquez sur la bougie du Sweep pour sonder le setup'],
+    couleurPreview: '#ec4899',
+  },
 };
 
 interface BacktestChartProps {
@@ -206,17 +213,33 @@ export const BacktestChart = React.forwardRef<
   // ─── Calcul Unifié et Dynamique de tous les Indicateurs Scripts Actifs ───
   const resultatsScriptsActifs = useMemo(() => {
     if (donneesCompletes.length === 0) return [];
-    const bougiesVisibles = donneesCompletes.slice(0, indexCourant + 1);
+
+    // 🚀 Optimisation Performance : fenêtre glissante adaptative (max 350 bougies récentes)
+    // Évite de recalculer des milliers de bougies passées à chaque tic ($O(1)$ au lieu de $O(N^2)$)
+    const FENETRE_MAX_CALCUL = 350;
+    const debutFenetre = Math.max(0, indexCourant - FENETRE_MAX_CALCUL + 1);
+    const bougiesVisibles = donneesCompletes.slice(debutFenetre, indexCourant + 1);
     const scripts = scriptsIndicateurs.length > 0 ? scriptsIndicateurs : recupererIndicateursStockes();
 
-    // Trie les indicateurs pour que les sources de liquidité soient calculées avant le validateur de liquidation
-    const scriptsTries = [...scripts].sort((a, b) => {
-      const estLiquidateurA = a.id === 'script-sweep-spring-validation';
-      const estLiquidateurB = b.id === 'script-sweep-spring-validation';
-      if (estLiquidateurA && !estLiquidateurB) return 1;
-      if (!estLiquidateurA && estLiquidateurB) return -1;
+    // Trie les indicateurs pour respecter le flux modulaire de la stratégie :
+    // 0 = Détection de liquidité (Shved, EQH, S/R)
+    // 1 = Détection de liquidation (Sweep / Spring)
+    // 2 = Entrées fractales LTF (Order Blocks dans la zone protégée)
+    // 3 = Profil de chevauchement non-mitigué (TP Optimaux)
+    // 4 = Money Management Dynamique (R:R, dimensionnement de lot, BE)
+    // 5 = Chef d'Orchestre MTF (Le Drone : extension ou réduction du TP)
+    // 6 = Aperçu du Bot (Setup complet & Confluences consolidées)
+    const getPrioriteScript = (id: string): number => {
+      if (id === 'script-sweep-spring-validation') return 1;
+      if (id === 'script-fractal-ltf-entry') return 2;
+      if (id === 'script-unmitigated-overlap-profile') return 3;
+      if (id === 'script-money-management') return 4;
+      if (id === 'script-mtf-conductor') return 5;
+      if (id === 'script-complete-setup-visualizer') return 6;
       return 0;
-    });
+    };
+
+    const scriptsTries = [...scripts].sort((a, b) => getPrioriteScript(a.id) - getPrioriteScript(b.id));
 
     const resultats: Array<{ script: IndicatorScript; resultat: IndicatorExecutionResult }> = [];
 
@@ -1605,6 +1628,37 @@ export const BacktestChart = React.forwardRef<
             console.log(`✂️ [BacktestChart] Clic pour couper le replay à l'index ${targetIndex}`);
             useBacktestStore.getState().couperReplayAIndex(targetIndex);
             useUIStore.getState().addToast('Point de départ du backtest repositionné avec succès !', 'success');
+          }
+        }
+        if (onDrawingComplete) {
+          onDrawingComplete();
+        }
+        return;
+      }
+
+      // 🎯 Si l'outil actif est la sonde de setup du laboratoire
+      if (activeTool === 'setup-probe') {
+        const rect = conteneur.getBoundingClientRect();
+        const px = event.clientX - rect.left;
+        const logical = chart.timeScale().coordinateToLogical(px);
+        if (logical !== null) {
+          const targetIndex = Math.round(logical);
+          const completes = stateRef.current.donneesCompletes;
+          if (targetIndex >= 0 && targetIndex < completes.length) {
+            console.log(`🎯 [BacktestChart] Sonde posée sur la bougie #${targetIndex}`);
+            const paire = useBacktestStore.getState().paireCloud || 'EURUSD';
+            const tradeActif = useLaboratoireStore.getState().contexteTradeActif;
+            const titre = tradeActif?.titre || `Setup ${paire} (${timeframe})`;
+            const noteQualite = tradeActif?.noteQualite || 'A+';
+
+            const fiche = sonderSetupComplet(completes, targetIndex, {
+              paire,
+              timeframe,
+              titre,
+              noteQualite,
+            });
+            useLaboratoireStore.getState().ouvrirInspecteur(fiche);
+            useUIStore.getState().addToast(`Setup "${titre}" sondé (${noteQualite}) !`, 'success');
           }
         }
         if (onDrawingComplete) {

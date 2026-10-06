@@ -1,0 +1,120 @@
+{
+  "nom": "Détection Liquidité : Zones Supports & Résistances",
+  "description": "Détecte les zones de liquidité horizontales sur les Supports (SSL) et Résistances (BSL) avec au minimum 2 retests et marges rectangulaires visibles.",
+  "auteur": "TradeLog AI / Wyckoff",
+  "version": "2.0.0",
+  "type": "overlay",
+  "parametres": {
+    "profondeurPivot": 5,
+    "margeZonePips": 4.0,
+    "epaisseurBufferPips": 1.5,
+    "minTouches": 2,
+    "minBougiesEntrePivots": 4,
+    "maxBougiesHistorique": 600,
+    "afficherZones": true,
+    "afficherLignes": true,
+    "afficherEtiquettes": true,
+    "masquerZonesCassees": false
+  },
+  "definitionsVariables": [
+    {
+      "cle": "profondeurPivot",
+      "label": "Sensibilité des Pivots",
+      "description": "Nombre de bougies à gauche et à droite pour valider un sommet ou un creux",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 2,
+      "max": 20,
+      "step": 1,
+      "groupe": "Détection des Pivots"
+    },
+    {
+      "cle": "margeZonePips",
+      "label": "Marge Tolérance Retests (Pips)",
+      "description": "Marge autorisée pour qu'un retest fasse partie de la zone même s'il dépasse légèrement",
+      "type": "number",
+      "valeurParDefaut": 4.0,
+      "min": 0.5,
+      "max": 20.0,
+      "step": 0.5,
+      "groupe": "Marge & Tolérance"
+    },
+    {
+      "cle": "epaisseurBufferPips",
+      "label": "Épaisseur Rectangle (Pips)",
+      "description": "Marge ajoutée pour donner du corps et de l'épaisseur visible au rectangle",
+      "type": "number",
+      "valeurParDefaut": 1.5,
+      "min": 0.5,
+      "max": 10.0,
+      "step": 0.5,
+      "groupe": "Marge & Tolérance"
+    },
+    {
+      "cle": "minTouches",
+      "label": "Retests Minima Requis (>=2)",
+      "description": "Nombre minimum de points d'ancrage pour valider une zone de liquidité",
+      "type": "number",
+      "valeurParDefaut": 2,
+      "min": 2,
+      "max": 6,
+      "step": 1,
+      "groupe": "Validation"
+    },
+    {
+      "cle": "minBougiesEntrePivots",
+      "label": "Écart Minimal entre Retests",
+      "description": "Nombre minimum de bougies séparant deux retests",
+      "type": "number",
+      "valeurParDefaut": 4,
+      "min": 2,
+      "max": 30,
+      "step": 1,
+      "groupe": "Espacement Temporel"
+    },
+    {
+      "cle": "maxBougiesHistorique",
+      "label": "Bougies Historiques Analysées",
+      "description": "Nombre de bougies en arrière à scanner",
+      "type": "number",
+      "valeurParDefaut": 600,
+      "min": 50,
+      "max": 2000,
+      "step": 50,
+      "groupe": "Historique"
+    },
+    {
+      "cle": "afficherZones",
+      "label": "Afficher les Rectangles de Zones",
+      "description": "Affiche les boîtes de zones de liquidité sur le graphique",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherLignes",
+      "label": "Afficher les Lignes Médianes",
+      "description": "Trace la ligne médiane horizontale de la zone",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherEtiquettes",
+      "label": "Afficher les Étiquettes (Badges)",
+      "description": "Affiche le statut et le nombre de touches sur le graphique",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "masquerZonesCassees",
+      "label": "Masquer les Zones Cassées",
+      "description": "Masque les zones qui ont été invalidées par une clôture franche",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Filtrage"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n\n    if (!bougies || bougies.length < 20) {\n      return { donnees: { totalZones: 0 }, primitives: { boites: [], lignes: [], labels: [] } };\n    }\n\n    const profondeur = Number(parametres.profondeurPivot || 5);\n    const margePips = Number(parametres.margeZonePips || 4.0);\n    const bufferPips = Number(parametres.epaisseurBufferPips || 1.5);\n    const minTouches = Math.max(2, Number(parametres.minTouches || 2));\n    const minBougies = Number(parametres.minBougiesEntrePivots || 4);\n    const maxHistorique = Number(parametres.maxBougiesHistorique || 600);\n    const afficherZones = parametres.afficherZones !== false;\n    const afficherLignes = parametres.afficherLignes !== false;\n    const afficherEtiquettes = parametres.afficherEtiquettes !== false;\n    const masquerCassees = Boolean(parametres.masquerZonesCassees);\n\n    const prixRef = bougies[bougies.length - 1].close;\n    let pipSize = 0.0001;\n    if (prixRef > 1000) pipSize = 0.1;\n    else if (prixRef > 50) pipSize = 0.01;\n\n    const margePoints = margePips * pipSize;\n    const bufferPoints = bufferPips * pipSize;\n\n    const pivots = [];\n    const total = bougies.length;\n    const debut = Math.max(profondeur, total - maxHistorique);\n    const fin = total - profondeur - 1;\n\n    for (let i = debut; i <= fin; i++) {\n      let estHaut = true;\n      let estBas = true;\n\n      for (let j = 1; j <= profondeur; j++) {\n        if (bougies[i].high <= bougies[i - j].high || bougies[i].high < bougies[i + j].high) estHaut = false;\n        if (bougies[i].low >= bougies[i - j].low || bougies[i].low > bougies[i + j].low) estBas = false;\n      }\n\n      if (estHaut) {\n        pivots.push({ prix: bougies[i].high, temps: bougies[i].time, index: i, estHaut: true });\n      } else if (estBas) {\n        pivots.push({ prix: bougies[i].low, temps: bougies[i].time, index: i, estHaut: false });\n      }\n    }\n\n    const sommets = pivots.filter(p => p.estHaut);\n    const creux = pivots.filter(p => !p.estHaut);\n\n    const boites = [];\n    const lignes = [];\n    const labels = [];\n    const resistances = [];\n    const supports = [];\n\n    const sommetsVisites = new Set();\n    for (let i = 0; i < sommets.length; i++) {\n      if (sommetsVisites.has(sommets[i].index)) continue;\n\n      const cluster = [sommets[i]];\n      let maxPrix = sommets[i].prix;\n      let minPrix = sommets[i].prix;\n\n      for (let j = i + 1; j < sommets.length; j++) {\n        const p = sommets[j];\n        if (p.index - cluster[cluster.length - 1].index < minBougies) continue;\n\n        const diff1 = Math.abs(p.prix - sommets[i].prix);\n        const diff2 = Math.abs(p.prix - maxPrix);\n        const diff3 = Math.abs(p.prix - minPrix);\n\n        if (diff1 <= margePoints || diff2 <= margePoints || diff3 <= margePoints) {\n          cluster.push(p);\n          if (p.prix > maxPrix) maxPrix = p.prix;\n          if (p.prix < minPrix) minPrix = p.prix;\n        }\n      }\n\n      if (cluster.length >= minTouches) {\n        cluster.forEach(p => sommetsVisites.add(p.index));\n\n        const premier = cluster[0];\n        const dernier = cluster[cluster.length - 1];\n        const prixHaut = maxPrix + bufferPoints;\n        const prixBas = Math.max(0, minPrix - bufferPoints);\n        const prixMedian = (maxPrix + minPrix) / 2;\n\n        let estCassee = false;\n        let estSwept = false;\n        let dateFin = bougies[total - 1].time;\n\n        for (let b = dernier.index + 1; b < total; b++) {\n          if (bougies[b].close > prixHaut) {\n            estCassee = true;\n            dateFin = bougies[b].time;\n            break;\n          }\n          if (bougies[b].high > prixHaut && bougies[b].close <= prixHaut) {\n            estSwept = true;\n          }\n        }\n\n        resistances.push({ nbTouches: cluster.length, prixHaut, prixBas, prixMedian, estCassee, estSwept });\n\n        if (!masquerCassees || !estCassee) {\n          if (afficherZones) {\n            boites.push({\n              id: 'box-res-' + premier.index,\n              prixHaut: prixHaut,\n              prixBas: prixBas,\n              dateDebut: premier.temps,\n              dateFin: dateFin,\n              couleurFond: estCassee ? 'rgba(239, 68, 68, 0.06)' : 'rgba(239, 68, 68, 0.16)',\n              couleurBordure: estCassee ? '#f87171' : '#ef4444',\n              label: '🧱 BSL (' + cluster.length + 'x)' + (estSwept ? ' [Sweep]' : '')\n            });\n          }\n\n          if (afficherLignes) {\n            lignes.push({\n              id: 'ligne-res-' + premier.index,\n              prix: prixMedian,\n              dateDebut: premier.temps,\n              dateFin: dateFin,\n              couleur: '#ef4444',\n              style: estCassee ? 'dotted' : 'dashed',\n              label: 'Résistance (' + cluster.length + 'x)'\n            });\n          }\n\n          if (afficherEtiquettes) {\n            labels.push({\n              id: 'lbl-res-' + premier.index,\n              prix: prixHaut,\n              date: premier.temps,\n              texte: '🧱 BSL [' + cluster.length + ' touches]',\n              couleur: '#ef4444',\n              position: 'above'\n            });\n          }\n        }\n      }\n    }\n\n    const creuxVisites = new Set();\n    for (let i = 0; i < creux.length; i++) {\n      if (creuxVisites.has(creux[i].index)) continue;\n\n      const cluster = [creux[i]];\n      let maxPrix = creux[i].prix;\n      let minPrix = creux[i].prix;\n\n      for (let j = i + 1; j < creux.length; j++) {\n        const p = creux[j];\n        if (p.index - cluster[cluster.length - 1].index < minBougies) continue;\n\n        const diff1 = Math.abs(p.prix - creux[i].prix);\n        const diff2 = Math.abs(p.prix - maxPrix);\n        const diff3 = Math.abs(p.prix - minPrix);\n\n        if (diff1 <= margePoints || diff2 <= margePoints || diff3 <= margePoints) {\n          cluster.push(p);\n          if (p.prix > maxPrix) maxPrix = p.prix;\n          if (p.prix < minPrix) minPrix = p.prix;\n        }\n      }\n\n      if (cluster.length >= minTouches) {\n        cluster.forEach(p => creuxVisites.add(p.index));\n\n        const premier = cluster[0];\n        const dernier = cluster[cluster.length - 1];\n        const prixHaut = maxPrix + bufferPoints;\n        const prixBas = Math.max(0, minPrix - bufferPoints);\n        const prixMedian = (maxPrix + minPrix) / 2;\n\n        let estCassee = false;\n        let estSwept = false;\n        let dateFin = bougies[total - 1].time;\n\n        for (let b = dernier.index + 1; b < total; b++) {\n          if (bougies[b].close < prixBas) {\n            estCassee = true;\n            dateFin = bougies[b].time;\n            break;\n          }\n          if (bougies[b].low < prixBas && bougies[b].close >= prixBas) {\n            estSwept = true;\n          }\n        }\n\n        supports.push({ nbTouches: cluster.length, prixHaut, prixBas, prixMedian, estCassee, estSwept });\n\n        if (!masquerCassees || !estCassee) {\n          if (afficherZones) {\n            boites.push({\n              id: 'box-sup-' + premier.index,\n              prixHaut: prixHaut,\n              prixBas: prixBas,\n              dateDebut: premier.temps,\n              dateFin: dateFin,\n              couleurFond: estCassee ? 'rgba(16, 185, 129, 0.06)' : 'rgba(16, 185, 129, 0.16)',\n              couleurBordure: estCassee ? '#34d399' : '#10b981',\n              label: '🛡️ SSL (' + cluster.length + 'x)' + (estSwept ? ' [Sweep]' : '')\n            });\n          }\n\n          if (afficherLignes) {\n            lignes.push({\n              id: 'ligne-sup-' + premier.index,\n              prix: prixMedian,\n              dateDebut: premier.temps,\n              dateFin: dateFin,\n              couleur: '#10b981',\n              style: estCassee ? 'dotted' : 'dashed',\n              label: 'Support (' + cluster.length + 'x)'\n            });\n          }\n\n          if (afficherEtiquettes) {\n            labels.push({\n              id: 'lbl-sup-' + premier.index,\n              prix: prixBas,\n              date: premier.temps,\n              texte: '🛡️ SSL [' + cluster.length + ' touches]',\n              couleur: '#10b981',\n              position: 'below'\n            });\n          }\n        }\n      }\n    }\n\n    return {\n      donnees: {\n        totalZones: supports.length + resistances.length,\n        totalSupports: supports.length,\n        totalResistances: resistances.length\n      },\n      primitives: {\n        boites: boites,\n        lignes: lignes,\n        labels: labels\n      }\n    };\n  }\n};"
+}

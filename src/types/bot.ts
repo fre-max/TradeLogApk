@@ -48,6 +48,8 @@ export interface BotContext {
     swings: ProtectedSwingsResultat | null;
     zigzag: ResultatZigZag | null;
     uvp: ResultatUVP | null;
+    // Données de setup complet issues des 7 modules institutionnels
+    completeSetup?: any;
     // Données générées par les indicateurs scriptables personnalisés
     scripts?: Record<string, any>;
     [cle: string]: any;

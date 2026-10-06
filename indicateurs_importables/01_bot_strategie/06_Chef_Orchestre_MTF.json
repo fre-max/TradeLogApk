@@ -1,0 +1,86 @@
+{
+  "nom": "Chef d'Orchestre MTF (Le Drone)",
+  "description": "Supervise les unités de temps supérieures (H4/D1) pour piloter l'extension du TP (Mode Runner) ou la réduction préventive avant un obstacle macro.",
+  "auteur": "TradeLog Bot / SMC",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "timeframeHTF": "H4",
+    "facteurExtensionRunner": 1.5,
+    "margeObstaclePips": 3.0,
+    "filtrerContreTendance": true,
+    "afficherHUDDrone": true,
+    "afficherLigneTPAjuste": true,
+    "afficherZonesObstacles": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "timeframeHTF",
+      "label": "Unité de Temps Supérieure (HTF)",
+      "description": "Timeframe analysé par le drone pour évaluer la macro-structure et les obstacles",
+      "type": "select",
+      "valeurParDefaut": "H4",
+      "options": [
+        { "label": "H1 (1 heure)", "value": "H1" },
+        { "label": "H4 (4 heures)", "value": "H4" },
+        { "label": "D1 (Journalier)", "value": "D1" }
+      ],
+      "groupe": "Supervision Macro"
+    },
+    {
+      "cle": "facteurExtensionRunner",
+      "label": "Multiplicateur TP Runner (Extension)",
+      "description": "Facteur d'extension du Take Profit lorsque l'autoroute HTF est totalement dégagée (ex: 1.5 = +50%)",
+      "type": "number",
+      "valeurParDefaut": 1.5,
+      "min": 1.1,
+      "max": 3.0,
+      "step": 0.1,
+      "groupe": "Ajustement des Cibles"
+    },
+    {
+      "cle": "margeObstaclePips",
+      "label": "Marge Retrait Obstacle (Pips)",
+      "description": "Distance en pips de retrait pour sortir avant une résistance ou un support HTF majeur",
+      "type": "number",
+      "valeurParDefaut": 3.0,
+      "min": 1.0,
+      "max": 20.0,
+      "step": 0.5,
+      "groupe": "Ajustement des Cibles"
+    },
+    {
+      "cle": "filtrerContreTendance",
+      "label": "Détecter les Trades Contre-Tendance",
+      "description": "Alerte et réduit le risque si le trade LTF est à contre-courant du flux macro HTF",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Sécurité & Risque"
+    },
+    {
+      "cle": "afficherHUDDrone",
+      "label": "Afficher le Badge HUD du Drone",
+      "description": "Affiche le statut et la recommandation du drone directement sur le graphique",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherLigneTPAjuste",
+      "label": "Afficher la Ligne du TP Ajusté",
+      "description": "Trace la ligne pointillée violette (Runner) ou orange (Sécurité) suggérée par le drone",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherZonesObstacles",
+      "label": "Afficher les Boîtes d'Obstacles HTF",
+      "description": "Projette les rectangles des zones de Supply/Demand HTF identifiées",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres, resultatsPrecedents, donneesM1 } = contexte;\n    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };\n\n    return calculerMtfConductor(bougies, {\n      timeframeHTF: String(parametres.timeframeHTF || 'H4'),\n      facteurExtensionRunner: Number(parametres.facteurExtensionRunner || 1.5),\n      margeObstaclePips: Number(parametres.margeObstaclePips || 3.0),\n      filtrerContreTendance: parametres.filtrerContreTendance !== false,\n      afficherHUDDrone: parametres.afficherHUDDrone !== false,\n      afficherLigneTPAjuste: parametres.afficherLigneTPAjuste !== false,\n      afficherZonesObstacles: parametres.afficherZonesObstacles !== false,\n      resultatsPrecedents: resultatsPrecedents,\n      donneesM1: donneesM1,\n    });\n  }\n};"
+}

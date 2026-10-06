@@ -1,0 +1,111 @@
+{
+  "nom": "Détection de Liquidation (Sweep / Spring)",
+  "description": "Valide les liquidations et balayages de liquidité (Springs/UTAD). Détecte automatiquement l'indicateur de liquidité binôme actif sur le graphique (Shved, Zones S/R, EQH/EQL, etc.).",
+  "auteur": "Wyckoff Bot / TradeLog",
+  "version": "2.0.0",
+  "type": "overlay",
+  "parametres": {
+    "sourceLiquidite": "auto",
+    "timeframeLiquidite": "M15",
+    "sensibilitePivot": 5,
+    "maxLookbackBars": 1000,
+    "ratioMaxTemps": 0.10,
+    "nbBougiesConsolidation": 3,
+    "activerSpringSSL": true,
+    "activerUTADBSL": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "sourceLiquidite",
+      "label": "Module Source de Liquidité",
+      "description": "Module de liquidité à analyser. En mode Automatique, détecte automatiquement l'indicateur de liquidité actif sur le graphique.",
+      "type": "select",
+      "valeurParDefaut": "auto",
+      "options": [
+        { "label": "Automatique (Détecte le binôme sur le graphique)", "value": "auto" },
+        { "label": "Forcer Shved Supply & Demand", "value": "shved" },
+        { "label": "Forcer Pivots Hauts/Bas Standards", "value": "pivots" }
+      ],
+      "groupe": "Connexion au Module Liquidité (Binôme)"
+    },
+    {
+      "cle": "timeframeLiquidite",
+      "label": "Unité de Temps de la Liquidité (Option B / MTF)",
+      "description": "Unité de temps de la liquidité interne analysée (ex: M15 sur graphique H4)",
+      "type": "select",
+      "valeurParDefaut": "M15",
+      "options": [
+        { "label": "Graphique Actuel", "value": "ACTUEL" },
+        { "label": "M1 (1 minute)", "value": "M1" },
+        { "label": "M5 (5 minutes)", "value": "M5" },
+        { "label": "M15 (15 minutes)", "value": "M15" },
+        { "label": "M30 (30 minutes)", "value": "M30" },
+        { "label": "H1 (1 heure)", "value": "H1" },
+        { "label": "H4 (4 heures)", "value": "H4" },
+        { "label": "D1 (Journalier)", "value": "D1" }
+      ],
+      "groupe": "Connexion au Module Liquidité (Binôme)"
+    },
+    {
+      "cle": "sensibilitePivot",
+      "label": "Sensibilité des Pivots (si mode Pivots)",
+      "description": "Nombre de bougies pour valider un pivot du module de détection de liquidité",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 2,
+      "max": 20,
+      "step": 1,
+      "groupe": "Connexion au Module Liquidité (Binôme)"
+    },
+    {
+      "cle": "maxLookbackBars",
+      "label": "Bougies Historiques Analysées",
+      "description": "Nombre de bougies en arrière à analyser",
+      "type": "number",
+      "valeurParDefaut": 1000,
+      "min": 100,
+      "max": 5000,
+      "step": 100,
+      "groupe": "Connexion au Module Liquidité (Binôme)"
+    },
+    {
+      "cle": "ratioMaxTemps",
+      "label": "Ratio Max Temps Hors Structure",
+      "description": "Proportion maximale du temps passé hors de la structure (1/10 = 0.10)",
+      "type": "number",
+      "valeurParDefaut": 0.10,
+      "min": 0.01,
+      "max": 0.50,
+      "step": 0.01,
+      "groupe": "Règles du Sweep (Spring)"
+    },
+    {
+      "cle": "nbBougiesConsolidation",
+      "label": "Bougies de Confirmation",
+      "description": "Nombre de bougies consécutives confinées pour valider le signal",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "groupe": "Règles du Sweep (Spring)"
+    },
+    {
+      "cle": "activerSpringSSL",
+      "label": "Valider les Springs d'Achat (SSL)",
+      "description": "Active la détection des Springs haussiers sur les creux de liquidité",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions"
+    },
+    {
+      "cle": "activerUTADBSL",
+      "label": "Valider les UTAD de Vente (BSL)",
+      "description": "Active la détection des Upthrusts baissiers sur les sommets de liquidité",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres, donneesM1, resultatsPrecedents, scriptsActifs } = contexte;\n    if (!bougies || bougies.length < 50) return { donnees: {}, primitives: {} };\n\n    const resultat = calculerSweepSpringValidation(bougies, {\n      sourceLiquidite: (parametres.sourceLiquidite || 'auto'),\n      timeframeLiquidite: String(parametres.timeframeLiquidite || 'M15'),\n      donneesM1: donneesM1,\n      resultatsPrecedents: resultatsPrecedents,\n      scriptsActifs: scriptsActifs,\n      sensibilitePivot: Number(parametres.sensibilitePivot || 5),\n      maxLookbackBars: Number(parametres.maxLookbackBars || 1000),\n      ratioMaxTemps: Number(parametres.ratioMaxTemps || 0.10),\n      nbBougiesConsolidation: Number(parametres.nbBougiesConsolidation || 3),\n      activerSpringSSL: Boolean(parametres.activerSpringSSL),\n      activerUTADBSL: Boolean(parametres.activerUTADBSL),\n    });\n\n    const boites = [];\n    const labels = [];\n\n    // Zones de consolidation validées (rectangles colorés)\n    for (const b of resultat.boites) {\n      boites.push({\n        id: 'sweep-' + b.indexDebut + '-' + b.type,\n        prixHaut: b.prixHaut,\n        prixBas: b.prixBas,\n        dateDebut: b.tempsDebut,\n        dateFin: b.tempsFin,\n        couleurFond: b.type === 'achat'\n          ? 'rgba(8, 153, 129, 0.20)'\n          : 'rgba(242, 54, 69, 0.20)',\n        couleurBordure: b.type === 'achat' ? '#089981' : '#f23645',\n        label: b.type === 'achat' ? '🟢 Spring' : '🔴 UTAD',\n      });\n    }\n\n    // Flèches de signaux (labels positionnés)\n    for (const s of resultat.signaux) {\n      labels.push({\n        id: 'signal-' + s.indexSignal + '-' + s.direction,\n        prix: s.prixEntree,\n        date: s.tempsSignal,\n        texte: s.direction === 'achat' ? '▲ Spring' : '▼ UTAD',\n        couleur: s.direction === 'achat' ? '#00c853' : '#ff1744',\n        position: s.direction === 'achat' ? 'below' : 'above',\n      });\n    }\n\n    return {\n      donnees: resultat,\n      primitives: { boites, labels },\n      typeSpecial: 'sweep-spring'\n    };\n  }\n};"
+}

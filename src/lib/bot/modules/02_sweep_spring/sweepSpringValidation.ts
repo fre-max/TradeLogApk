@@ -1,6 +1,6 @@
 import type { Bougie } from '@/lib/chartDataHelper';
-import { calculerDetectionLiquidite, type NiveauLiquidite } from './detectionLiquidite';
-import { calculerShvedSupplyDemand } from './shvedSupplyDemand';
+import { calculerDetectionLiquidite, type NiveauLiquidite } from '../01_liquidite/detectionLiquidite';
+import { calculerShvedSupplyDemand } from '../01_liquidite/shvedSupplyDemand';
 
 // ─── 🎯 Types et Structures de données ────────────────────────────────────────
 

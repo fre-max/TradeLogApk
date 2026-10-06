@@ -1,0 +1,87 @@
+{
+  "nom": "Money Management Dynamique (R:R, Lot & Break-Even)",
+  "description": "Relie l'entrée chirurgicale LTF au TP Optimal pour calculer le R:R, dimensionner la taille de lot exacte et piloter le passage à Break-Even.",
+  "auteur": "TradeLog Bot / SMC",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "ratioRRMin": 2.5,
+    "capitalCompte": 10000,
+    "risquePourcent": 1.0,
+    "ratioDeclenchementBE": 0.50,
+    "afficherBoiteTrade": true,
+    "afficherNiveauBE": true,
+    "afficherBadgeResume": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "ratioRRMin",
+      "label": "Ratio Risque/Rendement Minimal (R:R Min)",
+      "description": "Seuil de rentabilité mathématique. Rejette automatiquement les trades en dessous de ce ratio (ex: 2.5)",
+      "type": "number",
+      "valeurParDefaut": 2.5,
+      "min": 1.0,
+      "max": 10.0,
+      "step": 0.1,
+      "groupe": "Filtre de Rentabilité"
+    },
+    {
+      "cle": "capitalCompte",
+      "label": "Capital du Compte ($)",
+      "description": "Solde du compte servant de base pour le calcul du risque monétaire et de la taille de lot",
+      "type": "number",
+      "valeurParDefaut": 10000,
+      "min": 100,
+      "max": 1000000,
+      "step": 500,
+      "groupe": "Dimensionnement de Position"
+    },
+    {
+      "cle": "risquePourcent",
+      "label": "Risque par Trade (% Capital)",
+      "description": "Pourcentage maximum du capital alloué au risque de perte sur ce setup (ex: 1.0% = 100$ sur 10k)",
+      "type": "number",
+      "valeurParDefaut": 1.0,
+      "min": 0.1,
+      "max": 5.0,
+      "step": 0.1,
+      "groupe": "Dimensionnement de Position"
+    },
+    {
+      "cle": "ratioDeclenchementBE",
+      "label": "Seuil de Déclenchement Break-Even (%)",
+      "description": "Proportion de la distance vers le TP à laquelle le Stop Loss est remonté à Break-Even (ex: 0.50 = 50%)",
+      "type": "number",
+      "valeurParDefaut": 0.50,
+      "min": 0.20,
+      "max": 0.80,
+      "step": 0.05,
+      "groupe": "Gestion Active du Trade"
+    },
+    {
+      "cle": "afficherBoiteTrade",
+      "label": "Afficher la Boîte de Trade (Gain / Risque)",
+      "description": "Dessine les rectangles verts et rouges du ratio Risque/Rendement sur le graphique",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherNiveauBE",
+      "label": "Afficher la Ligne de Seuil Break-Even",
+      "description": "Trace une ligne en pointillés jaunes indiquant le niveau cible pour sécuriser le trade",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherBadgeResume",
+      "label": "Afficher le Badge de Synthèse",
+      "description": "Affiche l'étiquette récapitulative : R:R, taille de lot recommandée et gain monétaire estimé",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres, resultatsPrecedents } = contexte;\n    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };\n\n    return calculerMoneyManagementRules(bougies, {\n      ratioRRMin: Number(parametres.ratioRRMin || 2.5),\n      capitalCompte: Number(parametres.capitalCompte || 10000),\n      risquePourcent: Number(parametres.risquePourcent || 1.0),\n      ratioDeclenchementBE: Number(parametres.ratioDeclenchementBE || 0.50),\n      afficherBoiteTrade: parametres.afficherBoiteTrade !== false,\n      afficherNiveauBE: parametres.afficherNiveauBE !== false,\n      afficherBadgeResume: parametres.afficherBadgeResume !== false,\n      resultatsPrecedents: resultatsPrecedents,\n    });\n  }\n};"
+}

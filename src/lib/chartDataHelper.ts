@@ -198,8 +198,13 @@ export function parserCsvPrix(contenuTextuel: string): Bougie[] {
   return resultats;
 }
 
+// ─── 🚀 Cache Mémoïsé pour l'Agrégation Multi-Timeframe (MTF) ────────────────
+// Évite de ré-agréger 50 000 bougies M1 à chaque tic de replay ou boucle de backtest.
+const cacheAgregationMTF = new Map<string, Bougie[]>();
+
 /**
- * Agrège des bougies M1 en bougies d'une unité de temps supérieure (ex: 5m, 15m, 1h, 1d)
+ * Agrège des bougies M1 en bougies d'une unité de temps supérieure (ex: 5m, 15m, 1h, 1d).
+ * Utilise un cache mémoïsé ultra-rapide pour des performances maximales.
  */
 export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): Bougie[] {
   // 1 minute : pas d'agrégation nécessaire
@@ -207,7 +212,19 @@ export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): 
     return bougiesM1;
   }
 
-  console.log(`⏱️ [MTF Aggregator] Agrégation de ${bougiesM1.length} bougies M1 en format ${timeframeSuperior}...`);
+  if (!bougiesM1 || bougiesM1.length === 0) {
+    return [];
+  }
+
+  // 1️⃣ Clé de cache rapide basée sur la taille et les bornes temporelles
+  const premiere = bougiesM1[0];
+  const derniere = bougiesM1[bougiesM1.length - 1];
+  const cleCache = `${timeframeSuperior}_${bougiesM1.length}_${premiere?.time}_${derniere?.time}`;
+
+  const resultatEnCache = cacheAgregationMTF.get(cleCache);
+  if (resultatEnCache) {
+    return resultatEnCache;
+  }
 
   const isMonthly = timeframeSuperior === '1M' || timeframeSuperior === 'Monthly' || timeframeSuperior === 'MN' || timeframeSuperior === 'monthly';
   const isWeekly = timeframeSuperior === '1w' || timeframeSuperior === 'W1' || timeframeSuperior === '1W' || timeframeSuperior === 'weekly';
@@ -249,16 +266,19 @@ export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): 
   const groupes = new Map<number, Bougie[]>();
 
   // Regrouper les bougies M1 par intervalle de temps
-  for (const b of bougiesM1) {
+  for (let i = 0; i < bougiesM1.length; i++) {
+    const b = bougiesM1[i];
     const timestampSec = typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time as string) / 1000);
     if (isNaN(timestampSec)) continue;
 
     const bucketStart = getBucketStart(timestampSec);
 
-    if (!groupes.has(bucketStart)) {
-      groupes.set(bucketStart, []);
+    let groupe = groupes.get(bucketStart);
+    if (!groupe) {
+      groupe = [];
+      groupes.set(bucketStart, groupe);
     }
-    groupes.get(bucketStart)!.push({
+    groupe.push({
       ...b,
       time: timestampSec
     });
@@ -266,25 +286,37 @@ export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): 
 
   const resultats: Bougie[] = [];
 
-  // Agrégation de chaque bucket
+  // Agrégation optimisée de chaque bucket (boucle linéaire directe sans spread)
   for (const [bucketTime, listeM1] of groupes.entries()) {
     listeM1.sort((a, b) => (a.time as number) - (b.time as number));
 
     const open = listeM1[0].open;
     const close = listeM1[listeM1.length - 1].close;
-    const high = Math.max(...listeM1.map(b => b.high));
-    const low = Math.min(...listeM1.map(b => b.low));
+
+    let maxHigh = -Infinity;
+    let minLow = Infinity;
+    for (let j = 0; j < listeM1.length; j++) {
+      if (listeM1[j].high > maxHigh) maxHigh = listeM1[j].high;
+      if (listeM1[j].low < minLow) minLow = listeM1[j].low;
+    }
 
     resultats.push({
       time: bucketTime,
       open,
-      high,
-      low,
+      high: maxHigh,
+      low: minLow,
       close
     });
   }
 
   const finalAggregated = resultats.sort((a, b) => (a.time as number) - (b.time as number));
-  console.log(`✅ [MTF Aggregator] Agrégation terminée. ${finalAggregated.length} bougies ${timeframeSuperior} générées.`);
+
+  // Conserver au maximum 50 séries agrégées en cache pour économiser la mémoire mobile
+  if (cacheAgregationMTF.size >= 50) {
+    const premiereCle = cacheAgregationMTF.keys().next().value;
+    if (premiereCle) cacheAgregationMTF.delete(premiereCle);
+  }
+  cacheAgregationMTF.set(cleCache, finalAggregated);
+
   return finalAggregated;
 }

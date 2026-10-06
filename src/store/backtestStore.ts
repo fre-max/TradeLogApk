@@ -75,6 +75,12 @@ export interface ContexteRestaurationReplay {
     dureeEstimeeLargeur?: number;
     tradeIdSupabase?: string;
   };
+  tradeInfo?: {
+    id: string;
+    titre?: string;
+    noteQualite?: 'A+' | 'A' | 'B';
+    setupName?: string;
+  };
 }
 
 interface BacktestState {
@@ -202,7 +208,7 @@ export const useBacktestStore = create<BacktestState>()(
   setJournalDest: (dest) => set({ journalDest: dest }),
 
   // Contexte de restauration de replay (clic depuis le journal)
-  contexteRestauration: null as { pair: string; annee: string; timeframe: string; timestamp: number } | null,
+  contexteRestauration: null as ContexteRestaurationReplay | null,
 
   // Mode Analyse Fondamentale - État initial
   fundamentalModeEnabled: false,

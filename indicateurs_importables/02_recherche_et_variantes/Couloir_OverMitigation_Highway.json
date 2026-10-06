@@ -1,0 +1,73 @@
+{
+  "nom": "Couloir d'Over-Mitigation (Autoroute vers le TP)",
+  "description": "Analyse l'espace entre le prix actuel et la liquidité opposée (TP). Vérifie l'absence d'imbalances (FVG) et calcule le score d'autoroute dégagée (Highway Score).",
+  "auteur": "Wyckoff SMC / TradeLog",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "direction": "achat",
+    "seuilAutoroutePourcent": 80,
+    "prixTPManuel": 0,
+    "nbPaliersAnalyse": 15,
+    "maxLookbackBars": 300
+  },
+  "definitionsVariables": [
+    {
+      "cle": "direction",
+      "label": "Direction du Setup",
+      "description": "Direction du trade anticipé vers la cible",
+      "type": "select",
+      "valeurParDefaut": "achat",
+      "options": [
+        { "label": "Achat (Vers Résistance / BSL)", "value": "achat" },
+        { "label": "Vente (Vers Support / SSL)", "value": "vente" }
+      ],
+      "groupe": "Configuration du Couloir"
+    },
+    {
+      "cle": "seuilAutoroutePourcent",
+      "label": "Seuil de Validation de l'Autoroute (%)",
+      "description": "Pourcentage minimum de mitigation requis pour valider le couloir libre",
+      "type": "number",
+      "valeurParDefaut": 80,
+      "min": 50,
+      "max": 100,
+      "step": 5,
+      "groupe": "Règles de Décision"
+    },
+    {
+      "cle": "prixTPManuel",
+      "label": "Prix TP Manuel (0 = Auto)",
+      "description": "Si 0, l'indicateur cible automatiquement la liquidité opposée la plus proche",
+      "type": "number",
+      "valeurParDefaut": 0,
+      "min": 0,
+      "max": 100000,
+      "step": 0.0001,
+      "groupe": "Cible de Prix"
+    },
+    {
+      "cle": "nbPaliersAnalyse",
+      "label": "Nombre de Paliers Verticaux",
+      "description": "Précision du découpage du couloir de prix pour évaluer les traversées",
+      "type": "number",
+      "valeurParDefaut": 15,
+      "min": 5,
+      "max": 30,
+      "step": 1,
+      "groupe": "Sensibilité Mathématique"
+    },
+    {
+      "cle": "maxLookbackBars",
+      "label": "Historique des Bougies (Lookback)",
+      "description": "Nombre de bougies passées analysées pour mesurer l'historique d'échange",
+      "type": "number",
+      "valeurParDefaut": 300,
+      "min": 50,
+      "max": 800,
+      "step": 25,
+      "groupe": "Sensibilité Mathématique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres, resultatsPrecedents } = contexte;\n    if (!bougies || bougies.length < 15) return { donnees: {}, primitives: {} };\n\n    const res = calculerOverMitigationHighway(bougies, {\n      direction: String(parametres.direction || 'achat'),\n      prixTPManuel: Number(parametres.prixTPManuel || 0),\n      seuilAutoroutePourcent: Number(parametres.seuilAutoroutePourcent || 80),\n      nbPaliersAnalyse: Number(parametres.nbPaliersAnalyse || 15),\n      maxLookbackBars: Number(parametres.maxLookbackBars || 300),\n      resultatsPrecedents: resultatsPrecedents,\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'overmitigation-highway'\n    };\n  }\n};"
+}

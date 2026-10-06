@@ -3,7 +3,7 @@ import type { Bougie } from '@/lib/chartDataHelper';
 import {
   calculerDetectionLiquiditeEQ,
   deduireTaillePip,
-} from '../detectionLiquiditeEQ';
+} from '@/lib/bot/modules';
 
 describe('Détection Liquidité EQH / EQL - Modèle SMC Sweep Profiler', () => {
   it('retourne un résultat vide si le nombre de bougies est insuffisant', () => {

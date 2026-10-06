@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Bougie } from '@/lib/chartDataHelper';
-import { calculerDetectionLiquiditeSRTL } from '../detectionLiquiditeSRTL';
+import { calculerDetectionLiquiditeSRTL } from '@/lib/bot/modules';
 
 describe('Détection Liquidité : Zones Supports & Résistances (S/R)', () => {
   it('gère une liste vide ou insuffisante de bougies sans erreur', () => {

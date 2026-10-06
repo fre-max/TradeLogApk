@@ -1,0 +1,66 @@
+{
+  "nom": "[Test 2/3] Chevauchement Non-Mitigé : Surface Commune (Méthode B)",
+  "description": "Mesure l'intersection géométrique exacte entre bougies successives. Met en valeur les chaînes où 3+ bougies partagent plus de 55% de leur surface de prix et prolonge les bandes non mitigées.",
+  "auteur": "TradeLog AI / Research",
+  "version": "1.1.0",
+  "type": "overlay",
+  "parametres": {
+    "minBougiesChaine": 3,
+    "seuilOverlapPourcent": 55,
+    "uniquementNonMitigues": false,
+    "prolongerNonMitigues": true,
+    "maxLookbackBars": 300
+  },
+  "definitionsVariables": [
+    {
+      "cle": "minBougiesChaine",
+      "label": "Longueur Minimale de la Chaîne",
+      "description": "Nombre minimum de bougies successives qui doivent se chevaucher (ex: 3 bougies)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 2,
+      "max": 8,
+      "step": 1,
+      "groupe": "Règles de la Chaîne"
+    },
+    {
+      "cle": "seuilOverlapPourcent",
+      "label": "Seuil de Surface Commune (%)",
+      "description": "Pourcentage minimal d'intersection entre deux bougies consécutives pour valider le contact",
+      "type": "number",
+      "valeurParDefaut": 55,
+      "min": 30,
+      "max": 90,
+      "step": 5,
+      "groupe": "Règles de la Chaîne"
+    },
+    {
+      "cle": "uniquementNonMitigues",
+      "label": "Uniquement Non-Mitigés",
+      "description": "Ne conserver que les couloirs qui n'ont jamais été revisités par le prix futur",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "prolongerNonMitigues",
+      "label": "Prolonger vers la Droite",
+      "description": "Étendre la surface commune non mitigée jusqu'à la bougie courante",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "maxLookbackBars",
+      "label": "Historique des Bougies (Lookback)",
+      "description": "Nombre de bougies récentes analysées sur le graphique",
+      "type": "number",
+      "valeurParDefaut": 300,
+      "min": 50,
+      "max": 800,
+      "step": 25,
+      "groupe": "Historique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 3) return { donnees: {}, primitives: {} };\n\n    const res = calculerMethodeBOverlap(bougies, {\n      minBougiesChaine: Number(parametres.minBougiesChaine || 3),\n      seuilOverlapPourcent: Number(parametres.seuilOverlapPourcent || 55),\n      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),\n      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,\n      maxLookbackBars: Number(parametres.maxLookbackBars || 300),\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'methode-b-overlap'\n    };\n  }\n};"
+}

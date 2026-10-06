@@ -1,0 +1,91 @@
+{
+  "nom": "[Test 3/3] Chevauchement Non-Mitigé : Tranches Couloir (Méthode C)",
+  "description": "Découpe l'espace vertical en tranches horizontales, calcule le trafic de bougies par niveau et prolonge les tranches denses non mitigées.",
+  "auteur": "TradeLog AI / Research",
+  "version": "1.1.0",
+  "type": "overlay",
+  "parametres": {
+    "direction": "achat",
+    "nbTranches": 12,
+    "minBougiesParTranche": 3,
+    "prixTPManuel": 0,
+    "uniquementNonMitigues": false,
+    "prolongerNonMitigues": true,
+    "maxLookbackBars": 300
+  },
+  "definitionsVariables": [
+    {
+      "cle": "direction",
+      "label": "Direction de l'Analyse",
+      "description": "Sens du couloir vers l'objectif",
+      "type": "select",
+      "valeurParDefaut": "achat",
+      "options": [
+        { "label": "Achat (Vers le Haut)", "value": "achat" },
+        { "label": "Vente (Vers le Bas)", "value": "vente" }
+      ],
+      "groupe": "Orientation"
+    },
+    {
+      "cle": "nbTranches",
+      "label": "Nombre de Tranches Horizontales",
+      "description": "Nombre de niveaux découpant le couloir de prix",
+      "type": "number",
+      "valeurParDefaut": 12,
+      "min": 5,
+      "max": 25,
+      "step": 1,
+      "groupe": "Résolution"
+    },
+    {
+      "cle": "minBougiesParTranche",
+      "label": "Bougies Minimum par Tranche",
+      "description": "Seuil de bougies pour qu'une tranche soit déclarée dense (en vert)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 2,
+      "max": 10,
+      "step": 1,
+      "groupe": "Règles de Densité"
+    },
+    {
+      "cle": "uniquementNonMitigues",
+      "label": "Uniquement Non-Mitigés",
+      "description": "Ne tracer que les tranches à fort trafic non revisitées",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "prolongerNonMitigues",
+      "label": "Prolonger vers la Droite",
+      "description": "Prolonger les niveaux non mitigés vers la bougie courante",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "prixTPManuel",
+      "label": "Prix Cible Manuel (0 = Auto)",
+      "description": "Niveau TP haut du couloir (si 0, calculé automatiquement)",
+      "type": "number",
+      "valeurParDefaut": 0,
+      "min": 0,
+      "max": 100000,
+      "step": 0.0001,
+      "groupe": "Cible de Prix"
+    },
+    {
+      "cle": "maxLookbackBars",
+      "label": "Historique des Bougies (Lookback)",
+      "description": "Nombre de bougies récentes analysées sur le graphique",
+      "type": "number",
+      "valeurParDefaut": 300,
+      "min": 50,
+      "max": 800,
+      "step": 25,
+      "groupe": "Historique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 15) return { donnees: {}, primitives: {} };\n\n    const res = calculerMethodeCSlice(bougies, {\n      direction: String(parametres.direction || 'achat'),\n      nbTranches: Number(parametres.nbTranches || 12),\n      minBougiesParTranche: Number(parametres.minBougiesParTranche || 3),\n      prixTPManuel: Number(parametres.prixTPManuel || 0),\n      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),\n      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,\n      maxLookbackBars: Number(parametres.maxLookbackBars || 300),\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'methode-c-slice'\n    };\n  }\n};"
+}

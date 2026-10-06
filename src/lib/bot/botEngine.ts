@@ -4,6 +4,7 @@ import { calculerLuxAlgoSMC } from '@/lib/indicators/luxAlgoSMC';
 import { calculerProtectedSwings } from '@/lib/indicators/protectedSwings';
 import { calculerZigZag } from '@/lib/indicators/zigzag';
 import { calculerUnmitigatedVolumeProfile } from '@/lib/indicators/unmitigatedVolumeProfile';
+import { calculerCompleteSetupVisualizer } from '@/lib/bot/modules/07_setup_visualizer/completeSetupVisualizer';
 import {
   recupererIndicateursStockes,
   evaluerIndicateurScript,
@@ -13,7 +14,7 @@ import {
 // Clé de stockage local pour persister les bots sur le téléphone sans recompiler
 const CLE_STORAGE_BOTS = 'tradelog_bots_extensions_v1';
 const CLE_STORAGE_VERSION_BOTS = 'tradelog_bots_catalogue_version';
-const VERSION_CATALOGUE_BOTS = '2.2.0';
+const VERSION_CATALOGUE_BOTS = '2.3.0';
 
 /**
  * 3 bots modèles pré-configurés pour démarrer immédiatement
@@ -418,6 +419,113 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'bot-institutional-7modules-v1',
+    nom: 'Bot Institutionnel 7 Modules (SMC / Wyckoff / UOP)',
+    description: 'Stratégie institutionnelle complète à 7 modules : Détection Liquidité S&R, Sweep de Liquidation M15 avec Low/High Protégé, Couloir UOP non-mitigé vers TP Optimal, Entrée Fractale LTF et Money Management dynamique.',
+    auteur: 'TradeLog Institutional',
+    version: '1.0.0',
+    actif: true,
+    parametres: {
+      confluencesMin: 5,
+      ratioRRMin: 2.0,
+      risquePourcent: 1.0,
+    },
+    definitionsVariables: [
+      {
+        cle: 'confluencesMin',
+        label: 'Confluences Minimales Exigées (sur 6)',
+        description: 'Nombre de confluences institutionnelles requises pour valider l\'entrée (ex: 5 = 83% de score)',
+        type: 'number',
+        valeurParDefaut: 5,
+        min: 3,
+        max: 6,
+        step: 1,
+        groupe: 'Filtres de Stratégie',
+      },
+      {
+        cle: 'ratioRRMin',
+        label: 'Ratio R:R Minimal Exigé',
+        description: 'Ratio Récompense / Risque minimum vers le TP Optimal UOP',
+        type: 'number',
+        valeurParDefaut: 2.0,
+        min: 1.0,
+        max: 10.0,
+        step: 0.1,
+        groupe: 'Gestion du Risque',
+      },
+      {
+        cle: 'risquePourcent',
+        label: 'Risque par Position (% Capital)',
+        description: 'Pourcentage maximum du capital alloué au Stop Loss par trade',
+        type: 'number',
+        valeurParDefaut: 1.0,
+        min: 0.1,
+        max: 5.0,
+        step: 0.1,
+        groupe: 'Gestion du Risque',
+      },
+    ],
+    creeLe: '2026-10-02T19:00:00.000Z',
+    misAJourLe: '2026-10-02T19:00:00.000Z',
+    code: `/**
+ * Bot Institutionnel 7 Modules
+ * Combine l'ensemble des 7 modules de la stratégie institutionnelle :
+ * 1. Liquidité Majeure (Module 1)
+ * 2. Sweep de Liquidation & Prix Protégé (Module 2)
+ * 3. TP Optimal sur Volume Non-Mitigé (Module 3)
+ * 4. Confirmation Fractale LTF (Module 4)
+ * 5. Dimensionnement & R:R Dynamique (Module 5)
+ * 6. Surveillance Drone MTF (Module 6)
+ * 7. Validation Checklist Setup Complet (Module 7)
+ */
+return {
+  onBar: function(contexte) {
+    const { bougie, indicateurs, positionActive, parametres } = contexte;
+    if (positionActive) return null;
+
+    // 1️⃣ Récupération du résultat du visualiseur de setup complet
+    const visualizer = indicateurs.completeSetup || 
+                       indicateurs['script-complete-setup-visualizer'] || 
+                       indicateurs.scripts?.['script-complete-setup-visualizer'];
+
+    if (!visualizer) return null;
+
+    const confluencesMin = Number(parametres.confluencesMin || 5);
+    const ratioRRMin = Number(parametres.ratioRRMin || 2.0);
+
+    // 2️⃣ Vérification du filtre de confluence
+    const scoreValide = (visualizer.nombreConfluences || 0) >= confluencesMin;
+    if (!visualizer.estValide && !scoreValide) return null;
+
+    // 3️⃣ Vérification de la direction
+    if (visualizer.direction !== 'LONG' && visualizer.direction !== 'SHORT') {
+      return null;
+    }
+
+    // 4️⃣ Vérification du ratio R:R minimal
+    const ratioRR = Number(visualizer.ratioRR || 0);
+    if (ratioRR < ratioRRMin) return null;
+
+    // 5️⃣ Extraction des niveaux clés
+    const sl = Number(visualizer.stopLoss);
+    const tp = Number(visualizer.takeProfit);
+    const prix = Number(visualizer.prixEntree || bougie.close);
+
+    if (!sl || !tp || isNaN(sl) || isNaN(tp)) return null;
+
+    const action = visualizer.direction === 'LONG' ? 'BUY' : 'SELL';
+
+    return {
+      action: action,
+      prixEntree: prix,
+      stopLoss: sl,
+      takeProfit: tp,
+      commentaire: 'Setup Bot Institutionnel 7 Modules (' + (visualizer.scorePourcentage || 0) + '% - ' + (visualizer.nombreConfluences || 0) + '/6 confluences)'
+    };
+  }
+};`
   }
 ];
 
@@ -523,18 +631,30 @@ export function supprimerBotStocke(idBot: string): void {
   }
 }
 
+// ─── 🚀 Cache de Compilation V8 des Scripts de Bots ───────────────────────────
+// Évite de réinstancier new Function() à chaque bougie lors des simulations batch.
+const cacheFonctionsBots = new Map<string, Function>();
+
+function recupererConstructeurBot(codeScript: string): Function {
+  let fn = cacheFonctionsBots.get(codeScript);
+  if (!fn) {
+    fn = new Function('contexte', codeScript);
+    cacheFonctionsBots.set(codeScript, fn);
+  }
+  return fn;
+}
+
 /**
  * Évalue le script JavaScript d'un bot dans un bac à sable (sandbox) isolé.
- * Capture toute erreur de code sans jamais faire crasher l'application.
+ * Utilise le cache de compilation V8 pour des performances optimales.
  * 
  * Exemple :
  * const decision = evaluerBotScript(bot.code, contexte);
  */
 export function evaluerBotScript(codeScript: string, contexte: BotContext): BotDecision | null {
   try {
-    // 1️⃣ Création d'une fonction dynamique sécurisée
-    // Le script de l'utilisateur a accès uniquement au paramètre `contexte`
-    const constructeurFn = new Function('contexte', codeScript);
+    // 1️⃣ Récupération de la fonction dynamique depuis le cache V8
+    const constructeurFn = recupererConstructeurBot(codeScript);
     const instance = constructeurFn(contexte);
 
     // 2️⃣ Si le script retourne un objet avec une méthode onBar()
@@ -715,6 +835,8 @@ export function executerSimulationBatch(
       const swings = calculerProtectedSwings(historiqueFenetre);
       const zigzag = calculerZigZag(historiqueFenetre);
       const uvp = calculerUnmitigatedVolumeProfile(historiqueFenetre);
+      // Calcul du Setup Institutionnel Complet (7 Modules SMC/Wyckoff/UOP)
+      const completeSetup = calculerCompleteSetupVisualizer(historiqueFenetre);
 
       // Calcul dynamique des indicateurs en scripts modulaires
       const scriptsDonnees: Record<string, any> = {};
@@ -743,6 +865,7 @@ export function executerSimulationBatch(
           swings: swings,
           zigzag: zigzag,
           uvp: uvp,
+          completeSetup: completeSetup,
           scripts: scriptsDonnees,
           ...scriptsDonnees,
         },

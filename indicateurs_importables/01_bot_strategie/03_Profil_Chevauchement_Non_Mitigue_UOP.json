@@ -1,0 +1,206 @@
+{
+  "nom": "Profil de Chevauchement Non-Mitigé (UOP)",
+  "description": "Volume Profile basé sur le vrai taux de chevauchement des bougies (et non les ticks). Détecte les zones de Sweep (barres bleu foncé) et calcule les TP Optimaux par superposition des vagues.",
+  "auteur": "TradeLog AI / Research",
+  "version": "1.2.0",
+  "type": "overlay",
+  "parametres": {
+    "zigzagDepth": 8,
+    "zigzagDeviation": 0,
+    "zigzagBackstep": 3,
+    "inclureVagueCourante": true,
+    "nbVaguesSuperposees": 4,
+    "minVaguesSuperposition": 1,
+    "maxVagues": 4,
+    "lookbackBars": 500,
+    "seuilBougiesBleuFonce": 3,
+    "minBougiesUniforme": 2,
+    "toleranceUniformite": 1,
+    "prolongerNiveaux": true,
+    "uniquementNonMitigues": false,
+    "afficherZigZag": true,
+    "afficherBarresProfil": true,
+    "afficherProlongation": true,
+    "afficherTPOptimaux": true,
+    "seuilMargeTrouPourcent": 5,
+    "maxTPAffiches": 3,
+    "afficherDebugTP": false
+  },
+  "definitionsVariables": [
+    {
+      "cle": "zigzagDepth",
+      "label": "Sensibilité Pivots ZigZag",
+      "description": "Nombre de bougies de confirmation à gauche et à droite pour délimiter les sommets et creux",
+      "type": "number",
+      "valeurParDefaut": 8,
+      "min": 2,
+      "max": 50,
+      "step": 1,
+      "groupe": "Structure ZigZag"
+    },
+    {
+      "cle": "zigzagDeviation",
+      "label": "Déviation Minimale ZigZag",
+      "description": "Écart minimum en points de prix requis pour valider un renversement de tendance",
+      "type": "number",
+      "valeurParDefaut": 0,
+      "min": 0,
+      "max": 50,
+      "step": 0.1,
+      "groupe": "Structure ZigZag"
+    },
+    {
+      "cle": "zigzagBackstep",
+      "label": "Backstep Barres ZigZag",
+      "description": "Distance minimale en nombre de barres entre deux pivots successifs de type opposé",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 1,
+      "max": 20,
+      "step": 1,
+      "groupe": "Structure ZigZag"
+    },
+    {
+      "cle": "inclureVagueCourante",
+      "label": "Calculer ZigZag avec Vague Courante",
+      "description": "Connecte dynamiquement le dernier pivot à la bougie en cours (close actuel) pour suivre le marché en direct",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Structure ZigZag"
+    },
+    {
+      "cle": "nbVaguesSuperposees",
+      "label": "Nombre de Vagues Superposées",
+      "description": "Nombre de vagues ZigZag (vagues précédentes + vague courante) superposées pour déterminer le TP Optimal",
+      "type": "number",
+      "valeurParDefaut": 4,
+      "min": 1,
+      "max": 15,
+      "step": 1,
+      "groupe": "Superposition des Vagues"
+    },
+    {
+      "cle": "minVaguesSuperposition",
+      "label": "Vagues Min par Palier TP",
+      "description": "Nombre minimum de vagues distinctes devant traverser un palier pour qualifier un corridor de TP Optimal",
+      "type": "number",
+      "valeurParDefaut": 1,
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "groupe": "Superposition des Vagues"
+    },
+    {
+      "cle": "lookbackBars",
+      "label": "Historique des Bougies",
+      "description": "Nombre de bougies analysées sur le graphique",
+      "type": "number",
+      "valeurParDefaut": 500,
+      "min": 50,
+      "max": 1000,
+      "step": 50,
+      "groupe": "Historique"
+    },
+    {
+      "cle": "seuilBougiesBleuFonce",
+      "label": "Seuil Bougies Bleu Foncé (Sweep)",
+      "description": "Nombre minimum de bougies de chevauchement pour qu'un palier soit considéré comme une zone de Sweep (barre bleu foncé)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "groupe": "Corridors Uniformes & TPO"
+    },
+    {
+      "cle": "toleranceUniformite",
+      "label": "Tolérance Écart Bougies",
+      "description": "Écart maximal de bougies entre paliers successifs pour être déclarés uniformes",
+      "type": "number",
+      "valeurParDefaut": 1,
+      "min": 0,
+      "max": 5,
+      "step": 1,
+      "groupe": "Corridors Uniformes & TPO"
+    },
+    {
+      "cle": "uniquementNonMitigues",
+      "label": "Uniquement Non-Mitigés",
+      "description": "Ne retenir que les paliers et plages qui n'ont jamais été revisités après leur formation",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "prolongerNiveaux",
+      "label": "Prolonger Niveaux Vierges",
+      "description": "Prolonger les niveaux non mitigés vers la bougie courante",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "afficherZigZag",
+      "label": "Afficher les Lignes ZigZag",
+      "description": "Affiche la structure brisée ZigZag sur le cours",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Options d'Affichage"
+    },
+    {
+      "cle": "afficherBarresProfil",
+      "label": "Afficher les Barres de Profil",
+      "description": "Affiche l'histogramme horizontal du profil de chevauchement sur chaque vague",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Options d'Affichage"
+    },
+    {
+      "cle": "afficherProlongation",
+      "label": "Afficher Lignes en Pointillés",
+      "description": "Affiche les pointillés verts prolongeant les niveaux vierges vers la droite",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Options d'Affichage"
+    },
+    {
+      "cle": "afficherTPOptimaux",
+      "label": "Afficher Take Profit Optimaux (TPO)",
+      "description": "Calcule et affiche simultanément les TP Optimaux Achat (vert) et Vente (rouge) par superposition de vagues",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Take Profit Optimaux (TPO)"
+    },
+    {
+      "cle": "seuilMargeTrouPourcent",
+      "label": "Marge Tolérance Micro-Creux (%)",
+      "description": "Pourcentage maximum de trou toléré (ex: 5%) au sein d'une zone uniforme sans interrompre le TP",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 1,
+      "max": 20,
+      "step": 1,
+      "groupe": "Take Profit Optimaux (TPO)"
+    },
+    {
+      "cle": "maxTPAffiches",
+      "label": "Nombre Max de TP par Direction",
+      "description": "Nombre maximal de niveaux de Take Profit affichés (TP1, TP2, TP3...)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "groupe": "Take Profit Optimaux (TPO)"
+    },
+    {
+      "cle": "afficherDebugTP",
+      "label": "\ud83d\udd0d Mode Debug TP Optimaux",
+      "description": "Affiche visuellement les tronçons goudronnés (A, B, C...), les trous et les ratios de tolérance utilisés pour calculer chaque TP Optimal",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Take Profit Optimaux (TPO)"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 15) return { donnees: {}, primitives: {} };\n\n    const res = calculerUnmitigatedOverlapProfile(bougies, {\n      zigzagDepth: Number(parametres.zigzagDepth || 8),\n      zigzagDeviation: Number(parametres.zigzagDeviation || 0),\n      zigzagBackstep: Number(parametres.zigzagBackstep || 3),\n      inclureVagueCourante: parametres.inclureVagueCourante !== false,\n      nbVaguesSuperposees: Number(parametres.nbVaguesSuperposees || parametres.maxVagues || 4),\n      minVaguesSuperposition: Number(parametres.minVaguesSuperposition || 1),\n      maxVagues: Number(parametres.nbVaguesSuperposees || parametres.maxVagues || 4),\n      lookbackBars: Number(parametres.lookbackBars || 500),\n      seuilBougiesBleuFonce: Number(parametres.seuilBougiesBleuFonce || 3),\n      minBougiesUniforme: Number(parametres.minBougiesUniforme || 2),\n      toleranceUniformite: Number(parametres.toleranceUniformite || 1),\n      prolongerNiveaux: parametres.prolongerNiveaux !== false,\n      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),\n      afficherZigZag: parametres.afficherZigZag !== false,\n      afficherBarresProfil: parametres.afficherBarresProfil !== false,\n      afficherProlongation: parametres.afficherProlongation !== false,\n      afficherTPOptimaux: parametres.afficherTPOptimaux !== false,\n      seuilMargeTrouPourcent: Number(parametres.seuilMargeTrouPourcent || 5),\n      maxTPAffiches: Number(parametres.maxTPAffiches || 3),\n      afficherDebugTP: Boolean(parametres.afficherDebugTP),\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'unmitigated-overlap-profile'\n    };\n  }\n};"
+}

@@ -1,0 +1,99 @@
+{
+  "nom": "Détection Liquidité EQH / EQL (Double Tops/Bottoms)",
+  "description": "Détecte les accumulations de liquidité institutionnelle sur les sommets égaux (Equal Highs / BSL) et creux égaux (Equal Lows / SSL) selon le modèle SMC Sweep Profiler.",
+  "auteur": "Wyckoff Bot / TradeLog",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "profondeurPivot": 5,
+    "tolerancePips": 1.5,
+    "minBougiesEntrePivots": 4,
+    "maxBougiesEntrePivots": 75,
+    "maxBougiesHistorique": 600,
+    "afficherLignes": true,
+    "afficherEtiquettes": true,
+    "masquerNiveauxBalayes": false
+  },
+  "definitionsVariables": [
+    {
+      "cle": "profondeurPivot",
+      "label": "Sensibilité des Pivots",
+      "description": "Nombre de bougies à gauche et à droite pour valider un sommet ou un creux",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 2,
+      "max": 20,
+      "step": 1,
+      "groupe": "Détection des Pivots"
+    },
+    {
+      "cle": "tolerancePips",
+      "label": "Tolérance Alignement (Pips)",
+      "description": "Écart maximal de prix en pips entre deux sommets ou creux pour être considérés comme égaux",
+      "type": "number",
+      "valeurParDefaut": 1.5,
+      "min": 0.1,
+      "max": 10.0,
+      "step": 0.1,
+      "groupe": "Règles d'Alignement"
+    },
+    {
+      "cle": "minBougiesEntrePivots",
+      "label": "Écart Minimal (Bougies)",
+      "description": "Nombre minimum de bougies séparant les deux sommets ou creux",
+      "type": "number",
+      "valeurParDefaut": 4,
+      "min": 2,
+      "max": 30,
+      "step": 1,
+      "groupe": "Espacement Temporel"
+    },
+    {
+      "cle": "maxBougiesEntrePivots",
+      "label": "Écart Maximal (Bougies)",
+      "description": "Nombre maximum de bougies séparant les deux sommets ou creux",
+      "type": "number",
+      "valeurParDefaut": 75,
+      "min": 10,
+      "max": 200,
+      "step": 5,
+      "groupe": "Espacement Temporel"
+    },
+    {
+      "cle": "maxBougiesHistorique",
+      "label": "Bougies Historiques Analysées",
+      "description": "Nombre de bougies en arrière à scanner",
+      "type": "number",
+      "valeurParDefaut": 600,
+      "min": 50,
+      "max": 2000,
+      "step": 50,
+      "groupe": "Historique"
+    },
+    {
+      "cle": "afficherLignes",
+      "label": "Afficher les Niveaux EQH / EQL",
+      "description": "Trace les lignes horizontales reliant les pivots et prolongées",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherEtiquettes",
+      "label": "Afficher les Étiquettes de Statut",
+      "description": "Affiche les badges EQH (BSL) et EQL (SSL) avec état Actif ou Purgé",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "masquerNiveauxBalayes",
+      "label": "Masquer les Niveaux Purgés",
+      "description": "N'affiche que les niveaux où la liquidité n'a pas encore été balayée",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Filtrage"
+    }
+  ],
+  "code": "return {\n  calculer: function (contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 20) {\n      return { donnees: {}, primitives: { boites: [], lignes: [], labels: [] } };\n    }\n\n    const params = parametres || {};\n    const profondeur = Number(params.profondeurPivot || 5);\n    const tolerancePips = Number(params.tolerancePips || 1.5);\n    const minBougies = Number(params.minBougiesEntrePivots || 4);\n    const maxBougies = Number(params.maxBougiesEntrePivots || 75);\n    const maxHistorique = Number(params.maxBougiesHistorique || 600);\n    const afficherLignes = params.afficherLignes !== false;\n    const afficherEtiquettes = params.afficherEtiquettes !== false;\n    const masquerBalayes = Boolean(params.masquerNiveauxBalayes);\n\n    const prixRef = bougies[bougies.length - 1].close;\n    let pipSize = 0.0001;\n    if (prixRef > 1000) pipSize = 0.1;\n    else if (prixRef > 50) pipSize = 0.01;\n    const tolerancePoints = tolerancePips * pipSize;\n    const minSweepPoints = 0.5 * pipSize;\n\n    const pivots = [];\n    const totalBougies = bougies.length;\n    const debut = Math.max(profondeur, totalBougies - maxHistorique);\n    const fin = totalBougies - profondeur - 1;\n\n    for (let i = debut; i <= fin; i++) {\n      let estHaut = true;\n      let estBas = true;\n      for (let j = 1; j <= profondeur; j++) {\n        if (bougies[i].high <= bougies[i - j].high || bougies[i].high < bougies[i + j].high) estHaut = false;\n        if (bougies[i].low >= bougies[i - j].low || bougies[i].low > bougies[i + j].low) estBas = false;\n      }\n      if (estHaut) {\n        pivots.push({ prix: bougies[i].high, temps: bougies[i].time, index: i, estHaut: true });\n      } else if (estBas) {\n        pivots.push({ prix: bougies[i].low, temps: bougies[i].time, index: i, estHaut: false });\n      }\n    }\n\n    const niveaux = [];\n    for (let i = 0; i < pivots.length - 1; i++) {\n      for (let j = i + 1; j < pivots.length; j++) {\n        if (pivots[i].estHaut !== pivots[j].estHaut) continue;\n        const ecartBougies = pivots[j].index - pivots[i].index;\n        if (ecartBougies < minBougies) continue;\n        if (ecartBougies > maxBougies) break;\n\n        const ecartPrix = Math.abs(pivots[i].prix - pivots[j].prix);\n        if (ecartPrix > tolerancePoints) continue;\n\n        let niveauValide = true;\n        if (pivots[i].estHaut) {\n          const maxPermis = Math.max(pivots[i].prix, pivots[j].prix) + tolerancePoints;\n          for (let k = pivots[i].index + 1; k < pivots[j].index; k++) {\n            if (bougies[k].high > maxPermis) { niveauValide = false; break; }\n          }\n        } else {\n          const minPermis = Math.min(pivots[i].prix, pivots[j].prix) - tolerancePoints;\n          for (let k = pivots[i].index + 1; k < pivots[j].index; k++) {\n            if (bougies[k].low < minPermis) { niveauValide = false; break; }\n          }\n        }\n\n        if (niveauValide) {\n          const estEQH = pivots[i].estHaut;\n          const prixMoyen = (pivots[i].prix + pivots[j].prix) / 2.0;\n          niveaux.push({\n            id: (estEQH ? 'eqh-' : 'eql-') + pivots[i].index + '-' + pivots[j].index,\n            type: estEQH ? 'EQH' : 'EQL',\n            prix: prixMoyen,\n            indexPivot1: pivots[i].index,\n            tempsPivot1: pivots[i].temps,\n            indexPivot2: pivots[j].index,\n            tempsPivot2: pivots[j].temps,\n            estSwept: false,\n            tempsSweep: null,\n            prixSweep: null,\n            indexFin: totalBougies - 1,\n            tempsFin: bougies[totalBougies - 1].time,\n          });\n        }\n      }\n    }\n\n    for (const niveau of niveaux) {\n      for (let b = niveau.indexPivot2 + 1; b < totalBougies; b++) {\n        const bougie = bougies[b];\n        if (niveau.type === 'EQH') {\n          if (bougie.high >= niveau.prix + minSweepPoints) {\n            niveau.estSwept = true;\n            niveau.tempsSweep = bougie.time;\n            niveau.prixSweep = bougie.high;\n            niveau.indexFin = b;\n            niveau.tempsFin = bougie.time;\n            break;\n          }\n        } else {\n          if (bougie.low <= niveau.prix - minSweepPoints) {\n            niveau.estSwept = true;\n            niveau.tempsSweep = bougie.time;\n            niveau.prixSweep = bougie.low;\n            niveau.indexFin = b;\n            niveau.tempsFin = bougie.time;\n            break;\n          }\n        }\n      }\n    }\n\n    const lignes = [];\n    const labels = [];\n    const boites = [];\n\n    for (const niveau of niveaux) {\n      if (masquerBalayes && niveau.estSwept) continue;\n      const estEQH = niveau.type === 'EQH';\n      const couleur = estEQH ? '#f59e0b' : '#0ea5e9';\n\n      if (afficherLignes) {\n        lignes.push({\n          id: 'ligne-' + niveau.id,\n          prix: niveau.prix,\n          dateDebut: niveau.tempsPivot1,\n          dateFin: niveau.tempsFin,\n          couleur: couleur,\n          style: niveau.estSwept ? 'solid' : 'dashed',\n          label: (estEQH ? 'EQH (BSL)' : 'EQL (SSL)') + (niveau.estSwept ? ' [Purgé]' : ' [Actif]'),\n        });\n      }\n\n      if (afficherEtiquettes) {\n        labels.push({\n          id: 'label-' + niveau.id,\n          prix: niveau.prix,\n          date: niveau.tempsPivot2,\n          texte: estEQH ? '🎯 EQH' : '🎯 EQL',\n          couleur: couleur,\n          position: estEQH ? 'above' : 'below',\n        });\n      }\n\n      if (niveau.estSwept && niveau.prixSweep && niveau.tempsSweep) {\n        boites.push({\n          id: 'box-' + niveau.id,\n          prixHaut: Math.max(niveau.prix, niveau.prixSweep),\n          prixBas: Math.min(niveau.prix, niveau.prixSweep),\n          dateDebut: niveau.tempsSweep,\n          couleurFond: estEQH ? 'rgba(239, 68, 68, 0.20)' : 'rgba(16, 185, 129, 0.20)',\n          couleurBordure: estEQH ? '#ef4444' : '#10b981',\n          label: estEQH ? '🔴 Sweep EQH' : '🟢 Sweep EQL',\n        });\n      }\n    }\n\n    return {\n      donnees: {\n        niveaux: niveaux,\n        totalEQH: niveaux.filter(function (n) { return n.type === 'EQH'; }).length,\n        totalEQL: niveaux.filter(function (n) { return n.type === 'EQL'; }).length,\n      },\n      primitives: {\n        lignes: lignes,\n        labels: labels,\n        boites: boites,\n      },\n    };\n  }\n}"
+}

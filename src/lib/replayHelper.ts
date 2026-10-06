@@ -112,6 +112,12 @@ export function extraireContexteReplay(trade: TradeWithSteps | null | undefined)
     }
   }
 
+  // 8️⃣ Extraction des métadonnées du trade pour le Laboratoire de rétro-ingénierie
+  const setupName = entryStep?.title || (typeof entryFields?.setup === 'string' ? entryFields.setup : undefined);
+  const noteQualite = (trade.backtest_context?.noteQualite as 'A+' | 'A' | 'B') || 'A+';
+  const idCourt = trade.id ? trade.id.slice(0, 4) : 'R';
+  const titreTrade = setupName ? `${pair} - ${setupName}` : `${pair} [Trade #${idCourt}]`;
+
   // 7️⃣ Construction de l'objet final
   return {
     pair,
@@ -128,5 +134,11 @@ export function extraireContexteReplay(trade: TradeWithSteps | null | undefined)
       dureeEstimeeLargeur: largeur,
       tradeIdSupabase: trade.id,
     } : undefined,
+    tradeInfo: {
+      id: trade.id,
+      titre: titreTrade,
+      noteQualite,
+      setupName,
+    },
   };
 }

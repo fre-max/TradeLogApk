@@ -1,10 +1,11 @@
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import type { Bougie } from '@/lib/chartDataHelper';
-import type { VisualPrimitives, VisualBox, VisualLine, VisualLabel, VisualCurve, IndicatorExecutionResult, IndicatorScript } from '@/types/indicatorScript';
+import type { VisualPrimitives, VisualBox, VisualLine, VisualLabel, VisualCurve, VisualPoint, IndicatorExecutionResult, IndicatorScript } from '@/types/indicatorScript';
 import { dessinerLuxAlgoSMC } from './luxAlgoSMCRenderer';
 import { dessinerProtectedSwings } from './protectedSwingsRenderer';
 import { dessinerZigZag } from './zigzagRenderer';
 import { dessinerUnmitigatedVolumeProfile } from './unmitigatedVolumeProfileRenderer';
+import { dessinerUnmitigatedOverlapProfile } from '@/lib/bot/modules';
 
 /**
  * Fonction unifiée pour projeter le rendu d'un indicateur scriptable sur le canvas.
@@ -33,6 +34,8 @@ export function dessinerResultatIndicateur(
     dessinerZigZag(ctx, resultat.donnees as any, chart, series, bougies, script.parametres);
   } else if (resultat.typeSpecial === 'unmitigated-profile' && resultat.donnees) {
     dessinerUnmitigatedVolumeProfile(ctx, resultat.donnees as any, chart, series, bougies, script.parametres);
+  } else if (resultat.typeSpecial === 'unmitigated-overlap-profile' && resultat.donnees) {
+    dessinerUnmitigatedOverlapProfile(ctx, resultat.donnees as any, chart, series, bougies, script.parametres);
   }
 
   // 2️⃣ Rendu des primitives graphiques universelles (boîtes, lignes, labels, courbes)
@@ -89,6 +92,13 @@ export function dessinerPrimitivesIndicateur(
   if (primitives.labels && primitives.labels.length > 0) {
     for (const label of primitives.labels) {
       dessinerEtiquetteLabel(ctx, label, timeScale, series, bougies);
+    }
+  }
+
+  // 5️⃣ Rendu des Points Discrets (ex: Points sur les bougies mères)
+  if (primitives.points && primitives.points.length > 0) {
+    for (const pt of primitives.points) {
+      dessinerPointDiscret(ctx, pt, timeScale, series, bougies);
     }
   }
 
@@ -313,3 +323,46 @@ function dessinerCourbeContinue(
 
   ctx.stroke();
 }
+
+/**
+ * Dessine un point discret et net sur une bougie (ex: bougie mère).
+ * Évite de surcharger le graphique avec des boîtes ou des textes encombrants.
+ * 
+ * Exemple :
+ * dessinerPointDiscret(ctx, pt, timeScale, series, bougies);
+ */
+function dessinerPointDiscret(
+  ctx: CanvasRenderingContext2D,
+  point: VisualPoint,
+  timeScale: any,
+  series: ISeriesApi<'Candlestick'>,
+  bougies: Bougie[]
+): void {
+  const x = obtenirXPourTemps(timeScale, point.date, bougies);
+  const y = series.priceToCoordinate(point.prix);
+
+  if (x === null || y === null) return;
+
+  const rayon = point.rayon || 4;
+  const couleur = point.couleur || '#0ea5e9';
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, rayon, 0, Math.PI * 2);
+
+  if (point.style === 'contour') {
+    ctx.strokeStyle = couleur;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else {
+    // Point plein avec fine bordure blanche pour détachement visuel parfait
+    ctx.fillStyle = couleur;
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+

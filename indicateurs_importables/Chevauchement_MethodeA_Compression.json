@@ -9,7 +9,10 @@
     "seuilOverlapPourcent": 50,
     "minBougiesDirectes": 3,
     "uniquementNonMitigues": false,
-    "prolongerNonMitigues": true
+    "prolongerNonMitigues": true,
+    "afficherPoints": true,
+    "afficherBoites": false,
+    "afficherTexte": false
   },
   "definitionsVariables": [
     {
@@ -60,7 +63,31 @@
       "type": "boolean",
       "valeurParDefaut": true,
       "groupe": "Filtre de Mitigation"
+    },
+    {
+      "cle": "afficherPoints",
+      "label": "Afficher les Points sur Bougies Mères",
+      "description": "Place un point épuré (vert/rouge) sur chaque bougie mère",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage & Épure"
+    },
+    {
+      "cle": "afficherBoites",
+      "label": "Afficher les Boîtes Rectangulaires",
+      "description": "Dessine les rectangles de zone sur le cours (désactivé par défaut)",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Affichage & Épure"
+    },
+    {
+      "cle": "afficherTexte",
+      "label": "Afficher les Étiquettes de Texte",
+      "description": "Affiche les badges texte (désactivé par défaut pour un graphique propre)",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Affichage & Épure"
     }
   ],
-  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 3) return { donnees: {}, primitives: {} };\n\n    const res = calculerMethodeACompression(bougies, {\n      lookbackBars: Number(parametres.lookbackBars || 500),\n      seuilOverlapPourcent: Number(parametres.seuilOverlapPourcent || 50),\n      minBougiesDirectes: Number(parametres.minBougiesDirectes || 3),\n      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),\n      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'methode-a-compression'\n    };\n  }\n};"
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 3) return { donnees: {}, primitives: {} };\n\n    const res = calculerMethodeACompression(bougies, {\n      lookbackBars: Number(parametres.lookbackBars || 500),\n      seuilOverlapPourcent: Number(parametres.seuilOverlapPourcent || 50),\n      minBougiesDirectes: Number(parametres.minBougiesDirectes || 3),\n      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),\n      prolongerNonMitigues: parametres.prolongerNonMitigues !== false,\n      afficherPoints: parametres.afficherPoints !== false,\n      afficherBoites: Boolean(parametres.afficherBoites),\n      afficherTexte: Boolean(parametres.afficherTexte),\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'methode-a-compression'\n    };\n  }\n};"
 }

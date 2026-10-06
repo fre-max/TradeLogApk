@@ -1,5 +1,5 @@
 import type { Bougie } from '@/lib/chartDataHelper';
-import type { VisualPrimitives, VisualBox, VisualLabel } from '@/types/indicatorScript';
+import type { VisualPrimitives, VisualBox, VisualLabel, VisualPoint } from '@/types/indicatorScript';
 
 // ─── 📊 Types et Structures de Données ────────────────────────────────────────
 
@@ -31,6 +31,9 @@ export interface OptionsMethodeACompression {
   minBougiesDirectes?: number;     // Seuil de bougies consécutives pour valider un fort trafic (défaut: 3)
   uniquementNonMitigues?: boolean; // N'afficher que les bougies mères non mitigées (défaut: false)
   prolongerNonMitigues?: boolean;  // Prolonger les bougies mères non mitigées vers la droite (défaut: true)
+  afficherPoints?: boolean;        // Afficher un point net sur les bougies mères (défaut: true)
+  afficherBoites?: boolean;        // Afficher les boîtes rectangulaires (défaut: false pour ne pas surcharger)
+  afficherTexte?: boolean;         // Afficher les étiquettes de texte (défaut: false pour ne pas surcharger)
   // Rétrocompatibilité avec les anciens paramètres
   fenetreBougies?: number;
   seuilRatioCompression?: number;
@@ -74,13 +77,18 @@ export function calculerMethodeACompression(
   bougies: Bougie[],
   options: OptionsMethodeACompression = {}
 ): ResultatMethodeACompression {
-  const primitives: VisualPrimitives = { boites: [], lignes: [], labels: [] };
+  const primitives: VisualPrimitives = { boites: [], lignes: [], labels: [], points: [] };
 
   const lookback = Math.min(bougies.length, options.lookbackBars ?? options.maxLookbackBars ?? 500);
   const seuilOverlap = options.seuilOverlapPourcent ?? 50;
   const minBougies = Math.max(2, options.minBougiesDirectes ?? 3);
   const uniquementNonMitigues = options.uniquementNonMitigues ?? false;
   const prolongerNonMitigues = options.prolongerNonMitigues ?? true;
+
+  // 🎯 Affichage épuré : Par défaut UNIQUEMENT des points sur les bougies mères (plus de carrés ni de texte)
+  const afficherPoints = options.afficherPoints !== false;
+  const afficherBoites = Boolean(options.afficherBoites);
+  const afficherTexte = Boolean(options.afficherTexte);
 
   if (!bougies || bougies.length < 3) {
     return {
@@ -198,35 +206,85 @@ export function calculerMethodeACompression(
   const zoneActuelleForte = derniere ? derniere.nombreBougiesDirectes >= minBougies : false;
 
   // 5️⃣ Génération des Primitives Visuelles sur le Graphique
+  // 🎯 Configuration épurée : Points nets sur les bougies mères sans rectangles ni textes envahissants
   for (const bm of bougiesMeres) {
     if (uniquementNonMitigues && bm.estMitiguee) continue;
 
+    const bougieMere = bougies[bm.indexDebut];
+    if (!bougieMere) continue;
+
+    const estHaussiere = bougieMere.close >= bougieMere.open;
     const estFortTrafic = bm.nombreBougiesDirectes >= minBougies;
 
-    if (!bm.estMitiguee) {
-      // 🌟 BOUGIE MÈRE NON-MITIGÉE : Prolongée vers la droite jusqu'au prix actuel
-      const dateFin = prolongerNonMitigues ? derniereBougie.time : bm.tempsFin;
+    // 🔴 1. Point direct sur la bougie mère
+    if (afficherPoints) {
+      if (!bm.estMitiguee) {
+        // Bougie mère NON-MITIGÉE : Point net et lumineux (Vert si haussière, Rouge/Rose si baissière)
+        const prixPoint = estHaussiere ? bougieMere.low : bougieMere.high;
+        const couleurPoint = estHaussiere
+          ? (estFortTrafic ? '#10b981' : '#34d399')
+          : (estFortTrafic ? '#f43f5e' : '#fb7185');
 
-      const couleurFond = estFortTrafic
-        ? 'rgba(14, 165, 233, 0.26)' // Cyan vif si fort chevauchement direct (>= 3 bougies)
-        : 'rgba(56, 189, 248, 0.12)'; // Cyan doux si 1-2 bougies
+        primitives.points?.push({
+          id: `pt-${bm.id}`,
+          prix: prixPoint,
+          date: bougieMere.time,
+          couleur: couleurPoint,
+          rayon: estFortTrafic ? 5 : 4,
+          style: 'plein',
+        });
+      } else if (!uniquementNonMitigues) {
+        // Bougie mère DÉJÀ MITIGÉE : Petit point gris discret
+        const prixPoint = estHaussiere ? bougieMere.low : bougieMere.high;
+        primitives.points?.push({
+          id: `pt-${bm.id}`,
+          prix: prixPoint,
+          date: bougieMere.time,
+          couleur: 'rgba(148, 163, 184, 0.45)',
+          rayon: 2.5,
+          style: 'plein',
+        });
+      }
+    }
 
-      const couleurBordure = estFortTrafic ? '#0284c7' : '#38bdf8';
+    // 2. Boîtes rectangulaires (Désactivées par défaut pour ne pas surcharger l'écran)
+    if (afficherBoites) {
+      if (!bm.estMitiguee) {
+        const dateFin = prolongerNonMitigues ? derniereBougie.time : bm.tempsFin;
+        const couleurFond = estFortTrafic ? 'rgba(14, 165, 233, 0.26)' : 'rgba(56, 189, 248, 0.12)';
+        const couleurBordure = estFortTrafic ? '#0284c7' : '#38bdf8';
 
-      primitives.boites?.push({
-        id: `box-${bm.id}`,
-        prixHaut: bm.prixHaut,
-        prixBas: bm.prixBas,
-        dateDebut: bm.tempsDebut,
-        dateFin,
-        couleurFond,
-        couleurBordure,
-        label: estFortTrafic
-          ? `🎯 Bougie Mère : ${bm.nombreBougiesDirectes}b directes (${bm.pourcentageMoyenOverlap}%) [NON-MITIGÉ]`
-          : `📦 Bougie Mère : ${bm.nombreBougiesDirectes}b [NON-MITIGÉ]`,
-      });
+        primitives.boites?.push({
+          id: `box-${bm.id}`,
+          prixHaut: bm.prixHaut,
+          prixBas: bm.prixBas,
+          dateDebut: bm.tempsDebut,
+          dateFin,
+          couleurFond,
+          couleurBordure,
+          label: afficherTexte
+            ? (estFortTrafic
+                ? `🎯 Bougie Mère : ${bm.nombreBougiesDirectes}b directes (${bm.pourcentageMoyenOverlap}%) [NON-MITIGÉ]`
+                : `📦 Bougie Mère : ${bm.nombreBougiesDirectes}b [NON-MITIGÉ]`)
+            : undefined,
+        });
+      } else {
+        const dateFin = bm.tempsMitigation || bm.tempsFin;
+        primitives.boites?.push({
+          id: `box-${bm.id}`,
+          prixHaut: bm.prixHaut,
+          prixBas: bm.prixBas,
+          dateDebut: bm.tempsDebut,
+          dateFin,
+          couleurFond: 'rgba(100, 116, 139, 0.07)',
+          couleurBordure: 'rgba(100, 116, 139, 0.30)',
+          label: afficherTexte ? `📦 Bougie Mère : ${bm.nombreBougiesDirectes}b (Mitigé)` : undefined,
+        });
+      }
+    }
 
-      // Badge au-dessus de la bougie mère d'origine
+    // 3. Étiquettes de texte (Désactivées par défaut pour ne pas surcharger l'écran)
+    if (afficherTexte && !bm.estMitiguee) {
       primitives.labels?.push({
         id: `lbl-${bm.id}`,
         prix: bm.prixHaut,
@@ -236,20 +294,6 @@ export function calculerMethodeACompression(
           : `📦 ${bm.nombreBougiesDirectes}b`,
         couleur: estFortTrafic ? '#38bdf8' : '#94a3b8',
         position: 'above',
-      });
-    } else {
-      // ⚪ BOUGIE MÈRE DÉJÀ MITIGÉE : S'arrête à la bougie de mitigation
-      const dateFin = bm.tempsMitigation || bm.tempsFin;
-
-      primitives.boites?.push({
-        id: `box-${bm.id}`,
-        prixHaut: bm.prixHaut,
-        prixBas: bm.prixBas,
-        dateDebut: bm.tempsDebut,
-        dateFin,
-        couleurFond: 'rgba(100, 116, 139, 0.07)',
-        couleurBordure: 'rgba(100, 116, 139, 0.30)',
-        label: `📦 Bougie Mère : ${bm.nombreBougiesDirectes}b (Mitigé)`,
       });
     }
   }

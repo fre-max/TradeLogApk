@@ -1,0 +1,63 @@
+{
+  "nom": "Aperçu du Bot : Setup Complet & Confluences",
+  "description": "Consolide les 6 modules en un setup de trading unifié. Affiche la boîte de position exacte du bot, le palier Break-Even, le TP Runner et la checklist des 6 confluences.",
+  "auteur": "TradeLog Bot / SMC",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "ratioRRMin": 2.5,
+    "scoreMinConfluences": 5,
+    "afficherBoitePosition": true,
+    "afficherPanneauChecklist": true,
+    "afficherLigneRunner": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "ratioRRMin",
+      "label": "Ratio Risque/Rendement Minimal (R:R)",
+      "description": "Exigence minimale de R:R pour considérer le setup du bot comme prêt à trader",
+      "type": "number",
+      "valeurParDefaut": 2.5,
+      "min": 1.5,
+      "max": 10.0,
+      "step": 0.1,
+      "groupe": "Critères de Validation"
+    },
+    {
+      "cle": "scoreMinConfluences",
+      "label": "Score Minimal de Confluences (sur 6)",
+      "description": "Nombre de signaux confluents requis (Sweep, Prix Protégé, OB LTF, TP UOP, R:R, Drone MTF)",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 3,
+      "max": 6,
+      "step": 1,
+      "groupe": "Critères de Validation"
+    },
+    {
+      "cle": "afficherBoitePosition",
+      "label": "Afficher la Boîte de Position Complète",
+      "description": "Trace les rectangles de gain (vert) et de risque (rouge) du trade avec Entry, SL et TP",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherPanneauChecklist",
+      "label": "Afficher le Statut et la Checklist",
+      "description": "Affiche le badge récapitulatif du bot : confluences réunies et autorisation d'exécution",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherLigneRunner",
+      "label": "Afficher la Cible Runner Étendue",
+      "description": "Trace la ligne violette du TP Runner lorsque le drone MTF conseille d'étendre l'objectif",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres, resultatsPrecedents } = contexte;\n    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };\n\n    return calculerCompleteSetupVisualizer(bougies, {\n      ratioRRMin: Number(parametres.ratioRRMin || 2.5),\n      scoreMinConfluences: Number(parametres.scoreMinConfluences || 5),\n      afficherBoitePosition: parametres.afficherBoitePosition !== false,\n      afficherPanneauChecklist: parametres.afficherPanneauChecklist !== false,\n      afficherLigneRunner: parametres.afficherLigneRunner !== false,\n      resultatsPrecedents: resultatsPrecedents,\n    });\n  }\n};"
+}

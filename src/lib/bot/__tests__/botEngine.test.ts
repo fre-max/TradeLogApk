@@ -153,4 +153,45 @@ describe('Moteur de Bots de Trading - botEngine', () => {
     expect(Array.isArray(rapport.trades)).toBe(true);
     expect(Array.isArray(rapport.courbeEquity)).toBe(true);
   });
+
+  it('intègre et évalue le bot institutionnel 7 modules basé sur completeSetup', () => {
+    const bots = recupererBotsStockes();
+    const botInstitutionnel = bots.find((b) => b.id === 'bot-institutional-7modules-v1');
+    expect(botInstitutionnel).toBeDefined();
+
+    // Contexte avec setup complet validé (score 100%, 6 confluences)
+    const fauxContexte: BotContext = {
+      bougie: { time: '2025-01-01 10:00', open: 1.0800, high: 1.0850, low: 1.0790, close: 1.0840 },
+      index: 80,
+      historique: [],
+      indicateurs: {
+        smc: null,
+        swings: null,
+        zigzag: null,
+        uvp: null,
+        completeSetup: {
+          direction: 'LONG',
+          prixEntree: 1.0840,
+          stopLoss: 1.0810,
+          takeProfit: 1.0920,
+          ratioRR: 2.67,
+          estValide: true,
+          scorePourcentage: 100,
+          nombreConfluences: 6,
+        },
+      },
+      positionActive: null,
+      compte: { capitalInitial: 10000, capitalActuel: 10000, tradesEffectues: 0 },
+      parametres: { confluencesMin: 5, ratioRRMin: 2.0 },
+    };
+
+    const decision = evaluerBotScript(botInstitutionnel!.code, fauxContexte);
+    expect(decision).not.toBeNull();
+    expect(decision?.action).toBe('BUY');
+    expect(decision?.prixEntree).toBe(1.0840);
+    expect(decision?.stopLoss).toBe(1.0810);
+    expect(decision?.takeProfit).toBe(1.0920);
+    expect(decision?.commentaire).toContain('Setup Bot Institutionnel 7 Modules');
+  });
 });
+

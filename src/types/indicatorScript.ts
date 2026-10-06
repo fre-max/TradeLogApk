@@ -52,6 +52,16 @@ export interface VisualCurve {
   }>;
 }
 
+// Point discret sur le graphique (ex: Point sur une bougie mère, sommet, creux)
+export interface VisualPoint {
+  id?: string;
+  prix: number;
+  date: string | number;
+  couleur?: string;
+  rayon?: number; // Rayon en pixels (ex: 4px)
+  style?: 'plein' | 'contour';
+}
+
 /**
  * Ensemble de toutes les primitives visuelles retournées par un script
  */
@@ -60,6 +70,7 @@ export interface VisualPrimitives {
   lignes?: VisualLine[];
   labels?: VisualLabel[];
   courbes?: VisualCurve[];
+  points?: VisualPoint[];
 }
 
 /**

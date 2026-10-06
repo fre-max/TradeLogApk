@@ -3,11 +3,18 @@ import { calculerLuxAlgoSMC } from './luxAlgoSMC';
 import { calculerProtectedSwings } from './protectedSwings';
 import { calculerZigZag } from './zigzag';
 import { calculerUnmitigatedVolumeProfile } from './unmitigatedVolumeProfile';
-import { calculerDetectionLiquidite } from './detectionLiquidite';
-import { calculerSweepSpringValidation } from './sweepSpringValidation';
-import { calculerDetectionLiquiditeEQ } from './detectionLiquiditeEQ';
-import { calculerDetectionLiquiditeSRTL } from './detectionLiquiditeSRTL';
-import { calculerShvedSupplyDemand } from './shvedSupplyDemand';
+import {
+  calculerDetectionLiquidite,
+  calculerSweepSpringValidation,
+  calculerDetectionLiquiditeEQ,
+  calculerDetectionLiquiditeSRTL,
+  calculerShvedSupplyDemand,
+  calculerUnmitigatedOverlapProfile,
+  calculerFractalLtfEntry,
+  calculerMoneyManagementRules,
+  calculerMtfConductor,
+  calculerCompleteSetupVisualizer,
+} from '@/lib/bot/modules';
 import { calculerOverMitigationHighway } from './overMitigationHighway';
 import { calculerMethodeACompression } from './methodeACompressionRatio';
 import { calculerMethodeBOverlap } from './methodeBOverlapSurface';
@@ -16,7 +23,7 @@ import { calculerMethodeCSlice } from './methodeCSliceDensity';
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
-const VERSION_CATALOGUE_INDICATEURS = '3.2.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.3.9';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -625,7 +632,7 @@ return {
     version: '2.0.0',
     type: 'overlay',
     actif: true,
-    visibleSurGraphique: false,
+    visibleSurGraphique: true,
     collecteActive: true,
     parametres: {
       sourceLiquidite: 'auto',
@@ -791,6 +798,442 @@ return {
       primitives: { boites, labels },
       typeSpecial: 'sweep-spring'
     };
+  }
+};`
+  },
+  {
+    id: 'script-fractal-ltf-entry',
+    nom: 'Entrées Fractales LTF (Order Blocks & micro-BOS)',
+    description: 'Scanne la zone protégée issue de la liquidation pour détecter les Order Blocks fractals et déclencher des entrées sniper avec Stop Loss ultra-serré.',
+    auteur: 'TradeLog Bot / SMC',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      choixNiveauEntree: 'median_ob',
+      tamponSLPips: 1.0,
+      activerAchats: true,
+      activerVentes: true,
+      afficherZoneProtegee: true,
+      afficherOrderBlocks: true,
+      afficherLignesEntreeSL: true,
+      maxLookbackBars: 600,
+    },
+    definitionsVariables: [
+      {
+        cle: 'choixNiveauEntree',
+        label: "Niveau d'Exécution de l'Entrée",
+        description: "Point de déclenchement dans l'Order Block (50% Médian recommandé pour un R:R maximal)",
+        type: 'select',
+        valeurParDefaut: 'median_ob',
+        options: [
+          { label: "50% Équilibre de l'Order Block (Sniper)", value: 'median_ob' },
+          { label: "Bordure Extérieure de l'Order Block (Agressif)", value: 'bordure_ob' },
+          { label: "Clôture de la Bougie de Retest (Prudent)", value: 'cloture_confirmation' },
+        ],
+        groupe: "Exécution & Déclencheur",
+      },
+      {
+        cle: 'tamponSLPips',
+        label: 'Marge SL sous Prix Protégé (Pips)',
+        description: 'Pips de sécurité ajoutés au-delà du creux ou sommet extrême de liquidation',
+        type: 'number',
+        valeurParDefaut: 1.0,
+        min: 0.0,
+        max: 10.0,
+        step: 0.5,
+        groupe: "Gestion du Risque & Invalidation",
+      },
+      {
+        cle: 'activerAchats',
+        label: "Activer les Signaux d'Achat (Long)",
+        description: 'Détecte les Order Blocks haussiers après les Springs de liquidité',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions',
+      },
+      {
+        cle: 'activerVentes',
+        label: 'Activer les Signaux de Vente (Short)',
+        description: 'Détecte les Order Blocks baissiers après les UTAD de liquidité',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions',
+      },
+      {
+        cle: 'afficherZoneProtegee',
+        label: 'Afficher la Boîte de Zone Protégée',
+        description: 'Trace le rectangle [Prix Protégé ↔ BOS de réintégration]',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherOrderBlocks',
+        label: "Afficher les Boîtes d'Order Blocks LTF",
+        description: 'Affiche les rectangles des Order Blocks internes validés',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherLignesEntreeSL',
+        label: 'Afficher les Lignes Entry et SL',
+        description: "Trace les lignes horizontales d'entrée et de Stop Loss avec labels pips",
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'maxLookbackBars',
+        label: 'Bougies Historiques Analysées',
+        description: 'Nombre de bougies récentes analysées pour les entrées fractales',
+        type: 'number',
+        valeurParDefaut: 600,
+        min: 100,
+        max: 3000,
+        step: 50,
+        groupe: 'Historique',
+      },
+    ],
+    creeLe: '2026-10-02T00:00:00.000Z',
+    misAJourLe: '2026-10-02T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Entrées Fractales LTF
+ * Détecte les Order Blocks et génère des entrées chirurgicales dans la zone protégée
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres, resultatsPrecedents, donneesM1 } = contexte;
+    if (!bougies || bougies.length < 30) return { donnees: {}, primitives: {} };
+
+    return calculerFractalLtfEntry(bougies, {
+      choixNiveauEntree: String(parametres.choixNiveauEntree || 'median_ob'),
+      tamponSLPips: Number(parametres.tamponSLPips || 1.0),
+      activerAchats: parametres.activerAchats !== false,
+      activerVentes: parametres.activerVentes !== false,
+      afficherZoneProtegee: parametres.afficherZoneProtegee !== false,
+      afficherOrderBlocks: parametres.afficherOrderBlocks !== false,
+      afficherLignesEntreeSL: parametres.afficherLignesEntreeSL !== false,
+      maxLookbackBars: Number(parametres.maxLookbackBars || 600),
+      resultatsPrecedents: resultatsPrecedents,
+      donneesM1: donneesM1,
+    });
+  }
+};`
+  },
+  {
+    id: 'script-money-management',
+    nom: 'Money Management Dynamique (R:R, Lot & Break-Even)',
+    description: 'Relie l\'entrée chirurgicale LTF au TP Optimal pour calculer le R:R, dimensionner la taille de lot exacte et piloter le passage à Break-Even.',
+    auteur: 'TradeLog Bot / SMC',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      ratioRRMin: 2.5,
+      capitalCompte: 10000,
+      risquePourcent: 1.0,
+      ratioDeclenchementBE: 0.50,
+      afficherBoiteTrade: true,
+      afficherNiveauBE: true,
+      afficherBadgeResume: true,
+    },
+    definitionsVariables: [
+      {
+        cle: 'ratioRRMin',
+        label: 'Ratio Risque/Rendement Minimal (R:R Min)',
+        description: 'Seuil de rentabilité mathématique. Rejette automatiquement les trades en dessous de ce ratio (ex: 2.5)',
+        type: 'number',
+        valeurParDefaut: 2.5,
+        min: 1.0,
+        max: 10.0,
+        step: 0.1,
+        groupe: 'Filtre de Rentabilité',
+      },
+      {
+        cle: 'capitalCompte',
+        label: 'Capital du Compte ($)',
+        description: 'Solde du compte servant de base pour le calcul du risque monétaire et de la taille de lot',
+        type: 'number',
+        valeurParDefaut: 10000,
+        min: 100,
+        max: 1000000,
+        step: 500,
+        groupe: 'Dimensionnement de Position',
+      },
+      {
+        cle: 'risquePourcent',
+        label: 'Risque par Trade (% Capital)',
+        description: 'Pourcentage maximum du capital alloué au risque de perte sur ce setup (ex: 1.0% = 100$ sur 10k)',
+        type: 'number',
+        valeurParDefaut: 1.0,
+        min: 0.1,
+        max: 5.0,
+        step: 0.1,
+        groupe: 'Dimensionnement de Position',
+      },
+      {
+        cle: 'ratioDeclenchementBE',
+        label: 'Seuil de Déclenchement Break-Even (%)',
+        description: 'Proportion de la distance vers le TP à laquelle le Stop Loss est remonté à Break-Even (ex: 0.50 = 50%)',
+        type: 'number',
+        valeurParDefaut: 0.50,
+        min: 0.20,
+        max: 0.80,
+        step: 0.05,
+        groupe: 'Gestion Active du Trade',
+      },
+      {
+        cle: 'afficherBoiteTrade',
+        label: 'Afficher la Boîte de Trade (Gain / Risque)',
+        description: 'Dessine les rectangles verts et rouges du ratio Risque/Rendement sur le graphique',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherNiveauBE',
+        label: 'Afficher la Ligne de Seuil Break-Even',
+        description: 'Trace une ligne en pointillés jaunes indiquant le niveau cible pour sécuriser le trade',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherBadgeResume',
+        label: 'Afficher le Badge de Synthèse',
+        description: 'Affiche l\'étiquette récapitulative : R:R, taille de lot recommandée et gain monétaire estimé',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+    ],
+    creeLe: '2026-10-02T00:00:00.000Z',
+    misAJourLe: '2026-10-02T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Money Management Dynamique
+ * Évalue le R:R, calcule la taille de lot et pilote les sécurisations Break-Even
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres, resultatsPrecedents } = contexte;
+    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };
+
+    return calculerMoneyManagementRules(bougies, {
+      ratioRRMin: Number(parametres.ratioRRMin || 2.5),
+      capitalCompte: Number(parametres.capitalCompte || 10000),
+      risquePourcent: Number(parametres.risquePourcent || 1.0),
+      ratioDeclenchementBE: Number(parametres.ratioDeclenchementBE || 0.50),
+      afficherBoiteTrade: parametres.afficherBoiteTrade !== false,
+      afficherNiveauBE: parametres.afficherNiveauBE !== false,
+      afficherBadgeResume: parametres.afficherBadgeResume !== false,
+      resultatsPrecedents: resultatsPrecedents,
+    });
+  }
+};`
+  },
+  {
+    id: 'script-mtf-conductor',
+    nom: 'Chef d\'Orchestre MTF (Le Drone)',
+    description: 'Supervise les unités de temps supérieures (H4/D1) pour piloter l\'extension du TP (Mode Runner) ou la réduction préventive avant un obstacle macro.',
+    auteur: 'TradeLog Bot / SMC',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      timeframeHTF: 'H4',
+      facteurExtensionRunner: 1.5,
+      margeObstaclePips: 3.0,
+      filtrerContreTendance: true,
+      afficherHUDDrone: true,
+      afficherLigneTPAjuste: true,
+      afficherZonesObstacles: true,
+    },
+    definitionsVariables: [
+      {
+        cle: 'timeframeHTF',
+        label: 'Unité de Temps Supérieure (HTF)',
+        description: 'Timeframe analysé par le drone pour évaluer la macro-structure et les obstacles',
+        type: 'select',
+        valeurParDefaut: 'H4',
+        options: [
+          { label: 'H1 (1 heure)', value: 'H1' },
+          { label: 'H4 (4 heures)', value: 'H4' },
+          { label: 'D1 (Journalier)', value: 'D1' },
+        ],
+        groupe: 'Supervision Macro',
+      },
+      {
+        cle: 'facteurExtensionRunner',
+        label: 'Multiplicateur TP Runner (Extension)',
+        description: 'Facteur d\'extension du Take Profit lorsque l\'autoroute HTF est totalement dégagée (ex: 1.5 = +50%)',
+        type: 'number',
+        valeurParDefaut: 1.5,
+        min: 1.1,
+        max: 3.0,
+        step: 0.1,
+        groupe: 'Ajustement des Cibles',
+      },
+      {
+        cle: 'margeObstaclePips',
+        label: 'Marge Retrait Obstacle (Pips)',
+        description: 'Distance en pips de retrait pour sortir avant une résistance ou un support HTF majeur',
+        type: 'number',
+        valeurParDefaut: 3.0,
+        min: 1.0,
+        max: 20.0,
+        step: 0.5,
+        groupe: 'Ajustement des Cibles',
+      },
+      {
+        cle: 'filtrerContreTendance',
+        label: 'Détecter les Trades Contre-Tendance',
+        description: 'Alerte et réduit le risque si le trade LTF est à contre-courant du flux macro HTF',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sécurité & Risque',
+      },
+      {
+        cle: 'afficherHUDDrone',
+        label: 'Afficher le Badge HUD du Drone',
+        description: 'Affiche le statut et la recommandation du drone directement sur le graphique',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherLigneTPAjuste',
+        label: 'Afficher la Ligne du TP Ajusté',
+        description: 'Trace la ligne pointillée violette (Runner) ou orange (Sécurité) suggérée par le drone',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherZonesObstacles',
+        label: 'Afficher les Boîtes d\'Obstacles HTF',
+        description: 'Projette les rectangles des zones de Supply/Demand HTF identifiées',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+    ],
+    creeLe: '2026-10-02T00:00:00.000Z',
+    misAJourLe: '2026-10-02T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Chef d'Orchestre MTF (Le Drone)
+ * Analyse la structure macro pour moduler le TP (Extension Runner ou Réduction Sécurité)
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres, resultatsPrecedents, donneesM1 } = contexte;
+    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };
+
+    return calculerMtfConductor(bougies, {
+      timeframeHTF: String(parametres.timeframeHTF || 'H4'),
+      facteurExtensionRunner: Number(parametres.facteurExtensionRunner || 1.5),
+      margeObstaclePips: Number(parametres.margeObstaclePips || 3.0),
+      filtrerContreTendance: parametres.filtrerContreTendance !== false,
+      afficherHUDDrone: parametres.afficherHUDDrone !== false,
+      afficherLigneTPAjuste: parametres.afficherLigneTPAjuste !== false,
+      afficherZonesObstacles: parametres.afficherZonesObstacles !== false,
+      resultatsPrecedents: resultatsPrecedents,
+      donneesM1: donneesM1,
+    });
+  }
+};`
+  },
+  {
+    id: 'script-complete-setup-visualizer',
+    nom: 'Aperçu du Bot : Setup Complet & Confluences',
+    description: 'Consolide les 6 modules en un setup de trading unifié. Affiche la boîte de position exacte du bot, le palier Break-Even, le TP Runner et la checklist des 6 confluences.',
+    auteur: 'TradeLog Bot / SMC',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      ratioRRMin: 2.5,
+      scoreMinConfluences: 5,
+      afficherBoitePosition: true,
+      afficherPanneauChecklist: true,
+      afficherLigneRunner: true,
+    },
+    definitionsVariables: [
+      {
+        cle: 'ratioRRMin',
+        label: 'Ratio Risque/Rendement Minimal (R:R)',
+        description: 'Exigence minimale de R:R pour considérer le setup du bot comme prêt à trader',
+        type: 'number',
+        valeurParDefaut: 2.5,
+        min: 1.5,
+        max: 10.0,
+        step: 0.1,
+        groupe: 'Critères de Validation',
+      },
+      {
+        cle: 'scoreMinConfluences',
+        label: 'Score Minimal de Confluences (sur 6)',
+        description: 'Nombre de signaux confluents requis (Sweep, Prix Protégé, OB LTF, TP UOP, R:R, Drone MTF)',
+        type: 'number',
+        valeurParDefaut: 5,
+        min: 3,
+        max: 6,
+        step: 1,
+        groupe: 'Critères de Validation',
+      },
+      {
+        cle: 'afficherBoitePosition',
+        label: 'Afficher la Boîte de Position Complète',
+        description: 'Trace les rectangles de gain (vert) et de risque (rouge) du trade avec Entry, SL et TP',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherPanneauChecklist',
+        label: 'Afficher le Statut et la Checklist',
+        description: 'Affiche le badge récapitulatif du bot : confluences réunies et autorisation d\'exécution',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherLigneRunner',
+        label: 'Afficher la Cible Runner Étendue',
+        description: 'Trace la ligne violette du TP Runner lorsque le drone MTF conseille d\'étendre l\'objectif',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+    ],
+    creeLe: '2026-10-02T00:00:00.000Z',
+    misAJourLe: '2026-10-02T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Aperçu du Bot (Setup Complet & Confluences)
+ * Synthétise les 6 modules dans une boîte de position unifiée
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres, resultatsPrecedents } = contexte;
+    if (!bougies || bougies.length < 20) return { donnees: {}, primitives: {} };
+
+    return calculerCompleteSetupVisualizer(bougies, {
+      ratioRRMin: Number(parametres.ratioRRMin || 2.5),
+      scoreMinConfluences: Number(parametres.scoreMinConfluences || 5),
+      afficherBoitePosition: parametres.afficherBoitePosition !== false,
+      afficherPanneauChecklist: parametres.afficherPanneauChecklist !== false,
+      afficherLigneRunner: parametres.afficherLigneRunner !== false,
+      resultatsPrecedents: resultatsPrecedents,
+    });
   }
 };`
   },
@@ -1438,6 +1881,9 @@ return {
       minBougiesDirectes: 3,
       uniquementNonMitigues: false,
       prolongerNonMitigues: true,
+      afficherPoints: true,
+      afficherBoites: false,
+      afficherTexte: false,
     },
     definitionsVariables: [
       {
@@ -1489,12 +1935,36 @@ return {
         valeurParDefaut: true,
         groupe: 'Filtre de Mitigation',
       },
+      {
+        cle: 'afficherPoints',
+        label: 'Afficher les Points sur Bougies Mères',
+        description: 'Place un point épuré (vert/rouge) sur chaque bougie mère',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage & Épure',
+      },
+      {
+        cle: 'afficherBoites',
+        label: 'Afficher les Boîtes Rectangulaires',
+        description: 'Dessine les rectangles de zone sur le cours (désactivé par défaut pour ne pas surcharger)',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Affichage & Épure',
+      },
+      {
+        cle: 'afficherTexte',
+        label: 'Afficher les Étiquettes de Texte',
+        description: 'Affiche les badges texte (désactivé par défaut pour un graphique propre)',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Affichage & Épure',
+      },
     ],
     creeLe: '2026-09-26T00:00:00.000Z',
     misAJourLe: '2026-09-28T00:00:00.000Z',
     code: `/**
  * Indicateur Scriptable : Méthode A - Bougie Mère Non-Mitigée & Chevauchement Direct
- * Séquence contiguë stricte : arrêt au premier saut/imbalance et prolongation des zones vierges
+ * Séquence contiguë stricte : points épurés sur les bougies mères
  */
 return {
   calculer: function(contexte) {
@@ -1507,6 +1977,9 @@ return {
       minBougiesDirectes: Number(parametres.minBougiesDirectes || 3),
       uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),
       prolongerNonMitigues: parametres.prolongerNonMitigues !== false,
+      afficherPoints: parametres.afficherPoints !== false,
+      afficherBoites: Boolean(parametres.afficherBoites),
+      afficherTexte: Boolean(parametres.afficherTexte),
     });
 
     return {
@@ -1733,6 +2206,247 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-unmitigated-overlap-profile',
+    nom: 'Profil de Chevauchement Non-Mitigé (UOP)',
+    description: 'Volume Profile basé sur le vrai taux de chevauchement des bougies (et non les ticks). Détecte les paliers non mitigés et identifie les plages de prix uniformes.',
+    auteur: 'TradeLog AI / Research',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      zigzagDepth: 8,
+      zigzagDeviation: 0,
+      zigzagBackstep: 3,
+      inclureVagueCourante: true,
+      nbVaguesSuperposees: 4,
+      minVaguesSuperposition: 1,
+      maxVagues: 4,
+      lookbackBars: 500,
+      seuilBougiesBleuFonce: 3,
+      minBougiesUniforme: 2,
+      toleranceUniformite: 1,
+      prolongerNiveaux: true,
+      uniquementNonMitigues: false,
+      afficherZigZag: true,
+      afficherBarresProfil: true,
+      afficherProlongation: true,
+      afficherTPOptimaux: true,
+      seuilMargeTrouPourcent: 5,
+      maxTPAffiches: 3,
+    },
+    definitionsVariables: [
+      {
+        cle: 'zigzagDepth',
+        label: 'Sensibilité Pivots ZigZag',
+        description: 'Nombre de bougies de confirmation à gauche et à droite pour délimiter les sommets et creux',
+        type: 'number',
+        valeurParDefaut: 8,
+        min: 2,
+        max: 50,
+        step: 1,
+        groupe: 'Structure ZigZag',
+      },
+      {
+        cle: 'zigzagDeviation',
+        label: 'Déviation Minimale ZigZag',
+        description: 'Écart minimum en points de prix requis pour valider un renversement de tendance',
+        type: 'number',
+        valeurParDefaut: 0,
+        min: 0,
+        max: 50,
+        step: 0.1,
+        groupe: 'Structure ZigZag',
+      },
+      {
+        cle: 'zigzagBackstep',
+        label: 'Backstep Barres ZigZag',
+        description: 'Distance minimale en nombre de barres entre deux pivots successifs de type opposé',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 1,
+        max: 20,
+        step: 1,
+        groupe: 'Structure ZigZag',
+      },
+      {
+        cle: 'inclureVagueCourante',
+        label: 'Calculer ZigZag avec Vague Courante',
+        description: 'Connecte dynamiquement le dernier pivot à la bougie en cours (close actuel) pour suivre le marché en direct',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Structure ZigZag',
+      },
+      {
+        cle: 'nbVaguesSuperposees',
+        label: 'Nombre de Vagues Superposées',
+        description: 'Nombre de vagues ZigZag (vagues précédentes + vague courante) superposées pour déterminer le TP Optimal',
+        type: 'number',
+        valeurParDefaut: 4,
+        min: 1,
+        max: 15,
+        step: 1,
+        groupe: 'Superposition des Vagues',
+      },
+      {
+        cle: 'minVaguesSuperposition',
+        label: 'Vagues Min par Palier TP',
+        description: 'Nombre minimum de vagues distinctes devant traverser un palier pour qualifier un corridor de TP Optimal',
+        type: 'number',
+        valeurParDefaut: 1,
+        min: 1,
+        max: 5,
+        step: 1,
+        groupe: 'Superposition des Vagues',
+      },
+      {
+        cle: 'lookbackBars',
+        label: 'Historique des Bougies',
+        description: 'Nombre de bougies analysées sur le graphique',
+        type: 'number',
+        valeurParDefaut: 500,
+        min: 50,
+        max: 1000,
+        step: 50,
+        groupe: 'Historique',
+      },
+      {
+        cle: 'seuilBougiesBleuFonce',
+        label: 'Seuil Bougies Bleu Foncé (Sweep)',
+        description: 'Nombre minimum de bougies de chevauchement pour qu\'un palier soit considéré comme une zone de Sweep (barre bleu foncé)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 1,
+        max: 10,
+        step: 1,
+        groupe: 'Corridors Uniformes & TPO',
+      },
+      {
+        cle: 'toleranceUniformite',
+        label: 'Tolérance Écart Bougies',
+        description: 'Écart maximal de bougies entre paliers successifs pour être déclarés uniformes',
+        type: 'number',
+        valeurParDefaut: 1,
+        min: 0,
+        max: 5,
+        step: 1,
+        groupe: 'Corridors Uniformes & TPO',
+      },
+      {
+        cle: 'uniquementNonMitigues',
+        label: 'Uniquement Non-Mitigés',
+        description: 'Ne retenir que les paliers et plages qui n\'ont jamais été revisités après leur formation',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Filtre de Mitigation',
+      },
+      {
+        cle: 'prolongerNiveaux',
+        label: 'Prolonger Niveaux Vierges',
+        description: 'Prolonger les niveaux non mitigés vers la bougie courante',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre de Mitigation',
+      },
+      {
+        cle: 'afficherZigZag',
+        label: 'Afficher les Lignes ZigZag',
+        description: 'Affiche la structure brisée ZigZag sur le cours',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Options d\'Affichage',
+      },
+      {
+        cle: 'afficherBarresProfil',
+        label: 'Afficher les Barres de Profil',
+        description: 'Affiche l\'histogramme horizontal du profil de chevauchement sur chaque vague',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Options d\'Affichage',
+      },
+      {
+        cle: 'afficherProlongation',
+        label: 'Afficher Lignes en Pointillés',
+        description: 'Affiche les pointillés verts prolongeant les niveaux vierges vers la droite',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Options d\'Affichage',
+      },
+      {
+        cle: 'afficherTPOptimaux',
+        label: 'Afficher Take Profit Optimaux (TPO)',
+        description: 'Calcule et affiche simultanément les TP Optimaux Achat (vert) et Vente (rouge) par superposition de vagues',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Take Profit Optimaux (TPO)',
+      },
+      {
+        cle: 'seuilMargeTrouPourcent',
+        label: 'Marge Tolérance Micro-Creux (%)',
+        description: 'Pourcentage maximum de trou toléré (ex: 5%) au sein d\'une zone uniforme sans interrompre le TP',
+        type: 'number',
+        valeurParDefaut: 5,
+        min: 1,
+        max: 20,
+        step: 1,
+        groupe: 'Take Profit Optimaux (TPO)',
+      },
+      {
+        cle: 'maxTPAffiches',
+        label: 'Nombre Max de TP par Direction',
+        description: 'Nombre maximal de niveaux de Take Profit affichés (TP1, TP2, TP3...)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 1,
+        max: 5,
+        step: 1,
+        groupe: 'Take Profit Optimaux (TPO)',
+      },
+    ],
+    creeLe: '2026-09-28T00:00:00.000Z',
+    misAJourLe: '2026-09-29T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Profil de Chevauchement Non-Mitigé (UOP)
+ * Volume Profile mesurant le taux de chevauchement réel et calculant les TP Optimaux Achat/Vente
+ * par superposition des vagues précédentes et de la vague courante du ZigZag.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 15) return { donnees: {}, primitives: {} };
+
+    const res = calculerUnmitigatedOverlapProfile(bougies, {
+      zigzagDepth: Number(parametres.zigzagDepth || 8),
+      zigzagDeviation: Number(parametres.zigzagDeviation || 0),
+      zigzagBackstep: Number(parametres.zigzagBackstep || 3),
+      inclureVagueCourante: parametres.inclureVagueCourante !== false,
+      nbVaguesSuperposees: Number(parametres.nbVaguesSuperposees || parametres.maxVagues || 4),
+      minVaguesSuperposition: Number(parametres.minVaguesSuperposition || 1),
+      maxVagues: Number(parametres.nbVaguesSuperposees || parametres.maxVagues || 4),
+      lookbackBars: Number(parametres.lookbackBars || 500),
+      seuilBougiesBleuFonce: Number(parametres.seuilBougiesBleuFonce || 3),
+      minBougiesUniforme: Number(parametres.minBougiesUniforme || 2),
+      toleranceUniformite: Number(parametres.toleranceUniformite || 1),
+      prolongerNiveaux: parametres.prolongerNiveaux !== false,
+      uniquementNonMitigues: Boolean(parametres.uniquementNonMitigues),
+      afficherZigZag: parametres.afficherZigZag !== false,
+      afficherBarresProfil: parametres.afficherBarresProfil !== false,
+      afficherProlongation: parametres.afficherProlongation !== false,
+      afficherTPOptimaux: parametres.afficherTPOptimaux !== false,
+      seuilMargeTrouPourcent: Number(parametres.seuilMargeTrouPourcent || 5),
+      maxTPAffiches: Number(parametres.maxTPAffiches || 3),
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'unmitigated-overlap-profile'
+    };
+  }
+};`
   }
 ];
 
@@ -1829,7 +2543,15 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
   // ou `calculerDetectionLiquidite` mais sans bloc `return { calculer: ... }`,
   // l'envelopper automatiquement pour créer un indicateur immédiatement exécutable :
   if (!js.includes('return {') && !js.includes('return{')) {
-    if (js.includes('calculerSweepSpringValidation')) {
+    if (js.includes('calculerCompleteSetupVisualizer')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerCompleteSetupVisualizer(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerMtfConductor')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerMtfConductor(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerMoneyManagementRules')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerMoneyManagementRules(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerFractalLtfEntry')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerFractalLtfEntry(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerSweepSpringValidation')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSweepSpringValidation(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeSRTL')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerDetectionLiquiditeSRTL(contexte.bougies, contexte.parametres);\n  }\n};\n`;
@@ -1883,7 +2605,7 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
             if (idx !== -1) {
               scripts[idx] = {
                 ...indDefaut,
-                visibleSurGraphique: scripts[idx].visibleSurGraphique !== undefined ? scripts[idx].visibleSurGraphique : indDefaut.visibleSurGraphique,
+                visibleSurGraphique: indDefaut.id === 'script-sweep-spring-validation' ? true : (scripts[idx].visibleSurGraphique !== undefined ? scripts[idx].visibleSurGraphique : indDefaut.visibleSurGraphique),
                 parametres: { ...indDefaut.parametres, ...scripts[idx].parametres },
               };
               aModifie = true;
@@ -1975,20 +2697,15 @@ export function reinitialiserIndicateursParDefaut(): IndicatorScript[] {
   }
 }
 
-/**
- * Évalue un script d'indicateur dans un bac à sable (sandbox) isolé.
- * 
- * Exemple :
- * const resultat = evaluerIndicateurScript(script.code, { bougies: bougiesM1, parametres: script.parametres });
- */
-export function evaluerIndicateurScript(
-  codeScript: string,
-  contexte: IndicatorContext
-): IndicatorExecutionResult | null {
-  try {
-    // 1️⃣ Isolation et création de la fonction dynamique
-    // On transmet au script l'accès aux fonctions de calcul pour les indicateurs officiels
-    const constructeurFn = new Function(
+// ─── 🚀 Cache de Compilation V8 des Scripts d'Indicateurs ──────────────────────
+// Évite de réinstancier new Function() à chaque nouvelle bougie.
+// Accélère l'exécution d'un facteur 5x à 10x lors du replay et du backtest.
+const cacheFonctionsScripts = new Map<string, Function>();
+
+function recupererConstructeurScript(codeScript: string): Function {
+  let fn = cacheFonctionsScripts.get(codeScript);
+  if (!fn) {
+    fn = new Function(
       'contexte',
       'calculerLuxAlgoSMC',
       'calculerProtectedSwings',
@@ -2003,8 +2720,32 @@ export function evaluerIndicateurScript(
       'calculerMethodeACompression',
       'calculerMethodeBOverlap',
       'calculerMethodeCSlice',
+      'calculerUnmitigatedOverlapProfile',
+      'calculerFractalLtfEntry',
+      'calculerMoneyManagementRules',
+      'calculerMtfConductor',
+      'calculerCompleteSetupVisualizer',
       codeScript
     );
+    cacheFonctionsScripts.set(codeScript, fn);
+  }
+  return fn;
+}
+
+/**
+ * Évalue un script d'indicateur dans un bac à sable (sandbox) isolé.
+ * Utilise le cache de compilation V8 pour des performances optimales.
+ * 
+ * Exemple :
+ * const resultat = evaluerIndicateurScript(script.code, { bougies: bougiesM1, parametres: script.parametres });
+ */
+export function evaluerIndicateurScript(
+  codeScript: string,
+  contexte: IndicatorContext
+): IndicatorExecutionResult | null {
+  try {
+    // 1️⃣ Récupération de la fonction dynamique depuis le cache haute performance
+    const constructeurFn = recupererConstructeurScript(codeScript);
 
     const instance = constructeurFn(
       contexte,
@@ -2020,7 +2761,12 @@ export function evaluerIndicateurScript(
       calculerOverMitigationHighway,
       calculerMethodeACompression,
       calculerMethodeBOverlap,
-      calculerMethodeCSlice
+      calculerMethodeCSlice,
+      calculerUnmitigatedOverlapProfile,
+      calculerFractalLtfEntry,
+      calculerMoneyManagementRules,
+      calculerMtfConductor,
+      calculerCompleteSetupVisualizer
     );
 
     // 2️⃣ Si le script expose une méthode calculer()

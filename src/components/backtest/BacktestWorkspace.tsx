@@ -24,6 +24,9 @@ import { TradeDrawer } from '@/components/trade/TradeDrawer';
 import { supabase } from '@/lib/supabase';
 import { uploadImage, compresserEtConvertirEnBase64 } from '@/lib/storage';
 import { sauvegarderBougiesM1Cache, recupererBougiesM1Cache } from '@/lib/backtestCache';
+import { ModalInspecteurSetup } from '@/components/laboratoire/ModalInspecteurSetup';
+import { ModalBanqueSetups } from '@/components/laboratoire/ModalBanqueSetups';
+import { useLaboratoireStore } from '@/store/laboratoireStore';
 
 // ─── Définition de tous les outils de la barre latérale ───────────────────────
 // Chaque outil correspond exactement au type string attendu par getToolRegistry().createDrawing()
@@ -52,6 +55,9 @@ const OUTILS_TRACAGE = [
   { group: 'Trading', items: [
     { id: 'pos-long',  label: 'LONG',  title: 'Position Long ▲ — 3 clics : ① Entrée  ② Stop Loss  ③ Take Profit' },
     { id: 'pos-short', label: 'SHORT', title: 'Position Short ▼ — 3 clics : ① Entrée  ② Stop Loss  ③ Take Profit' },
+  ]},
+  { group: 'Laboratoire', items: [
+    { id: 'setup-probe', label: '🎯 SONDE', title: 'Sonder Setup Wyckoff / Liquidation — 1 clic sur la bougie du Sweep' },
   ]},
 ];
 
@@ -526,6 +532,7 @@ export function BacktestWorkspace() {
   const openNewTradeWithPrefill = useUIStore((s) => s.openNewTradeWithPrefill);
   const isNewTradeOpen = useUIStore((s) => s.isNewTradeOpen);
   const addToast = useUIStore((s) => s.addToast);
+  const tradeActifReplay = useLaboratoireStore((s) => s.contexteTradeActif);
 
   // Chargement automatique au premier montage OU si les données M1 ont été perdues après navigation
   // Si donneesCompletes ou donneesM1Chargees est vide, on recharge depuis IndexedDB ou le Cloud
@@ -544,19 +551,31 @@ export function BacktestWorkspace() {
     if (!contexteRestauration) return;
 
     const restaurer = async () => {
-      const { pair, annee, timeframe: tfRestaurer, timestamp, position } = contexteRestauration;
+      const { pair, annee, timeframe: tfRestaurer, timestamp, position, tradeInfo } = contexteRestauration;
       console.log(`🔄 [Replay Link] Demande de restauration vers ${pair} ${annee} ${tfRestaurer} à timestamp ${timestamp}`, position);
       
       // 1. Met à jour l'UT locale
       setTimeframeLocal(tfRestaurer);
       setTimeframeSauvegarde(tfRestaurer);
 
-      // 2. Charge les données avec ciblage précis de la bougie et restauration de la position active
+      // 2. Transmet le trade actif au Laboratoire pour l'associer à la sonde
+      if (tradeInfo) {
+        useLaboratoireStore.getState().definirTradeActif({
+          id: tradeInfo.id,
+          titre: tradeInfo.titre,
+          noteQualite: tradeInfo.noteQualite,
+          setupName: tradeInfo.setupName,
+          pair,
+        });
+      }
+
+      // 3. Charge les données avec ciblage précis de la bougie et restauration de la position active
       await chargerDonneesCloud(pair, annee, timestamp, tfRestaurer, position);
 
-      // 3. Consomme le contexte pour ne pas reboucler
+      // 4. Consomme le contexte pour ne pas reboucler
       nettoyerRestaurationContexte();
-      addToast(`Replay positionné sur l'entrée de ton trade (${pair} en ${tfRestaurer})`, 'info');
+      const noteLabel = tradeInfo?.noteQualite ? ` [${tradeInfo.noteQualite}]` : '';
+      addToast(`Replay positionné sur l'entrée du trade (${pair} en ${tfRestaurer})${noteLabel}`, 'info');
     };
 
     restaurer();
@@ -2132,6 +2151,21 @@ export function BacktestWorkspace() {
                 ⋮⋮
               </div>
 
+              {/* 🎯 Badge Trade Rejoué Lié à la Sonde */}
+              {tradeActifReplay && (
+                <div
+                  onClick={() => setOutilActif(outilActif === 'setup-probe' ? null : 'setup-probe')}
+                  className="cursor-pointer hidden sm:flex items-center gap-1.5 px-2 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-[11px] font-bold text-amber-300 hover:bg-amber-500/25 transition-colors"
+                  title="Trade rejoué actif : Cliquez pour sonder sa bougie de sweep avec 🎯"
+                >
+                  <span>🎯</span>
+                  <span className="truncate max-w-[110px]">{tradeActifReplay.titre || tradeActifReplay.pair}</span>
+                  <span className="bg-amber-500 text-black px-1 rounded text-[10px] font-black">
+                    {tradeActifReplay.noteQualite || 'A+'}
+                  </span>
+                </div>
+              )}
+
               {/* Mode Replay / Découpe ✂️ */}
               <button
                 onClick={() => setOutilActif(outilActif === 'replay-cut' ? null : 'replay-cut')}
@@ -2141,6 +2175,26 @@ export function BacktestWorkspace() {
                 }`}
               >
                 ✂️
+              </button>
+
+              {/* 🎯 Outil Sondeur de Setup */}
+              <button
+                onClick={() => setOutilActif(outilActif === 'setup-probe' ? null : 'setup-probe')}
+                title="Sonder Setup Wyckoff / Liquidation — 1 clic sur la bougie du Sweep"
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
+                  outilActif === 'setup-probe' ? 'bg-pink-600 text-white shadow' : C.btnBase
+                }`}
+              >
+                🎯
+              </button>
+
+              {/* 🧪 Outil Banque de Setups & Synthèse */}
+              <button
+                onClick={() => useLaboratoireStore.getState().ouvrirBanque()}
+                title="Banque de Setups & Rétro-Ingénierie Statistique"
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
+              >
+                🧪
               </button>
 
               <div className={`w-px h-5 ${C.separator}`} />
@@ -2422,6 +2476,26 @@ export function BacktestWorkspace() {
                   ✂️
                 </button>
 
+                {/* 🎯 Outil Sondeur de Setup */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'setup-probe' ? null : 'setup-probe')}
+                  className={`w-7 h-7 flex items-center justify-center rounded-xl text-xs transition-colors ${
+                    outilActif === 'setup-probe' ? 'bg-pink-600 text-white shadow' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Sonder Setup Wyckoff / Liquidation 🎯"
+                >
+                  🎯
+                </button>
+
+                {/* 🧪 Outil Banque de Setups */}
+                <button
+                  onClick={() => useLaboratoireStore.getState().ouvrirBanque()}
+                  className="w-7 h-7 flex items-center justify-center rounded-xl text-xs text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+                  title="Banque de Setups & Rétro-Ingénierie 🧪"
+                >
+                  🧪
+                </button>
+
                 <div className="w-px h-3.5 bg-white/15" />
 
                 {/* Bougie précédente */}
@@ -2555,6 +2629,12 @@ export function BacktestWorkspace() {
           addToast(`🤖 Bot "${bot.nom}" démarré en Replay Visuel !`, 'success');
         }}
       />
+
+      {/* 🧪 Modal Inspecteur de Setup (Sondeur de Rétro-Ingénierie) */}
+      <ModalInspecteurSetup />
+
+      {/* 📊 Modal Banque de Setups & Synthèse Statistique */}
+      <ModalBanqueSetups />
     </div>
   );
 }

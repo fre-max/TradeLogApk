@@ -18,6 +18,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import type { TradeWithSteps } from '@/types'
 import { useBacktestStore } from '@/store/backtestStore'
 import { extraireContexteReplay } from '@/lib/replayHelper'
+import { useLocalDatabase } from '@/store/useLocalDatabase'
 
 // ─── TradeTable ───────────────────────────────────────────
 // Tableau principal des trades avec :
@@ -39,6 +40,9 @@ export function TradeTable() {
   const filterPair = useFilterStore((state) => state.filterPair)
   const filterResult = useFilterStore((state) => state.filterResult)
   const filterStrategyId = useFilterStore((state) => state.filterStrategyId)
+  const filterQuality = useFilterStore((state) => state.filterQuality)
+  const setFilter = useFilterStore((state) => state.setFilter)
+  const updateTradeLocal = useLocalDatabase((state) => state.updateTrade)
   const [sorting, setSorting] = useState<SortingState>([])
 
   // On récupère le type de journal depuis les paramètres d'URL ( bias, poi, confirmation, global )
@@ -66,6 +70,48 @@ export function TradeTable() {
             {info.getValue() === 'long' ? '↑ Long' : '↓ Short'}
           </Badge>
         ),
+      }),
+      col.display({
+        id: 'note_qualite',
+        header: 'Qualité',
+        cell: (info) => {
+          const trade = info.row.original
+          const note = (trade.backtest_context?.noteQualite as 'A+' | 'A' | 'B') || null
+
+          return (
+            <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+              <select
+                value={note || ''}
+                onChange={(e) => {
+                  const val = e.target.value as 'A+' | 'A' | 'B' | ''
+                  updateTradeLocal(trade.id, {
+                    backtest_context: {
+                      ...(trade.backtest_context || {}),
+                      noteQualite: val || undefined,
+                    },
+                  })
+                  addToast(val ? `Trade ${trade.pair} noté ${val} !` : 'Note retirée', 'info')
+                }}
+                className={cn(
+                  'text-[11px] font-bold px-1.5 py-0.5 rounded cursor-pointer border transition-colors outline-none',
+                  note === 'A+'
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : note === 'A'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : note === 'B'
+                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                    : 'bg-surface2 text-txt3 border-border hover:text-txt'
+                )}
+                title="Attribuer une note qualité à ce trade"
+              >
+                <option value="" className="bg-[#1e222d] text-gray-300">—</option>
+                <option value="A+" className="bg-[#1e222d] text-amber-400 font-bold">⭐ A+</option>
+                <option value="A" className="bg-[#1e222d] text-emerald-400 font-bold">🟢 A</option>
+                <option value="B" className="bg-[#1e222d] text-indigo-400 font-bold">🔵 B</option>
+              </select>
+            </div>
+          )
+        },
       }),
     ]
 
@@ -393,9 +439,14 @@ export function TradeTable() {
       if (filterResult && t.result !== filterResult) return false
       // Filtre Stratégie
       if (filterStrategyId && t.strategy_id !== filterStrategyId) return false
+      // Filtre Qualité (A+, A, B)
+      if (filterQuality) {
+        const noteTrade = (t.backtest_context?.noteQualite as string) || null
+        if (noteTrade !== filterQuality) return false
+      }
       return true
     })
-  }, [trades, filterPair, filterResult, filterStrategyId, journalType])
+  }, [trades, filterPair, filterResult, filterStrategyId, filterQuality, journalType])
 
   const table = useReactTable({
     data: filtered,
@@ -430,6 +481,55 @@ export function TradeTable() {
             {tab}
           </div>
         ))}
+      </div>
+
+      {/* 🌟 Barre de filtre par qualité pour isoler les meilleurs trades pour le Laboratoire */}
+      <div className="flex items-center gap-1.5 px-4 py-2 bg-surface2/30 border-b border-border overflow-x-auto select-none">
+        <span className="text-[11px] font-bold text-txt3 mr-1 whitespace-nowrap">Filtre Qualité :</span>
+        <button
+          onClick={() => setFilter('filterQuality', null)}
+          className={cn(
+            'px-2.5 py-0.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap',
+            filterQuality === null
+              ? 'bg-accent text-white shadow-sm'
+              : 'text-txt2 hover:text-txt hover:bg-surface2'
+          )}
+        >
+          Tous ({trades.length})
+        </button>
+        <button
+          onClick={() => setFilter('filterQuality', 'A+')}
+          className={cn(
+            'px-2.5 py-0.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1 whitespace-nowrap',
+            filterQuality === 'A+'
+              ? 'bg-amber-500 text-black font-black shadow-sm'
+              : 'text-amber-400 hover:bg-amber-500/10'
+          )}
+        >
+          ⭐ A+ ({trades.filter((t) => t.backtest_context?.noteQualite === 'A+').length})
+        </button>
+        <button
+          onClick={() => setFilter('filterQuality', 'A')}
+          className={cn(
+            'px-2.5 py-0.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1 whitespace-nowrap',
+            filterQuality === 'A'
+              ? 'bg-emerald-600 text-white font-bold shadow-sm'
+              : 'text-emerald-400 hover:bg-emerald-500/10'
+          )}
+        >
+          🟢 A ({trades.filter((t) => t.backtest_context?.noteQualite === 'A').length})
+        </button>
+        <button
+          onClick={() => setFilter('filterQuality', 'B')}
+          className={cn(
+            'px-2.5 py-0.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1 whitespace-nowrap',
+            filterQuality === 'B'
+              ? 'bg-indigo-600 text-white font-bold shadow-sm'
+              : 'text-indigo-400 hover:bg-indigo-500/10'
+          )}
+        >
+          🔵 B ({trades.filter((t) => t.backtest_context?.noteQualite === 'B').length})
+        </button>
       </div>
 
       {/* Vue Cartes Mobile (écrans < 768px) */}
@@ -468,7 +568,7 @@ export function TradeTable() {
             >
               {/* Ligne 1 : Paire, Direction, Résultat, Date */}
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <span className="font-bold text-txt text-base tracking-tight">{trade.pair}</span>
                   <span className={cn(
                     "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
@@ -476,6 +576,37 @@ export function TradeTable() {
                   )}>
                     {estLong ? '↑ Long' : '↓ Short'}
                   </span>
+
+                  {/* Note Qualité Rapide sur Mobile */}
+                  <select
+                    value={(trade.backtest_context?.noteQualite as string) || ''}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const val = e.target.value as 'A+' | 'A' | 'B' | ''
+                      updateTradeLocal(trade.id, {
+                        backtest_context: {
+                          ...(trade.backtest_context || {}),
+                          noteQualite: val || undefined,
+                        },
+                      })
+                      addToast(val ? `Noté ${val} !` : 'Note retirée', 'info')
+                    }}
+                    className={cn(
+                      'text-[10px] font-black px-1.5 py-0.5 rounded cursor-pointer border transition-colors outline-none',
+                      trade.backtest_context?.noteQualite === 'A+'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : trade.backtest_context?.noteQualite === 'A'
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : trade.backtest_context?.noteQualite === 'B'
+                        ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                        : 'bg-surface2 text-txt3 border-border'
+                    )}
+                  >
+                    <option value="" className="bg-[#1e222d] text-gray-300">—</option>
+                    <option value="A+" className="bg-[#1e222d] text-amber-400 font-bold">⭐ A+</option>
+                    <option value="A" className="bg-[#1e222d] text-emerald-400 font-bold">🟢 A</option>
+                    <option value="B" className="bg-[#1e222d] text-indigo-400 font-bold">🔵 B</option>
+                  </select>
                 </div>
 
                 <div className="flex items-center gap-1.5">

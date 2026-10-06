@@ -180,6 +180,42 @@ export function TradeDetail() {
               </span>
             )}
 
+            {/* Note Qualité (A+, A, B) */}
+            <select
+              value={(selectedTrade.backtest_context?.noteQualite as string) || ''}
+              onChange={(e) => {
+                const val = e.target.value as 'A+' | 'A' | 'B' | ''
+                const updatedContext = {
+                  ...(selectedTrade.backtest_context || {}),
+                  noteQualite: val || undefined,
+                }
+                useLocalDatabase.getState().updateTrade(selectedTrade.id, {
+                  backtest_context: updatedContext,
+                })
+                useUIStore.getState().openDetail({
+                  ...selectedTrade,
+                  backtest_context: updatedContext,
+                })
+                useUIStore.getState().addToast(val ? `Trade noté ${val} !` : 'Note retirée', 'info')
+              }}
+              className={cn(
+                'text-xs font-black px-2 py-0.5 rounded cursor-pointer border transition-colors outline-none ml-2',
+                selectedTrade.backtest_context?.noteQualite === 'A+'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : selectedTrade.backtest_context?.noteQualite === 'A'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : selectedTrade.backtest_context?.noteQualite === 'B'
+                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                  : 'bg-surface2 text-txt3 border-border hover:text-txt'
+              )}
+              title="Attribuer une note qualité (A+, A, B) à ce trade"
+            >
+              <option value="" className="bg-[#1e222d] text-gray-300">Note: —</option>
+              <option value="A+" className="bg-[#1e222d] text-amber-400 font-bold">⭐ Note A+</option>
+              <option value="A" className="bg-[#1e222d] text-emerald-400 font-bold">🟢 Note A</option>
+              <option value="B" className="bg-[#1e222d] text-indigo-400 font-bold">🔵 Note B</option>
+            </select>
+
             {/* Boutons à droite */}
             <div className="flex items-center gap-1.5 ml-auto">
               <button

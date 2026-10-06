@@ -24,10 +24,12 @@ describe('Comparatif des 3 Méthodes de Chevauchement de Bougies', () => {
   }));
 
   describe('Méthode A : Bougie Mère Non-Mitigée & Chevauchement Direct', () => {
-    it('détecte les bougies mères et leurs suites de chevauchement direct sur les bougies en surplace', () => {
+    it('détecte les bougies mères et place des points nets dessus sans boîtes par défaut', () => {
       const res = calculerMethodeACompression(bougiesChevauchees, { lookbackBars: 500, minBougiesDirectes: 2 });
       expect(res.bougiesMeres.length).toBeGreaterThan(0);
-      expect(res.primitives.boites?.length).toBeGreaterThan(0);
+      // Par défaut, génère des points épurés et aucune boîte pour ne pas surcharger le graphique
+      expect(res.primitives.points?.length).toBeGreaterThan(0);
+      expect(res.primitives.boites?.length).toBe(0);
     });
 
     it('identifie correctement une zone de compression non-mitigée prolongée vers le futur', () => {
@@ -50,13 +52,18 @@ describe('Comparatif des 3 Méthodes de Chevauchement de Bougies', () => {
       }));
 
       const bougies = [...cluster, ...depart];
-      const res = calculerMethodeACompression(bougies, { fenetreBougies: 4, seuilRatioCompression: 2.0 });
+      const res = calculerMethodeACompression(bougies, {
+        fenetreBougies: 4,
+        seuilRatioCompression: 2.0,
+        afficherBoites: true,
+        afficherTexte: true,
+      });
 
       expect(res.zones.length).toBeGreaterThan(0);
       expect(res.totalNonMitiguees).toBeGreaterThan(0);
       expect(res.zones[0].estMitiguee).toBe(false);
 
-      // La boîte doit être prolongée jusqu'à la dernière bougie
+      // Si activée, la boîte doit être prolongée jusqu'à la dernière bougie
       const boiteNonMitiguee = res.primitives.boites?.find(b => b.label?.includes('NON-MITIGÉ'));
       expect(boiteNonMitiguee).toBeDefined();
       expect(boiteNonMitiguee?.dateFin).toBe(depart[depart.length - 1].time);

@@ -1,0 +1,95 @@
+{
+  "nom": "Entrées Fractales LTF (Order Blocks & micro-BOS)",
+  "description": "Scanne la zone protégée issue de la liquidation pour détecter les Order Blocks fractals et déclencher des entrées sniper avec Stop Loss ultra-serré.",
+  "auteur": "TradeLog Bot / SMC",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "choixNiveauEntree": "median_ob",
+    "tamponSLPips": 1.0,
+    "activerAchats": true,
+    "activerVentes": true,
+    "afficherZoneProtegee": true,
+    "afficherOrderBlocks": true,
+    "afficherLignesEntreeSL": true,
+    "maxLookbackBars": 600
+  },
+  "definitionsVariables": [
+    {
+      "cle": "choixNiveauEntree",
+      "label": "Niveau d'Exécution de l'Entrée",
+      "description": "Point de déclenchement dans l'Order Block (50% Médian recommandé pour un R:R maximal)",
+      "type": "select",
+      "valeurParDefaut": "median_ob",
+      "options": [
+        { "label": "50% Équilibre de l'Order Block (Sniper)", "value": "median_ob" },
+        { "label": "Bordure Extérieure de l'Order Block (Agressif)", "value": "bordure_ob" },
+        { "label": "Clôture de la Bougie de Retest (Prudent)", "value": "cloture_confirmation" }
+      ],
+      "groupe": "Exécution & Déclencheur"
+    },
+    {
+      "cle": "tamponSLPips",
+      "label": "Marge SL sous Prix Protégé (Pips)",
+      "description": "Pips de sécurité ajoutés au-delà du creux ou sommet extrême de liquidation",
+      "type": "number",
+      "valeurParDefaut": 1.0,
+      "min": 0.0,
+      "max": 10.0,
+      "step": 0.5,
+      "groupe": "Gestion du Risque & Invalidation"
+    },
+    {
+      "cle": "activerAchats",
+      "label": "Activer les Signaux d'Achat (Long)",
+      "description": "Détecte les Order Blocks haussiers après les Springs de liquidité",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions"
+    },
+    {
+      "cle": "activerVentes",
+      "label": "Activer les Signaux de Vente (Short)",
+      "description": "Détecte les Order Blocks baissiers après les UTAD de liquidité",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions"
+    },
+    {
+      "cle": "afficherZoneProtegee",
+      "label": "Afficher la Boîte de Zone Protégée",
+      "description": "Trace le rectangle [Prix Protégé ↔ BOS de réintégration]",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherOrderBlocks",
+      "label": "Afficher les Boîtes d'Order Blocks LTF",
+      "description": "Affiche les rectangles des Order Blocks internes validés",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherLignesEntreeSL",
+      "label": "Afficher les Lignes Entry et SL",
+      "description": "Trace les lignes horizontales d'entrée et de Stop Loss avec labels pips",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "maxLookbackBars",
+      "label": "Bougies Historiques Analysées",
+      "description": "Nombre de bougies récentes analysées pour les entrées fractales",
+      "type": "number",
+      "valeurParDefaut": 600,
+      "min": 100,
+      "max": 3000,
+      "step": 50,
+      "groupe": "Historique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres, resultatsPrecedents, donneesM1 } = contexte;\n    if (!bougies || bougies.length < 30) return { donnees: {}, primitives: {} };\n\n    return calculerFractalLtfEntry(bougies, {\n      choixNiveauEntree: String(parametres.choixNiveauEntree || 'median_ob'),\n      tamponSLPips: Number(parametres.tamponSLPips || 1.0),\n      activerAchats: parametres.activerAchats !== false,\n      activerVentes: parametres.activerVentes !== false,\n      afficherZoneProtegee: parametres.afficherZoneProtegee !== false,\n      afficherOrderBlocks: parametres.afficherOrderBlocks !== false,\n      afficherLignesEntreeSL: parametres.afficherLignesEntreeSL !== false,\n      maxLookbackBars: Number(parametres.maxLookbackBars || 600),\n      resultatsPrecedents: resultatsPrecedents,\n      donneesM1: donneesM1,\n    });\n  }\n};"
+}
