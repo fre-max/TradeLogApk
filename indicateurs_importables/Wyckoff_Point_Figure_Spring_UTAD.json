@@ -1,0 +1,190 @@
+{
+  "nom": "Wyckoff Point & Figure (Spring & UTAD)",
+  "description": "Détecte les structures de Range, les Springs et les UTAD grâce au lissage géométrique Point & Figure (P&F), avec calcul de l'objectif de Cause à Effet, compteur de retests et filtre de volume institutionnel personnalisable.",
+  "auteur": "TradeLog AI / Wyckoff",
+  "version": "1.1.0",
+  "type": "overlay",
+  "parametres": {
+    "modeTailleBox": "auto_atr",
+    "ratioBoxATR": 0.5,
+    "tailleBoxPips": 10,
+    "reversalCount": 3,
+    "colonnesMinRange": 4,
+    "minRetestsRequis": 2,
+    "maxLookbackBars": 1000,
+    "activerFiltreVolume": true,
+    "typeValidationVolume": "climax_ou_test",
+    "seuilRatioVolume": 1.3,
+    "periodeMoyenneVolume": 20,
+    "activerSpring": true,
+    "activerUTAD": true,
+    "afficherRanges": true,
+    "afficherLignesNiveaux": true,
+    "afficherCiblesWyckoff": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "modeTailleBox",
+      "label": "Mode de Calcul de la Boîte (Box Size)",
+      "description": "Calcul automatique basé sur l'ATR de volatilité ou taille fixe en pips",
+      "type": "select",
+      "valeurParDefaut": "auto_atr",
+      "options": [
+        { "label": "Automatique (ATR Dynamique)", "value": "auto_atr" },
+        { "label": "Fixe (Pips définis manuellement)", "value": "fixe" }
+      ],
+      "groupe": "Configuration Point et Figure"
+    },
+    {
+      "cle": "ratioBoxATR",
+      "label": "Ratio ATR (si mode Auto)",
+      "description": "Fraction de l'ATR utilisée pour dimensionner une boîte P&F (ex: 0.5 = 50% de l'ATR)",
+      "type": "number",
+      "valeurParDefaut": 0.5,
+      "min": 0.1,
+      "max": 2.0,
+      "step": 0.1,
+      "groupe": "Configuration Point et Figure"
+    },
+    {
+      "cle": "tailleBoxPips",
+      "label": "Taille de Boîte Fixe (si mode Fixe)",
+      "description": "Taille d'une boîte Point & Figure en pips",
+      "type": "number",
+      "valeurParDefaut": 10,
+      "min": 1,
+      "max": 200,
+      "step": 1,
+      "groupe": "Configuration Point et Figure"
+    },
+    {
+      "cle": "reversalCount",
+      "label": "Seuil de Retournement (Boîtes)",
+      "description": "Nombre de boîtes nécessaires pour changer de colonne (Standard Wyckoff = 3 boîtes)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "groupe": "Configuration Point et Figure"
+    },
+    {
+      "cle": "colonnesMinRange",
+      "label": "Largeur Minimale du Range (Colonnes P&F)",
+      "description": "Nombre minimum de colonnes P&F consécutives pour valider une phase de Range / Accumulation",
+      "type": "number",
+      "valeurParDefaut": 4,
+      "min": 2,
+      "max": 20,
+      "step": 1,
+      "groupe": "Structure du Range & Retests"
+    },
+    {
+      "cle": "minRetestsRequis",
+      "label": "Retests Minima Requis du Niveau (Touches)",
+      "description": "Nombre minimum de colonnes P&F distinctes ayant rebondi sur le support/résistance pour valider sa solidité (2 = Standard, 3 = Majeur, >=4 = Institutionnel A+)",
+      "type": "number",
+      "valeurParDefaut": 2,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "groupe": "Structure du Range & Retests"
+    },
+    {
+      "cle": "maxLookbackBars",
+      "label": "Historique Analysé (Bougies)",
+      "description": "Nombre maximum de bougies récentes à convertir en colonnes Point et Figure",
+      "type": "number",
+      "valeurParDefaut": 1000,
+      "min": 100,
+      "max": 3000,
+      "step": 100,
+      "groupe": "Structure du Range & Retests"
+    },
+    {
+      "cle": "activerFiltreVolume",
+      "label": "Activer le Filtre de Volume Wyckoff",
+      "description": "Active la confirmation par le volume (Effort vs Résultat). Si désactivé, le setup est validé uniquement sur la géométrie P&F.",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtre Volume Wyckoff (Optionnel)"
+    },
+    {
+      "cle": "typeValidationVolume",
+      "label": "Type d'Analyse du Volume",
+      "description": "Règle de validation du volume requise lors du Spring / UTAD",
+      "type": "select",
+      "valeurParDefaut": "climax_ou_test",
+      "options": [
+        { "label": "Absorption (Fort Climax) OU Assèchement (Faible Test)", "value": "climax_ou_test" },
+        { "label": "Uniquement Fort Volume d'Absorption (Climax)", "value": "climax" },
+        { "label": "Uniquement Faible Volume d'Épuisement (Test)", "value": "test" }
+      ],
+      "groupe": "Filtre Volume Wyckoff (Optionnel)"
+    },
+    {
+      "cle": "seuilRatioVolume",
+      "label": "Ratio Volume vs Moyenne",
+      "description": "Facteur multiplicateur du volume moyen pour qualifier un Climax ou un Test",
+      "type": "number",
+      "valeurParDefaut": 1.3,
+      "min": 1.0,
+      "max": 4.0,
+      "step": 0.1,
+      "groupe": "Filtre Volume Wyckoff (Optionnel)"
+    },
+    {
+      "cle": "periodeMoyenneVolume",
+      "label": "Période Moyenne de Volume",
+      "description": "Nombre de bougies pour calculer le volume moyen de référence",
+      "type": "number",
+      "valeurParDefaut": 20,
+      "min": 5,
+      "max": 100,
+      "step": 5,
+      "groupe": "Filtre Volume Wyckoff (Optionnel)"
+    },
+    {
+      "cle": "activerSpring",
+      "label": "Détecter les Springs (Achats)",
+      "description": "Active la détection des faux franchissements baissiers sous les supports de Range P&F",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Signaux"
+    },
+    {
+      "cle": "activerUTAD",
+      "label": "Détecter les UTAD (Ventes)",
+      "description": "Active la détection des Upthrusts haussiers au-dessus des résistances de Range P&F",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Signaux"
+    },
+    {
+      "cle": "afficherRanges",
+      "label": "Afficher les Boîtes de Trading Range",
+      "description": "Trace les zones rectangulaires délimitant les trading ranges P&F",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherLignesNiveaux",
+      "label": "Afficher les Lignes S/R avec Compteur de Retests",
+      "description": "Trace les niveaux horizontaux de supports/résistances avec indication de la force et du nombre de retests",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    },
+    {
+      "cle": "afficherCiblesWyckoff",
+      "label": "Projeter les Cibles de Cause à Effet",
+      "description": "Trace les lignes horizontales d'objectifs de prix calculés selon le comptage horizontal Wyckoff",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function (contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 50) {\n      return { donnees: {}, primitives: { boites: [], lignes: [], labels: [] } };\n    }\n\n    const params = parametres || {};\n    const modeTailleBox = String(params.modeTailleBox || 'auto_atr');\n    const periodeATR = Number(params.periodeATR || 14);\n    const ratioBoxATR = Number(params.ratioBoxATR || 0.5);\n    const tailleBoxPips = Number(params.tailleBoxPips || 10);\n    const reversalCount = Number(params.reversalCount || 3);\n    const colonnesMinRange = Number(params.colonnesMinRange || 4);\n    const minRetestsRequis = Number(params.minRetestsRequis || 2);\n    const maxLookback = Number(params.maxLookbackBars || 1000);\n\n    const activerFiltreVolume = params.activerFiltreVolume !== false;\n    const typeValidationVolume = String(params.typeValidationVolume || 'climax_ou_test');\n    const seuilRatioVolume = Number(params.seuilRatioVolume || 1.3);\n    const periodeMoyenneVolume = Number(params.periodeMoyenneVolume || 20);\n\n    const activerSpring = params.activerSpring !== false;\n    const activerUTAD = params.activerUTAD !== false;\n    const afficherRanges = params.afficherRanges !== false;\n    const afficherLignesNiveaux = params.afficherLignesNiveaux !== false;\n    const afficherCiblesWyckoff = params.afficherCiblesWyckoff !== false;\n\n    const dernierPrix = bougies[bougies.length - 1].close;\n    let pipSize = 0.0001;\n    if (dernierPrix > 1000) pipSize = 0.1;\n    else if (dernierPrix > 50) pipSize = 0.01;\n\n    let tailleBox = 10 * pipSize;\n    if (modeTailleBox === 'auto_atr') {\n      let sommeTR = 0;\n      const debutATR = Math.max(1, bougies.length - periodeATR);\n      for (let i = debutATR; i < bougies.length; i++) {\n        const h = bougies[i].high;\n        const l = bougies[i].low;\n        const prevClose = bougies[i - 1].close;\n        const tr = Math.max(h - l, Math.abs(h - prevClose), Math.abs(l - prevClose));\n        sommeTR += tr;\n      }\n      const atrMoyen = sommeTR / Math.max(1, bougies.length - debutATR);\n      tailleBox = Math.max(pipSize, atrMoyen * ratioBoxATR);\n    } else {\n      tailleBox = Math.max(pipSize, tailleBoxPips * pipSize);\n    }\n\n    const debutIndex = Math.max(0, bougies.length - maxLookback);\n    const colonnes = [];\n\n    let colType = bougies[debutIndex].close >= bougies[debutIndex].open ? 'X' : 'O';\n    let colBas = Math.floor(bougies[debutIndex].low / tailleBox) * tailleBox;\n    let colHaut = Math.ceil(bougies[debutIndex].high / tailleBox) * tailleBox;\n    if (colHaut <= colBas) colHaut = colBas + tailleBox;\n\n    let colIndexDebut = debutIndex;\n    let colIndexFin = debutIndex;\n    let colTempsDebut = bougies[debutIndex].time;\n    let colTempsFin = bougies[debutIndex].time;\n\n    for (let i = debutIndex + 1; i < bougies.length; i++) {\n      const b = bougies[i];\n\n      if (colType === 'X') {\n        if (b.high >= colHaut + tailleBox) {\n          const boitesAjoutees = Math.floor((b.high - colHaut) / tailleBox);\n          colHaut += boitesAjoutees * tailleBox;\n          colIndexFin = i;\n          colTempsFin = b.time;\n        } else {\n          const seuilRetournement = colHaut - (reversalCount * tailleBox);\n          if (b.low <= seuilRetournement) {\n            colonnes.push({\n              type: 'X',\n              haut: colHaut,\n              bas: colBas,\n              indexDebut: colIndexDebut,\n              indexFin: colIndexFin,\n              tempsDebut: colTempsDebut,\n              tempsFin: colTempsFin\n            });\n            colType = 'O';\n            colHaut = colHaut - tailleBox;\n            const boitesBaisse = Math.floor((colHaut - b.low) / tailleBox);\n            colBas = colHaut - (boitesBaisse * tailleBox);\n            colIndexDebut = i;\n            colIndexFin = i;\n            colTempsDebut = b.time;\n            colTempsFin = b.time;\n          }\n        }\n      } else {\n        if (b.low <= colBas - tailleBox) {\n          const boitesRetirees = Math.floor((colBas - b.low) / tailleBox);\n          colBas -= boitesRetirees * tailleBox;\n          colIndexFin = i;\n          colTempsFin = b.time;\n        } else {\n          const seuilRetournement = colBas + (reversalCount * tailleBox);\n          if (b.high >= seuilRetournement) {\n            colonnes.push({\n              type: 'O',\n              haut: colHaut,\n              bas: colBas,\n              indexDebut: colIndexDebut,\n              indexFin: colIndexFin,\n              tempsDebut: colTempsDebut,\n              tempsFin: colTempsFin\n            });\n            colType = 'X';\n            colBas = colBas + tailleBox;\n            const boitesHausse = Math.floor((b.high - colBas) / tailleBox);\n            colHaut = colBas + (boitesHausse * tailleBox);\n            colIndexDebut = i;\n            colIndexFin = i;\n            colTempsDebut = b.time;\n            colTempsFin = b.time;\n          }\n        }\n      }\n    }\n\n    colonnes.push({\n      type: colType,\n      haut: colHaut,\n      bas: colBas,\n      indexDebut: colIndexDebut,\n      indexFin: colIndexFin,\n      tempsDebut: colTempsDebut,\n      tempsFin: colTempsFin\n    });\n\n    function verifierVolumeWyckoff(indexSpringOuUTAD, indexReintegration) {\n      if (!activerFiltreVolume) {\n        return { valide: true, motif: 'Volume désactivé (P&F Pur)' };\n      }\n      let sommeVolume = 0;\n      let nbBougies = 0;\n      const debutMoy = Math.max(0, indexReintegration - periodeMoyenneVolume);\n      for (let k = debutMoy; k < indexReintegration; k++) {\n        sommeVolume += (bougies[k].volume || 0);\n        nbBougies++;\n      }\n      const volumeMoyen = nbBougies > 0 ? (sommeVolume / nbBougies) : 1;\n      const volCassure = bougies[indexSpringOuUTAD].volume || 0;\n      const volReintegration = bougies[indexReintegration].volume || 0;\n      const volMax = Math.max(volCassure, volReintegration);\n      const estClimax = volMax >= (volumeMoyen * seuilRatioVolume);\n      const estTestFaible = volReintegration <= (volumeMoyen / seuilRatioVolume);\n\n      if (typeValidationVolume === 'climax') {\n        return {\n          valide: estClimax,\n          motif: estClimax ? 'Absorption / Climax (Fort volume)' : 'Volume insuffisant'\n        };\n      } else if (typeValidationVolume === 'test') {\n        return {\n          valide: estTestFaible,\n          motif: estTestFaible ? 'Test validé (Assèchement vendeur)' : 'Trop de volume persistant'\n        };\n      } else {\n        const valide = estClimax || estTestFaible;\n        return {\n          valide: valide,\n          motif: estClimax ? 'Absorption (Climax)' : (estTestFaible ? 'Assèchement (Test)' : 'Volume neutre non validé')\n        };\n      }\n    }\n\n    function qualifierSoliditeNiveau(touches) {\n      if (touches >= 4) return 'Institutionnel (A+)';\n      if (touches === 3) return 'Majeur';\n      if (touches === 2) return 'Standard';\n      return 'Faible';\n    }\n\n    const boitesVisuelles = [];\n    const lignesVisuelles = [];\n    const labelsVisuels = [];\n    const signaux = [];\n\n    for (let c = colonnesMinRange + 1; c < colonnes.length; c++) {\n      const colActuelle = colonnes[c];\n      const colPrecedente = colonnes[c - 1];\n\n      if (activerSpring && colPrecedente.type === 'O' && colActuelle.type === 'X') {\n        let minBas = 9999999;\n        let maxHaut = -9999999;\n        const creuxPrecedents = [];\n\n        for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {\n          if (r >= 0) {\n            if (colonnes[r].type === 'O') creuxPrecedents.push(colonnes[r].bas);\n            if (colonnes[r].bas < minBas) minBas = colonnes[r].bas;\n            if (colonnes[r].haut > maxHaut) maxHaut = colonnes[r].haut;\n          }\n        }\n\n        if (creuxPrecedents.length >= 2) {\n          const supportEstime = Math.min(...creuxPrecedents.slice(0, 2));\n          let nbRetests = 0;\n          for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {\n            if (r >= 0 && colonnes[r].type === 'O') {\n              if (Math.abs(colonnes[r].bas - supportEstime) <= tailleBox) {\n                nbRetests++;\n              }\n            }\n          }\n\n          if (nbRetests < minRetestsRequis) continue;\n          const qualiteNiveau = qualifierSoliditeNiveau(nbRetests);\n\n          const depassementBas = supportEstime - colPrecedente.bas;\n          const aCasseSupport = depassementBas >= tailleBox && depassementBas <= (4 * tailleBox);\n          const aReintegre = colActuelle.haut >= supportEstime + tailleBox;\n\n          if (aCasseSupport && aReintegre) {\n            const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);\n            if (testVolume.valide) {\n              const bgSignal = bougies[colActuelle.indexFin];\n              const largeurRange = c - (c - colonnesMinRange - 1);\n              const cibleWyckoff = supportEstime + (largeurRange * tailleBox * reversalCount);\n              const stopLoss = colPrecedente.bas - (tailleBox * 0.5);\n\n              signaux.push({\n                direction: 'achat',\n                type: 'Spring Wyckoff P&F',\n                prixEntree: bgSignal.close,\n                stopLoss: stopLoss,\n                takeProfit: cibleWyckoff,\n                largeurCauseColonnes: largeurRange,\n                nbRetests: nbRetests,\n                qualiteNiveau: qualiteNiveau,\n                motifVolume: testVolume.motif,\n                temps: bgSignal.time\n              });\n\n              if (afficherRanges) {\n                boitesVisuelles.push({\n                  id: 'range-' + c,\n                  prixHaut: maxHaut,\n                  prixBas: supportEstime,\n                  dateDebut: colonnes[c - colonnesMinRange - 1].tempsDebut,\n                  dateFin: colActuelle.tempsFin,\n                  couleurFond: 'rgba(33, 150, 243, 0.08)',\n                  couleurBordure: 'rgba(33, 150, 243, 0.35)',\n                  label: 'Trading Range P&F'\n                });\n              }\n\n              if (afficherLignesNiveaux) {\n                lignesVisuelles.push({\n                  id: 'support-pf-' + c,\n                  prix: supportEstime,\n                  dateDebut: colonnes[c - colonnesMinRange - 1].tempsDebut,\n                  dateFin: colActuelle.tempsFin,\n                  couleur: nbRetests >= 4 ? '#00e676' : (nbRetests === 3 ? '#26a69a' : '#00b0ff'),\n                  style: 'solid',\n                  epaisseur: nbRetests >= 4 ? 2.5 : (nbRetests === 3 ? 2 : 1.5),\n                  label: `Support (${nbRetests}x Tests - ${qualiteNiveau})`\n                });\n              }\n\n              boitesVisuelles.push({\n                id: 'spring-' + c,\n                prixHaut: supportEstime,\n                prixBas: colPrecedente.bas,\n                dateDebut: colPrecedente.tempsDebut,\n                dateFin: colActuelle.tempsFin,\n                couleurFond: 'rgba(0, 200, 83, 0.25)',\n                couleurBordure: '#00c853',\n                label: '🟢 Spring'\n              });\n\n              if (afficherCiblesWyckoff) {\n                lignesVisuelles.push({\n                  id: 'cible-spring-' + c,\n                  prix: cibleWyckoff,\n                  dateDebut: colActuelle.tempsFin,\n                  couleur: '#00e676',\n                  style: 'dashed',\n                  epaisseur: 1.5,\n                  label: `🎯 Cible Wyckoff (${largeurRange} cols)`\n                });\n              }\n\n              const tagQualite = nbRetests >= 4 ? ` [A+ ${nbRetests}T]` : ` [${nbRetests}T]`;\n              const tagVol = activerFiltreVolume ? ' Vol' : '';\n              labelsVisuels.push({\n                id: 'lbl-spring-' + c,\n                prix: bgSignal.low,\n                date: bgSignal.time,\n                texte: `▲ SPRING${tagQualite}${tagVol ? ' /' + tagVol : ''}`,\n                couleur: nbRetests >= 4 ? '#00e676' : '#089981',\n                position: 'below'\n              });\n            }\n          }\n        }\n      }\n\n      if (activerUTAD && colPrecedente.type === 'X' && colActuelle.type === 'O') {\n        let minBas = 9999999;\n        let maxHaut = -9999999;\n        const sommetsPrecedents = [];\n\n        for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {\n          if (r >= 0) {\n            if (colonnes[r].type === 'X') sommetsPrecedents.push(colonnes[r].haut);\n            if (colonnes[r].bas < minBas) minBas = colonnes[r].bas;\n            if (colonnes[r].haut > maxHaut) maxHaut = colonnes[r].haut;\n          }\n        }\n\n        if (sommetsPrecedents.length >= 2) {\n          const resistanceEstimee = Math.max(...sommetsPrecedents.slice(0, 2));\n          let nbRetests = 0;\n          for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {\n            if (r >= 0 && colonnes[r].type === 'X') {\n              if (Math.abs(colonnes[r].haut - resistanceEstimee) <= tailleBox) {\n                nbRetests++;\n              }\n            }\n          }\n\n          if (nbRetests < minRetestsRequis) continue;\n          const qualiteNiveau = qualifierSoliditeNiveau(nbRetests);\n\n          const depassementHaut = colPrecedente.haut - resistanceEstimee;\n          const aCasseResistance = depassementHaut >= tailleBox && depassementHaut <= (4 * tailleBox);\n          const aReintegre = colActuelle.bas <= resistanceEstimee - tailleBox;\n\n          if (aCasseResistance && aReintegre) {\n            const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);\n            if (testVolume.valide) {\n              const bgSignal = bougies[colActuelle.indexFin];\n              const largeurRange = c - (c - colonnesMinRange - 1);\n              const cibleWyckoff = resistanceEstimee - (largeurRange * tailleBox * reversalCount);\n              const stopLoss = colPrecedente.haut + (tailleBox * 0.5);\n\n              signaux.push({\n                direction: 'vente',\n                type: 'UTAD Wyckoff P&F',\n                prixEntree: bgSignal.close,\n                stopLoss: stopLoss,\n                takeProfit: cibleWyckoff,\n                largeurCauseColonnes: largeurRange,\n                nbRetests: nbRetests,\n                qualiteNiveau: qualiteNiveau,\n                motifVolume: testVolume.motif,\n                temps: bgSignal.time\n              });\n\n              if (afficherRanges) {\n                boitesVisuelles.push({\n                  id: 'range-utad-' + c,\n                  prixHaut: resistanceEstimee,\n                  prixBas: minBas,\n                  dateDebut: colonnes[c - colonnesMinRange - 1].tempsDebut,\n                  dateFin: colActuelle.tempsFin,\n                  couleurFond: 'rgba(244, 67, 54, 0.08)',\n                  couleurBordure: 'rgba(244, 67, 54, 0.35)',\n                  label: 'Trading Range P&F'\n                });\n              }\n\n              if (afficherLignesNiveaux) {\n                lignesVisuelles.push({\n                  id: 'resistance-pf-' + c,\n                  prix: resistanceEstimee,\n                  dateDebut: colonnes[c - colonnesMinRange - 1].tempsDebut,\n                  dateFin: colActuelle.tempsFin,\n                  couleur: nbRetests >= 4 ? '#ff1744' : (nbRetests === 3 ? '#ef5350' : '#ff9100'),\n                  style: 'solid',\n                  epaisseur: nbRetests >= 4 ? 2.5 : (nbRetests === 3 ? 2 : 1.5),
+                  label: `Résistance (${nbRetests}x Tests - ${qualiteNiveau})`\n                });\n              }\n\n              boitesVisuelles.push({\n                id: 'utad-' + c,\n                prixHaut: colPrecedente.haut,\n                prixBas: resistanceEstimee,\n                dateDebut: colPrecedente.tempsDebut,\n                dateFin: colActuelle.tempsFin,\n                couleurFond: 'rgba(255, 23, 68, 0.25)',\n                couleurBordure: '#ff1744',\n                label: '🔴 UTAD'\n              });\n\n              if (afficherCiblesWyckoff) {\n                lignesVisuelles.push({\n                  id: 'cible-utad-' + c,\n                  prix: cibleWyckoff,\n                  dateDebut: colActuelle.tempsFin,\n                  couleur: '#ff5252',\n                  style: 'dashed',\n                  epaisseur: 1.5,\n                  label: `🎯 Cible Wyckoff (${largeurRange} cols)`\n                });\n              }\n\n              const tagQualite = nbRetests >= 4 ? ` [A+ ${nbRetests}T]` : ` [${nbRetests}T]`;\n              const tagVol = activerFiltreVolume ? ' Vol' : '';\n              labelsVisuels.push({\n                id: 'lbl-utad-' + c,\n                prix: bgSignal.high,\n                date: bgSignal.time,\n                texte: `▼ UTAD${tagQualite}${tagVol ? ' /' + tagVol : ''}`,\n                couleur: nbRetests >= 4 ? '#ff1744' : '#ef5350',\n                position: 'above'\n              });\n            }\n          }\n        }\n      }\n    }\n\n    return {\n      donnees: {\n        totalColonnesPF: colonnes.length,\n        tailleBoxCalculee: tailleBox,\n        modeVolumeActif: activerFiltreVolume,\n        signaux: signaux\n      },\n      primitives: {\n        boites: boitesVisuelles,\n        lignes: lignesVisuelles,\n        labels: labelsVisuels\n      },\n      typeSpecial: 'wyckoff-point-figure'\n    };\n  }\n};"
+}

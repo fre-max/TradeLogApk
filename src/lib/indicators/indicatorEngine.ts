@@ -19,11 +19,12 @@ import { calculerOverMitigationHighway } from './overMitigationHighway';
 import { calculerMethodeACompression } from './methodeACompressionRatio';
 import { calculerMethodeBOverlap } from './methodeBOverlapSurface';
 import { calculerMethodeCSlice } from './methodeCSliceDensity';
+import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
-const VERSION_CATALOGUE_INDICATEURS = '3.3.9';
+const VERSION_CATALOGUE_INDICATEURS = '3.4.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -2447,6 +2448,222 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-wyckoff-point-figure',
+    nom: 'Wyckoff Point & Figure (Spring & UTAD)',
+    description: 'Détecte les structures de Range, les Springs et les UTAD grâce au lissage géométrique Point & Figure (P&F), avec calcul de l\'objectif de Cause à Effet et filtre de volume institutionnel personnalisable.',
+    auteur: 'TradeLog AI / Wyckoff',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: false,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      modeTailleBox: 'auto_atr',
+      ratioBoxATR: 0.5,
+      tailleBoxPips: 10,
+      reversalCount: 3,
+      colonnesMinRange: 4,
+      minRetestsRequis: 2,
+      maxLookbackBars: 1000,
+      activerFiltreVolume: true,
+      typeValidationVolume: 'climax_ou_test',
+      seuilRatioVolume: 1.3,
+      periodeMoyenneVolume: 20,
+      activerSpring: true,
+      activerUTAD: true,
+      afficherRanges: true,
+      afficherLignesNiveaux: true,
+      afficherCiblesWyckoff: true,
+    },
+    definitionsVariables: [
+      {
+        cle: 'modeTailleBox',
+        label: 'Mode de Calcul de la Boîte (Box Size)',
+        description: 'Calcul automatique basé sur l\'ATR de volatilité ou taille fixe en pips',
+        type: 'select',
+        valeurParDefaut: 'auto_atr',
+        options: [
+          { label: 'Automatique (ATR Dynamique)', value: 'auto_atr' },
+          { label: 'Fixe (Pips définis manuellement)', value: 'fixe' },
+        ],
+        groupe: 'Configuration Point et Figure',
+      },
+      {
+        cle: 'ratioBoxATR',
+        label: 'Ratio ATR (si mode Auto)',
+        description: 'Fraction de l\'ATR utilisée pour dimensionner une boîte P&F (ex: 0.5 = 50% de l\'ATR)',
+        type: 'number',
+        valeurParDefaut: 0.5,
+        min: 0.1,
+        max: 2.0,
+        step: 0.1,
+        groupe: 'Configuration Point et Figure',
+      },
+      {
+        cle: 'tailleBoxPips',
+        label: 'Taille de Boîte Fixe (si mode Fixe)',
+        description: 'Taille d\'une boîte Point & Figure en pips',
+        type: 'number',
+        valeurParDefaut: 10,
+        min: 1,
+        max: 200,
+        step: 1,
+        groupe: 'Configuration Point et Figure',
+      },
+      {
+        cle: 'reversalCount',
+        label: 'Seuil de Retournement (Boîtes)',
+        description: 'Nombre de boîtes nécessaires pour changer de colonne (Standard Wyckoff = 3 boîtes)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 1,
+        max: 5,
+        step: 1,
+        groupe: 'Configuration Point et Figure',
+      },
+      {
+        cle: 'colonnesMinRange',
+        label: 'Largeur Minimale du Range (Colonnes P&F)',
+        description: 'Nombre minimum de colonnes P&F consécutives pour valider une phase de Range / Accumulation',
+        type: 'number',
+        valeurParDefaut: 4,
+        min: 2,
+        max: 20,
+        step: 1,
+        groupe: 'Structure du Range & Retests',
+      },
+      {
+        cle: 'minRetestsRequis',
+        label: 'Retests Minima Requis du Niveau (Touches)',
+        description: 'Nombre minimum de colonnes P&F distinctes ayant rebondi sur le support/résistance pour valider sa solidité (2 = Standard, 3 = Majeur, >=4 = Institutionnel A+)',
+        type: 'number',
+        valeurParDefaut: 2,
+        min: 1,
+        max: 8,
+        step: 1,
+        groupe: 'Structure du Range & Retests',
+      },
+      {
+        cle: 'maxLookbackBars',
+        label: 'Historique Analysé (Bougies)',
+        description: 'Nombre maximum de bougies récentes à convertir en colonnes Point et Figure',
+        type: 'number',
+        valeurParDefaut: 1000,
+        min: 100,
+        max: 3000,
+        step: 100,
+        groupe: 'Structure du Range & Retests',
+      },
+      {
+        cle: 'activerFiltreVolume',
+        label: 'Activer le Filtre de Volume Wyckoff',
+        description: 'Active la confirmation par le volume (Effort vs Résultat). Si désactivé, le setup est validé uniquement sur la géométrie P&F.',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre Volume Wyckoff (Optionnel)',
+      },
+      {
+        cle: 'typeValidationVolume',
+        label: 'Type d\'Analyse du Volume',
+        description: 'Règle de validation du volume requise lors du Spring / UTAD',
+        type: 'select',
+        valeurParDefaut: 'climax_ou_test',
+        options: [
+          { label: 'Absorption (Fort Climax) OU Assèchement (Faible Test)', value: 'climax_ou_test' },
+          { label: 'Uniquement Fort Volume d\'Absorption (Climax)', value: 'climax' },
+          { label: 'Uniquement Faible Volume d\'Épuisement (Test)', value: 'test' },
+        ],
+        groupe: 'Filtre Volume Wyckoff (Optionnel)',
+      },
+      {
+        cle: 'seuilRatioVolume',
+        label: 'Ratio Volume vs Moyenne',
+        description: 'Facteur multiplicateur du volume moyen pour qualifier un Climax ou un Test',
+        type: 'number',
+        valeurParDefaut: 1.3,
+        min: 1.0,
+        max: 4.0,
+        step: 0.1,
+        groupe: 'Filtre Volume Wyckoff (Optionnel)',
+      },
+      {
+        cle: 'periodeMoyenneVolume',
+        label: 'Période Moyenne de Volume',
+        description: 'Nombre de bougies pour calculer le volume moyen de référence',
+        type: 'number',
+        valeurParDefaut: 20,
+        min: 5,
+        max: 100,
+        step: 5,
+        groupe: 'Filtre Volume Wyckoff (Optionnel)',
+      },
+      {
+        cle: 'activerSpring',
+        label: 'Détecter les Springs (Achats)',
+        description: 'Active la détection des faux franchissements baissiers sous les supports de Range P&F',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Signaux',
+      },
+      {
+        cle: 'activerUTAD',
+        label: 'Détecter les UTAD (Ventes)',
+        description: 'Active la détection des Upthrusts haussiers au-dessus des résistances de Range P&F',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Signaux',
+      },
+      {
+        cle: 'afficherRanges',
+        label: 'Afficher les Boîtes de Trading Range',
+        description: 'Trace les zones rectangulaires délimitant les trading ranges P&F',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherLignesNiveaux',
+        label: 'Afficher les Lignes S/R avec Compteur de Retests',
+        description: 'Trace les niveaux horizontaux de supports/résistances avec indication de la force et du nombre de retests',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+      {
+        cle: 'afficherCiblesWyckoff',
+        label: 'Projeter les Cibles de Cause à Effet',
+        description: 'Trace les lignes horizontales d\'objectifs de prix calculés selon le comptage horizontal Wyckoff',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage Graphique',
+      },
+    ],
+    creeLe: '2026-10-07T00:00:00.000Z',
+    misAJourLe: '2026-10-07T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Wyckoff Point & Figure (Spring & UTAD)
+ * Combine le filtrage de bruit Point & Figure, la détection des Springs / UTAD
+ * et un filtre de volume institutionnel débrayable.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 50) return { donnees: {}, primitives: {} };
+
+    const res = calculerWyckoffPointAndFigure(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: {
+        boites: res.boites,
+        lignes: res.lignes,
+        labels: res.labels
+      },
+      typeSpecial: 'wyckoff-point-figure'
+    };
+  }
+};`
   }
 ];
 
@@ -2553,6 +2770,8 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerFractalLtfEntry(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerSweepSpringValidation')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSweepSpringValidation(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerWyckoffPointAndFigure')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerWyckoffPointAndFigure(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeSRTL')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerDetectionLiquiditeSRTL(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeEQ')) {
@@ -2725,6 +2944,7 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerMoneyManagementRules',
       'calculerMtfConductor',
       'calculerCompleteSetupVisualizer',
+      'calculerWyckoffPointAndFigure',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -2766,7 +2986,8 @@ export function evaluerIndicateurScript(
       calculerFractalLtfEntry,
       calculerMoneyManagementRules,
       calculerMtfConductor,
-      calculerCompleteSetupVisualizer
+      calculerCompleteSetupVisualizer,
+      calculerWyckoffPointAndFigure
     );
 
     // 2️⃣ Si le script expose une méthode calculer()
