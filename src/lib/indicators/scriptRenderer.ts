@@ -260,7 +260,8 @@ function dessinerLigneStructure(
 }
 
 /**
- * Dessine une étiquette textuelle (ex: HH, HL, signal)
+ * Dessine une étiquette textuelle (ex: HH, HL, signaux, figures en chandeliers)
+ * Supporte automatiquement les textes multi-lignes séparés par \n (ex: "Bearish\nHarami")
  */
 function dessinerEtiquetteLabel(
   ctx: CanvasRenderingContext2D,
@@ -274,21 +275,40 @@ function dessinerEtiquetteLabel(
 
   if (x === null || y === null) return;
 
+  const texte = String(label.texte || '');
+  const lignes = texte.split('\n');
   const estAuDessus = label.position !== 'below';
-  const yCible = estAuDessus ? y - 12 : y + 16;
 
   ctx.font = 'bold 9.5px monospace';
-  const largeurTexte = ctx.measureText(label.texte).width;
+  const hauteurLigne = 11;
+  const totalHauteur = lignes.length * hauteurLigne;
+
+  // Calcul de la largeur maximale parmi toutes les lignes du label
+  let largeurMax = 0;
+  for (const ligne of lignes) {
+    const w = ctx.measureText(ligne).width;
+    if (w > largeurMax) largeurMax = w;
+  }
+
+  // Détermination de la position verticale Y
+  const yDepart = estAuDessus
+    ? y - 10 - totalHauteur + hauteurLigne
+    : y + 16;
 
   // Fond du badge (si spécifié)
   if (label.couleurFond) {
     ctx.fillStyle = label.couleurFond;
-    ctx.fillRect(x - largeurTexte / 2 - 3, yCible - 8, largeurTexte + 6, 12);
+    const yFond = estAuDessus ? y - 10 - totalHauteur : y + 6;
+    ctx.fillRect(x - largeurMax / 2 - 3, yFond, largeurMax + 6, totalHauteur + 4);
   }
 
-  // Texte
+  // Dessin de chaque ligne de texte centrée
   ctx.fillStyle = label.couleur || '#ffffff';
-  ctx.fillText(label.texte, x - largeurTexte / 2, yCible);
+  for (let idx = 0; idx < lignes.length; idx++) {
+    const ligne = lignes[idx];
+    const w = ctx.measureText(ligne).width;
+    ctx.fillText(ligne, x - w / 2, yDepart + idx * hauteurLigne);
+  }
 }
 
 /**

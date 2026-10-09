@@ -20,11 +20,13 @@ import { calculerMethodeACompression } from './methodeACompressionRatio';
 import { calculerMethodeBOverlap } from './methodeBOverlapSurface';
 import { calculerMethodeCSlice } from './methodeCSliceDensity';
 import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
+import { calculerFractalZigZag } from './fractalZigZag';
+import { calculerCandlestickPatterns } from './candlestickPatterns';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
-const VERSION_CATALOGUE_INDICATEURS = '3.4.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.6.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -2471,6 +2473,11 @@ return {
       typeValidationVolume: 'climax_ou_test',
       seuilRatioVolume: 1.3,
       periodeMoyenneVolume: 20,
+      activerFiltreGrandesBougies: true,
+      multiplicateurTailleATR: 1.3,
+      exigerRetourSuperieurOuEgal: true,
+      maxBougiesHorsRange: 3,
+      ratioMecheRejetSimple: 0.40,
       activerSpring: true,
       activerUTAD: true,
       afficherRanges: true,
@@ -2600,6 +2607,55 @@ return {
         groupe: 'Filtre Volume Wyckoff (Optionnel)',
       },
       {
+        cle: 'activerFiltreGrandesBougies',
+        label: 'Activer le Filtre Grandes Bougies (V-Shape & Pinbar)',
+        description: 'Exige que le Spring / UTAD soit formé de grandes bougies dynamiques ou d\'un rejet Pinbar violent',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre Grandes Bougies & V-Shape',
+      },
+      {
+        cle: 'multiplicateurTailleATR',
+        label: 'Seuil Multiplicateur ATR (Taille Totale)',
+        description: 'Multiplicateur de l\'ATR pour qualifier une bougie de "Grande" (High - Low)',
+        type: 'number',
+        valeurParDefaut: 1.3,
+        min: 1.0,
+        max: 3.0,
+        step: 0.1,
+        groupe: 'Filtre Grandes Bougies & V-Shape',
+      },
+      {
+        cle: 'exigerRetourSuperieurOuEgal',
+        label: 'Exiger Bougie Retour >= Liquidation',
+        description: 'En cas de V-Shape en 2/3 bougies, la bougie de réintégration doit être au moins aussi grande que la bougie de sortie',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre Grandes Bougies & V-Shape',
+      },
+      {
+        cle: 'maxBougiesHorsRange',
+        label: 'Rapidité Maximale (Bougies Hors Range)',
+        description: 'Nombre maximum de bougies tolérées en dehors du range avant réintégration',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 1,
+        max: 6,
+        step: 1,
+        groupe: 'Filtre Grandes Bougies & V-Shape',
+      },
+      {
+        cle: 'ratioMecheRejetSimple',
+        label: 'Ratio Mèche Rejet (Pinbar 1 Bougie)',
+        description: 'Pour un Spring/UTAD en 1 bougie seule, fraction minimale de la bougie constituée par la mèche de rejet',
+        type: 'number',
+        valeurParDefaut: 0.40,
+        min: 0.25,
+        max: 0.80,
+        step: 0.05,
+        groupe: 'Filtre Grandes Bougies & V-Shape',
+      },
+      {
         cle: 'activerSpring',
         label: 'Détecter les Springs (Achats)',
         description: 'Active la détection des faux franchissements baissiers sous les supports de Range P&F',
@@ -2661,6 +2717,396 @@ return {
         labels: res.labels
       },
       typeSpecial: 'wyckoff-point-figure'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-fractal-zigzag',
+    nom: 'ZigZag Fractal Multi-Niveaux (Multi-Depth)',
+    description: 'Imbrique 3 échelles de ZigZag (Macro, Intermédiaire, Micro) pour décomposer les vagues fractales, mesurer la confluence 3/3 et détecter les essoufflements précoces.',
+    auteur: 'TradeLog AI / SMC',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: false,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      profondeurMacro: 21,
+      profondeurIntermediaire: 8,
+      profondeurMicro: 3,
+      lookbackBars: 600,
+      afficherLignesMacro: true,
+      afficherLignesIntermediaires: true,
+      afficherLignesMicro: true,
+      afficherLabelsMacro: true,
+      afficherAlerteRetournement: true,
+      afficherBadgeConfluence: true,
+    },
+    definitionsVariables: [
+      {
+        cle: 'profondeurMacro',
+        label: 'Profondeur Vague Macro (HTF)',
+        description: 'Sensibilité du ZigZag majeur définissant la grande orientation (défaut: 21)',
+        type: 'number',
+        valeurParDefaut: 21,
+        min: 10,
+        max: 60,
+        step: 1,
+        groupe: 'Échelles Fractales',
+      },
+      {
+        cle: 'profondeurIntermediaire',
+        label: 'Profondeur Vague Intermédiaire (MTF)',
+        description: 'Sensibilité des sous-vagues de respiration et de swing (défaut: 8)',
+        type: 'number',
+        valeurParDefaut: 8,
+        min: 5,
+        max: 25,
+        step: 1,
+        groupe: 'Échelles Fractales',
+      },
+      {
+        cle: 'profondeurMicro',
+        label: 'Profondeur Micro-Vague (LTF)',
+        description: 'Sensibilité de la micro-structure et des cassures internes (défaut: 3)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 2,
+        max: 10,
+        step: 1,
+        groupe: 'Échelles Fractales',
+      },
+      {
+        cle: 'lookbackBars',
+        label: 'Historique de Bougies Analysé',
+        description: 'Nombre de bougies récentes prises en compte pour le calcul',
+        type: 'number',
+        valeurParDefaut: 600,
+        min: 100,
+        max: 2000,
+        step: 50,
+        groupe: 'Échelles Fractales',
+      },
+      {
+        cle: 'afficherLignesMacro',
+        label: 'Afficher la Ligne Macro (Or Épais)',
+        description: 'Trace la grande vague directrice sur le graphique',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage des Vagues',
+      },
+      {
+        cle: 'afficherLignesIntermediaires',
+        label: 'Afficher les Lignes Intermédiaires (Bleu)',
+        description: 'Trace les vagues secondaires de swing',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage des Vagues',
+      },
+      {
+        cle: 'afficherLignesMicro',
+        label: 'Afficher les Lignes Micro (Cyan Pointillé)',
+        description: 'Trace les micro-impulsions et respirations internes',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Affichage des Vagues',
+      },
+      {
+        cle: 'afficherLabelsMacro',
+        label: 'Afficher les Labels HH / LL Macro',
+        description: 'Indique les sommets et creux majeurs de la structure',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Analyses & Alertes',
+      },
+      {
+        cle: 'afficherAlerteRetournement',
+        label: 'Alerte Retournement Précoce (Micro CHoCH)',
+        description: 'Alerte visuelle lorsque la micro-structure casse à contre-sens de la grande vague macro',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Analyses & Alertes',
+      },
+      {
+        cle: 'afficherBadgeConfluence',
+        label: 'Afficher le Badge de Confluence (3/3)',
+        description: 'Affiche un badge de synthèse des 3 niveaux sur la dernière bougie',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Analyses & Alertes',
+      },
+    ],
+    creeLe: '2026-10-08T00:00:00.000Z',
+    misAJourLe: '2026-10-08T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : ZigZag Fractal Multi-Niveaux
+ * Superpose 3 niveaux fractals de vagues pour visualiser l'imbrication du marché.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 40) return { donnees: {}, primitives: {} };
+
+    const res = calculerFractalZigZag(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: {
+        boites: res.boites,
+        lignes: res.lignes,
+        labels: res.labels
+      },
+      typeSpecial: 'fractal-zigzag'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-candlestick-patterns-repo32',
+    nom: 'Candlesticks Patterns Identified (repo32)',
+    description: 'Détection automatique de 15 figures en chandeliers japonais (Doji, Engulfing, Harami, Hammer...) + motif exclusif Liquidation & Réintégration (Liq\\nReint) proportionnel.',
+    auteur: 'repo32 / TradeLog',
+    version: '1.17.26',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      dojiSize: 0.05,
+      activerFiltreTendance: false,
+      trendBars: 5,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      dojiColor: '#FFFFFF',
+      activerDoji: true,
+      activerBearishHarami: true,
+      activerBullishHarami: true,
+      activerBearishEngulfing: true,
+      activerBullishEngulfing: true,
+      activerPiercingLine: true,
+      activerBullishBelt: true,
+      activerBullishKicker: true,
+      activerBearishKicker: true,
+      activerHangingMan: true,
+      activerEveningStar: true,
+      activerMorningStar: true,
+      activerShootingStar: true,
+      activerHammer: true,
+      activerInvertedHammer: true,
+      activerLiqReint: true,
+      toleranceLiqReint: 0.05,
+    },
+    definitionsVariables: [
+      {
+        cle: 'dojiSize',
+        label: 'Taille Relative du Doji',
+        description: 'Proportion maximale du corps par rapport à la hauteur totale (0.05 = 5%)',
+        type: 'number',
+        valeurParDefaut: 0.05,
+        min: 0.01,
+        max: 0.20,
+        step: 0.01,
+        groupe: 'Sensibilité & Tendance',
+      },
+      {
+        cle: 'toleranceLiqReint',
+        label: 'Tolérance Liq/Reint (Proportionnelle)',
+        description: 'Marge maximale d\'écart entre Open(1) et Close(2) par rapport à la taille moyenne des 2 bougies (0.05 = 5%)',
+        type: 'number',
+        valeurParDefaut: 0.05,
+        min: 0.01,
+        max: 0.20,
+        step: 0.01,
+        groupe: 'Sensibilité & Tendance',
+      },
+      {
+        cle: 'activerFiltreTendance',
+        label: 'Activer le Filtre de Tendance',
+        description: 'Filtre les motifs selon la tendance précédente des barres (désactivé par défaut comme dans la mise à jour 1-17-26 pour voir tous les motifs)',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Sensibilité & Tendance',
+      },
+      {
+        cle: 'trendBars',
+        label: 'Nombre de Barres de Tendance',
+        description: 'Nombre de bougies pour estimer la tendance précédente si le filtre est activé',
+        type: 'number',
+        valeurParDefaut: 5,
+        min: 1,
+        max: 50,
+        step: 1,
+        groupe: 'Sensibilité & Tendance',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur des Motifs Haussiers',
+        description: 'Couleur des étiquettes haussières (Engulfing, Harami, Hammer, Morning Star...)',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Couleurs & Style',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur des Motifs Baissiers',
+        description: 'Couleur des étiquettes baissières (Engulfing, Harami, Hanging Man, Evening Star...)',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Couleurs & Style',
+      },
+      {
+        cle: 'dojiColor',
+        label: 'Couleur du Doji',
+        description: 'Couleur de l\'étiquette pour les bougies Doji',
+        type: 'string',
+        valeurParDefaut: '#FFFFFF',
+        groupe: 'Couleurs & Style',
+      },
+      {
+        cle: 'activerDoji',
+        label: 'Détecter les Doji',
+        description: 'Affiche les Dojis sur le graphique',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerBullishEngulfing',
+        label: 'Bullish Engulfing (Avalement Haussier)',
+        description: 'Affiche les avalements haussiers',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerBearishEngulfing',
+        label: 'Bearish Engulfing (Avalement Baissier)',
+        description: 'Affiche les avalements baissiers',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerBullishHarami',
+        label: 'Bullish Harami (Harami Haussier)',
+        description: 'Affiche les haramis haussiers',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerBearishHarami',
+        label: 'Bearish Harami (Harami Baissier)',
+        description: 'Affiche les haramis baissiers',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerHammer',
+        label: 'Hammer (Marteau "H")',
+        description: 'Affiche les marteaux haussiers avec le label "H"',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerInvertedHammer',
+        label: 'Inverted Hammer (Marteau Inversé "IH")',
+        description: 'Affiche les marteaux inversés avec le label "IH"',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerMorningStar',
+        label: 'Morning Star (Étoile du Matin)',
+        description: 'Affiche les étoiles du matin sur 3 bougies',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerEveningStar',
+        label: 'Evening Star (Étoile du Soir)',
+        description: 'Affiche les étoiles du soir sur 3 bougies',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerShootingStar',
+        label: 'Shooting Star (Étoile Filante)',
+        description: 'Affiche les étoiles filantes baissières',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerHangingMan',
+        label: 'Hanging Man (Pendu)',
+        description: 'Affiche les pendus baissiers',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerPiercingLine',
+        label: 'Piercing Line (Pénétrante Haussière)',
+        description: 'Affiche les lignes pénétrantes',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerBullishBelt',
+        label: 'Bullish Belt (Ceinture Haussière)',
+        description: 'Affiche les ceintures haussières (Belt Hold)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerBullishKicker',
+        label: 'Bullish Kicker',
+        description: 'Affiche les kickers haussiers',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerBearishKicker',
+        label: 'Bearish Kicker',
+        description: 'Affiche les kickers baissiers',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+      {
+        cle: 'activerLiqReint',
+        label: 'Liquidation & Réintégration (Liq\\nReint)',
+        description: 'Détecte le pattern à 2 bougies : sweep extrême puis réintégration avec Close(2) ≈ Open(1)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Sélection des Motifs',
+      },
+    ],
+    creeLe: '2026-10-09T00:00:00.000Z',
+    misAJourLe: '2026-10-09T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Candlesticks Patterns Identified (repo32)
+ * Détecte les 15 figures en chandeliers japonais selon le script TradingView de repo32.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 2) return { donnees: {}, primitives: {} };
+
+    const res = calculerCandlestickPatterns(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'candlestick-patterns'
     };
   }
 };`
@@ -2772,6 +3218,10 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSweepSpringValidation(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerWyckoffPointAndFigure')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerWyckoffPointAndFigure(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerFractalZigZag')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerFractalZigZag(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerCandlestickPatterns')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerCandlestickPatterns(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeSRTL')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerDetectionLiquiditeSRTL(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeEQ')) {
@@ -2945,6 +3395,8 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerMtfConductor',
       'calculerCompleteSetupVisualizer',
       'calculerWyckoffPointAndFigure',
+      'calculerFractalZigZag',
+      'calculerCandlestickPatterns',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -2987,7 +3439,9 @@ export function evaluerIndicateurScript(
       calculerMoneyManagementRules,
       calculerMtfConductor,
       calculerCompleteSetupVisualizer,
-      calculerWyckoffPointAndFigure
+      calculerWyckoffPointAndFigure,
+      calculerFractalZigZag,
+      calculerCandlestickPatterns
     );
 
     // 2️⃣ Si le script expose une méthode calculer()

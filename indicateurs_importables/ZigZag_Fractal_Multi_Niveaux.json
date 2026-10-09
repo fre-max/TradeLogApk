@@ -1,0 +1,114 @@
+{
+  "nom": "ZigZag Fractal Multi-Niveaux (Multi-Depth)",
+  "description": "Imbrique 3 échelles de ZigZag (Macro 21, Intermédiaire 8, Micro 3) pour décomposer les vagues fractales, évaluer la confluence de tendance 3/3 et détecter les essoufflements précoces (Micro CHoCH).",
+  "auteur": "TradeLog AI / SMC",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "profondeurMacro": 21,
+    "profondeurIntermediaire": 8,
+    "profondeurMicro": 3,
+    "lookbackBars": 600,
+    "afficherLignesMacro": true,
+    "afficherLignesIntermediaires": true,
+    "afficherLignesMicro": true,
+    "afficherLabelsMacro": true,
+    "afficherAlerteRetournement": true,
+    "afficherBadgeConfluence": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "profondeurMacro",
+      "label": "Profondeur Vague Macro (HTF)",
+      "description": "Sensibilité du ZigZag majeur définissant la grande orientation (défaut: 21)",
+      "type": "number",
+      "valeurParDefaut": 21,
+      "min": 10,
+      "max": 60,
+      "step": 1,
+      "groupe": "Échelles Fractales"
+    },
+    {
+      "cle": "profondeurIntermediaire",
+      "label": "Profondeur Vague Intermédiaire (MTF)",
+      "description": "Sensibilité des sous-vagues de respiration et de swing (défaut: 8)",
+      "type": "number",
+      "valeurParDefaut": 8,
+      "min": 5,
+      "max": 25,
+      "step": 1,
+      "groupe": "Échelles Fractales"
+    },
+    {
+      "cle": "profondeurMicro",
+      "label": "Profondeur Micro-Vague (LTF)",
+      "description": "Sensibilité de la micro-structure et des cassures internes (défaut: 3)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 2,
+      "max": 10,
+      "step": 1,
+      "groupe": "Échelles Fractales"
+    },
+    {
+      "cle": "lookbackBars",
+      "label": "Historique de Bougies Analysé",
+      "description": "Nombre de bougies récentes prises en compte pour le calcul",
+      "type": "number",
+      "valeurParDefaut": 600,
+      "min": 100,
+      "max": 2000,
+      "step": 50,
+      "groupe": "Échelles Fractales"
+    },
+    {
+      "cle": "afficherLignesMacro",
+      "label": "Afficher la Ligne Macro (Or Épais)",
+      "description": "Trace la grande vague directrice sur le graphique",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage des Vagues"
+    },
+    {
+      "cle": "afficherLignesIntermediaires",
+      "label": "Afficher les Lignes Intermédiaires (Bleu)",
+      "description": "Trace les vagues secondaires de swing",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage des Vagues"
+    },
+    {
+      "cle": "afficherLignesMicro",
+      "label": "Afficher les Lignes Micro (Cyan Pointillé)",
+      "description": "Trace les micro-impulsions et respirations internes",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage des Vagues"
+    },
+    {
+      "cle": "afficherLabelsMacro",
+      "label": "Afficher les Labels HH / LL Macro",
+      "description": "Indique les sommets et creux majeurs de la structure",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Analyses & Alertes"
+    },
+    {
+      "cle": "afficherAlerteRetournement",
+      "label": "Alerte Retournement Précoce (Micro CHoCH)",
+      "description": "Alerte visuelle lorsque la micro-structure casse à contre-sens de la grande vague macro",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Analyses & Alertes"
+    },
+    {
+      "cle": "afficherBadgeConfluence",
+      "label": "Afficher le Badge de Confluence (3/3)",
+      "description": "Affiche un badge de synthèse des 3 niveaux sur la dernière bougie",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Analyses & Alertes"
+    }
+  ],
+  "code": "return {\n  calculer: function (contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 40) {\n      return { donnees: {}, primitives: { boites: [], lignes: [], labels: [] } };\n    }\n\n    const params = parametres || {};\n    const profMacro = Number(params.profondeurMacro || 21);\n    const profInter = Number(params.profondeurIntermediaire || 8);\n    const profMicro = Number(params.profondeurMicro || 3);\n    const lookback = Number(params.lookbackBars || 600);\n\n    const afficherMacro = params.afficherLignesMacro !== false;\n    const afficherInter = params.afficherLignesIntermediaires !== false;\n    const afficherMicro = params.afficherLignesMicro !== false;\n    const afficherLabels = params.afficherLabelsMacro !== false;\n    const afficherAlertes = params.afficherAlerteRetournement !== false;\n    const afficherBadge = params.afficherBadgeConfluence !== false;\n\n    function extrairePivots(bars, depth, startIdx, endIdx) {\n      const pivotsBruts = [];\n      for (let i = startIdx; i <= endIdx; i++) {\n        let estHaut = true;\n        let estBas = true;\n        const hRef = bars[i].high;\n        const lRef = bars[i].low;\n\n        for (let j = 1; j <= depth; j++) {\n          if (i - j < 0 || i + j >= bars.length) continue;\n          if (hRef <= bars[i - j].high || hRef < bars[i + j].high) estHaut = false;\n          if (lRef >= bars[i - j].low || lRef > bars[i + j].low) estBas = false;\n        }\n\n        if (estHaut) {\n          pivotsBruts.push({ prix: hRef, temps: bars[i].time, index: i, estHaut: true });\n        } else if (estBas) {\n          pivotsBruts.push({ prix: lRef, temps: bars[i].time, index: i, estHaut: false });\n        }\n      }\n\n      if (pivotsBruts.length === 0) return [];\n\n      const pivotsAlternes = [pivotsBruts[0]];\n      for (let i = 1; i < pivotsBruts.length; i++) {\n        const dernier = pivotsAlternes[pivotsAlternes.length - 1];\n        const courant = pivotsBruts[i];\n\n        if (courant.estHaut === dernier.estHaut) {\n          if (courant.estHaut && courant.prix > dernier.prix) {\n            pivotsAlternes[pivotsAlternes.length - 1] = courant;\n          } else if (!courant.estHaut && courant.prix < dernier.prix) {\n            pivotsAlternes[pivotsAlternes.length - 1] = courant;\n          }\n        } else {\n          pivotsAlternes.push(courant);\n        }\n      }\n\n      for (let i = 2; i < pivotsAlternes.length; i++) {\n        const p = pivotsAlternes[i];\n        const pPrec = pivotsAlternes[i - 2];\n        if (p.estHaut) {\n          p.labelSMC = p.prix >= pPrec.prix ? 'HH' : 'LH';\n        } else {\n          p.labelSMC = p.prix >= pPrec.prix ? 'HL' : 'LL';\n        }\n      }\n\n      return pivotsAlternes;\n    }\n\n    function determinerTendance(pivots) {\n      if (pivots.length < 3) return 'NEUTRE';\n      const sommets = pivots.filter(function (p) { return p.estHaut; });\n      const creux = pivots.filter(function (p) { return !p.estHaut; });\n\n      if (sommets.length < 2 || creux.length < 2) return 'NEUTRE';\n      const derS = sommets[sommets.length - 1];\n      const avS = sommets[sommets.length - 2];\n      const derC = creux[creux.length - 1];\n      const avC = creux[creux.length - 2];\n\n      if (derS.prix > avS.prix && derC.prix > avC.prix) return 'BULLISH';\n      if (derS.prix < avS.prix && derC.prix < avC.prix) return 'BEARISH';\n      return 'NEUTRE';\n    }\n\n    const total = bougies.length;\n    const debutIndex = Math.max(profMacro, total - lookback);\n    const finIndex = total - 1;\n\n    const pivotsMacro = extrairePivots(bougies, profMacro, debutIndex, finIndex - profMacro);\n    const pivotsInter = extrairePivots(bougies, profInter, debutIndex, finIndex - profInter);\n    const pivotsMicro = extrairePivots(bougies, profMicro, debutIndex, finIndex - profMicro);\n\n    const tMacro = determinerTendance(pivotsMacro);\n    const tInter = determinerTendance(pivotsInter);\n    const tMicro = determinerTendance(pivotsMicro);\n\n    let directionJambeMacro = 'neutre';\n    let nbSousVagues = 0;\n\n    if (pivotsMacro.length > 0) {\n      const dernierMacro = pivotsMacro[pivotsMacro.length - 1];\n      directionJambeMacro = dernierMacro.estHaut ? 'baissiere' : 'haussiere';\n      const microDepuisMacro = pivotsMicro.filter(function (p) { return p.index >= dernierMacro.index; });\n      nbSousVagues = Math.max(0, microDepuisMacro.length - 1);\n    }\n\n    let alerteRetournement = null;\n    if (directionJambeMacro === 'haussiere' && pivotsMicro.length >= 2) {\n      const derMicro = pivotsMicro[pivotsMicro.length - 1];\n      if (!derMicro.estHaut && derMicro.labelSMC === 'LL') {\n        alerteRetournement = 'Micro CHoCH Baissier (Début Pullback / Essoufflement)';\n      }\n    } else if (directionJambeMacro === 'baissiere' && pivotsMicro.length >= 2) {\n      const derMicro = pivotsMicro[pivotsMicro.length - 1];\n      if (derMicro.estHaut && derMicro.labelSMC === 'HH') {\n        alerteRetournement = 'Micro CHoCH Haussier (Rebond / Fin de vague baissière)';\n      }\n    }\n\n    let scoreAlignement = 1;\n    let diagnostic = 'Divergence des structures';\n    if (tMacro === 'BULLISH' && tInter === 'BULLISH' && tMicro === 'BULLISH') {\n      scoreAlignement = 3;\n      diagnostic = '🟢 ALIGNEMENT TOTAL HAUSSIER (3/3)';\n    } else if (tMacro === 'BEARISH' && tInter === 'BEARISH' && tMicro === 'BEARISH') {\n      scoreAlignement = 3;\n      diagnostic = '🔴 ALIGNEMENT TOTAL BAISSIER (3/3)';\n    } else if (tMacro === 'BULLISH' && (tInter === 'BEARISH' || tMicro === 'BEARISH')) {\n      scoreAlignement = 2;\n      diagnostic = '🟡 PULLBACK DANS TENDANCE HAUSSIÈRE';\n    } else if (tMacro === 'BEARISH' && (tInter === 'BULLISH' || tMicro === 'BULLISH')) {\n      scoreAlignement = 2;\n      diagnostic = '🟡 REBOND DANS TENDANCE BAISSIÈRE';\n    }\n\n    const lignes = [];\n    const labels = [];\n\n    if (afficherMacro && pivotsMacro.length > 1) {\n      for (let i = 0; i < pivotsMacro.length - 1; i++) {\n        const p1 = pivotsMacro[i];\n        const p2 = pivotsMacro[i + 1];\n        lignes.push({\n          id: 'macro-leg-' + i,\n          prix: p1.prix,\n          prixFin: p2.prix,\n          dateDebut: p1.temps,\n          dateFin: p2.temps,\n          couleur: '#f59e0b',\n          epaisseur: 2.8,\n          style: 'solid'\n        });\n      }\n      const derMacro = pivotsMacro[pivotsMacro.length - 1];\n      const derBar = bougies[bougies.length - 1];\n      lignes.push({\n        id: 'macro-leg-courante',\n        prix: derMacro.prix,\n        prixFin: derMacro.estHaut ? derBar.low : derBar.high,\n        dateDebut: derMacro.temps,\n        dateFin: derBar.time,\n        couleur: '#f59e0b',\n        epaisseur: 2.8,\n        style: 'dashed'\n      });\n      if (afficherLabels) {\n        for (let i = 0; i < pivotsMacro.length; i++) {\n          const pm = pivotsMacro[i];\n          if (!pm.labelSMC) continue;\n          labels.push({\n            id: 'lbl-macro-' + pm.index,\n            prix: pm.prix,\n            date: pm.temps,\n            texte: '[M] ' + pm.labelSMC,\n            couleur: pm.estHaut ? '#f59e0b' : '#fbbf24',\n            position: pm.estHaut ? 'above' : 'below'\n          });\n        }\n      }\n    }\n\n    if (afficherInter && pivotsInter.length > 1) {\n      for (let i = 0; i < pivotsInter.length - 1; i++) {\n        const p1 = pivotsInter[i];\n        const p2 = pivotsInter[i + 1];\n        lignes.push({\n          id: 'inter-leg-' + i,\n          prix: p1.prix,\n          prixFin: p2.prix,\n          dateDebut: p1.temps,\n          dateFin: p2.temps,\n          couleur: '#3b82f6',\n          epaisseur: 1.8,\n          style: 'solid'\n        });\n      }\n      const derInter = pivotsInter[pivotsInter.length - 1];\n      const derBar = bougies[bougies.length - 1];\n      lignes.push({\n        id: 'inter-leg-courante',\n        prix: derInter.prix,\n        prixFin: derInter.estHaut ? derBar.low : derBar.high,\n        dateDebut: derInter.temps,\n        dateFin: derBar.time,\n        couleur: '#3b82f6',\n        epaisseur: 1.8,\n        style: 'dashed'\n      });\n    }\n\n    if (afficherMicro && pivotsMicro.length > 1) {\n      for (let i = 0; i < pivotsMicro.length - 1; i++) {\n        const p1 = pivotsMicro[i];\n        const p2 = pivotsMicro[i + 1];\n        lignes.push({\n          id: 'micro-leg-' + i,\n          prix: p1.prix,\n          prixFin: p2.prix,\n          dateDebut: p1.temps,\n          dateFin: p2.temps,\n          couleur: 'rgba(6, 182, 212, 0.65)',\n          epaisseur: 1.0,\n          style: 'dotted'\n        });\n      }\n    }\n\n    if (afficherAlertes && alerteRetournement && pivotsMicro.length > 0) {\n      const derMicro = pivotsMicro[pivotsMicro.length - 1];\n      labels.push({\n        id: 'alerte-choch-interne',\n        prix: derMicro.prix,\n        date: derMicro.temps,\n        texte: directionJambeMacro === 'haussiere' ? '⚠️ CHoCH Interne ▼' : '⚠️ CHoCH Interne ▲',\n        couleur: directionJambeMacro === 'haussiere' ? '#f43f5e' : '#10b981',\n        position: directionJambeMacro === 'haussiere' ? 'above' : 'below'\n      });\n    }\n\n    if (afficherBadge && bougies.length > 0) {\n      const derB = bougies[bougies.length - 1];\n      const icMacro = tMacro === 'BULLISH' ? '🟢' : tMacro === 'BEARISH' ? '🔴' : '⚪';\n      const icInter = tInter === 'BULLISH' ? '🟢' : tInter === 'BEARISH' ? '🔴' : '⚪';\n      const icMicro = tMicro === 'BULLISH' ? '🟢' : tMicro === 'BEARISH' ? '🔴' : '⚪';\n      labels.push({\n        id: 'badge-confluence-fractale',\n        prix: derB.close,\n        date: derB.time,\n        texte: 'FRACTAL [' + icMacro + icInter + icMicro + '] ' + nbSousVagues + 'v',\n        couleur: scoreAlignement === 3 ? '#10b981' : scoreAlignement === 2 ? '#f59e0b' : '#94a3b8',\n        position: 'above'\n      });\n    }\n\n    return {\n      donnees: {\n        scoreAlignement: scoreAlignement,\n        diagnostic: diagnostic,\n        directionJambeMacro: directionJambeMacro,\n        nbSousVagues: nbSousVagues,\n        alerteRetournement: alerteRetournement,\n        tendanceMacro: tMacro,\n        tendanceIntermediaire: tInter,\n        tendanceMicro: tMicro\n      },\n      primitives: {\n        boites: [],\n        lignes: lignes,\n        labels: labels\n      },\n      typeSpecial: 'fractal-zigzag'\n    };\n  }\n};"
+}

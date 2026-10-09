@@ -18,6 +18,12 @@ export interface OptionsWyckoffPointFigure {
   typeValidationVolume?: 'climax' | 'test' | 'climax_ou_test';
   seuilRatioVolume?: number;
   periodeMoyenneVolume?: number;
+  // Options du filtre de Grandes Bougies & V-Shape Reversal (Signature Institutionnelle)
+  activerFiltreGrandesBougies?: boolean;
+  multiplicateurTailleATR?: number;
+  exigerRetourSuperieurOuEgal?: boolean;
+  maxBougiesHorsRange?: number;
+  ratioMecheRejetSimple?: number;
   // Filtres de direction et d'affichage
   activerSpring?: boolean;
   activerUTAD?: boolean;
@@ -39,6 +45,9 @@ export interface SignalWyckoffPF {
   nbRetests: number;
   qualiteNiveau: string;
   motifVolume: string;
+  patternBougie?: string;
+  motifBougie?: string;
+  ratioForceRetour?: number;
   temps: number | string;
 }
 
@@ -111,6 +120,13 @@ export function calculerWyckoffPointAndFigure(
   const typeValidationVolume = options.typeValidationVolume || 'climax_ou_test';
   const seuilRatioVolume = options.seuilRatioVolume ?? 1.3;
   const periodeMoyenneVolume = options.periodeMoyenneVolume ?? 20;
+
+  // Options du filtre de Grandes Bougies & V-Shape Reversal
+  const activerFiltreGrandesBougies = options.activerFiltreGrandesBougies !== false;
+  const multiplicateurTailleATR = options.multiplicateurTailleATR ?? 1.3;
+  const exigerRetourSuperieurOuEgal = options.exigerRetourSuperieurOuEgal !== false;
+  const maxBougiesHorsRange = options.maxBougiesHorsRange ?? 3;
+  const ratioMecheRejetSimple = options.ratioMecheRejetSimple ?? 0.40;
 
   // Options d'affichage
   const activerSpring = options.activerSpring !== false;
@@ -289,7 +305,265 @@ export function calculerWyckoffPointAndFigure(
     return 'Faible';
   }
 
-  // 6️⃣ Détection des Trading Ranges, des Springs et des UTAD
+  // 6️⃣ Validation chirurgicale des Grandes Bougies (Taille totale, Pinbar et V-Shape Reversal)
+  interface ValidationBougieResult {
+    valide: boolean;
+    motif: string;
+    pattern: string;
+    tailleSortie: number;
+    tailleRetour: number;
+    ratioForce: number;
+  }
+
+  function verifierGrandesBougiesWyckoff(
+    type: 'spring' | 'utad',
+    indexDebutScan: number,
+    indexFinScan: number
+  ): ValidationBougieResult {
+    if (!activerFiltreGrandesBougies) {
+      return {
+        valide: true,
+        motif: 'Filtre grandes bougies désactivé',
+        pattern: 'P&F Standard',
+        tailleSortie: 0,
+        tailleRetour: 0,
+        ratioForce: 1,
+      };
+    }
+
+    // Calcul de l'ATR local sur la période récente autour de la cassure
+    let sommeTR = 0;
+    let countTR = 0;
+    const debutATR = Math.max(1, indexFinScan - periodeATR);
+    for (let k = debutATR; k <= indexFinScan; k++) {
+      const h = bougies[k].high;
+      const l = bougies[k].low;
+      const prevC = bougies[k - 1].close;
+      sommeTR += Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC));
+      countTR++;
+    }
+    const atrLocal = countTR > 0 ? sommeTR / countTR : (tailleBox / (ratioBoxATR || 0.5));
+    const seuilGrandeBougie = atrLocal * multiplicateurTailleATR;
+
+    const debut = Math.max(0, indexDebutScan);
+    const fin = Math.min(bougies.length - 1, indexFinScan);
+
+    if (type === 'spring') {
+      // Trouver la bougie du point le plus bas (le sweep de liquidation)
+      let minLow = 9999999;
+      let indexCreux = debut;
+      for (let k = debut; k <= fin; k++) {
+        if (bougies[k].low < minLow) {
+          minLow = bougies[k].low;
+          indexCreux = k;
+        }
+      }
+
+      const bSortie = bougies[indexCreux];
+      const indexRetour = fin;
+      const bRetour = bougies[indexRetour];
+      const nbBougiesHors = Math.max(1, indexRetour - indexCreux + 1);
+
+      const tailleSortie = bSortie.high - bSortie.low;
+      const tailleRetour = bRetour.high - bRetour.low;
+      const ratioForce = tailleRetour / Math.max(1e-6, tailleSortie);
+
+      // CAS 1 : Spring en 1 seule bougie (Pinbar / Marteau avec grande mèche de rejet basse)
+      if (indexCreux === indexRetour) {
+        const corpsBas = Math.min(bSortie.open, bSortie.close);
+        const mecheBasse = corpsBas - bSortie.low;
+        const ratioMeche = mecheBasse / Math.max(1e-6, tailleSortie);
+
+        const estGrande = tailleSortie >= seuilGrandeBougie;
+        const aRejet = ratioMeche >= ratioMecheRejetSimple;
+
+        if (estGrande && aRejet) {
+          return {
+            valide: true,
+            motif: `Pinbar 1-Bougie (Taille: ${(tailleSortie / pipSize).toFixed(1)}p, Mèche: ${(ratioMeche * 100).toFixed(0)}%)`,
+            pattern: 'Pinbar 1-Bougie',
+            tailleSortie,
+            tailleRetour,
+            ratioForce: 1,
+          };
+        } else {
+          return {
+            valide: false,
+            motif: `Pinbar rejetée (Grande: ${estGrande ? 'OUI' : 'NON'}, Rejet: ${(ratioMeche * 100).toFixed(0)}% vs min ${(ratioMecheRejetSimple * 100).toFixed(0)}%)`,
+            pattern: 'Pinbar Invalide',
+            tailleSortie,
+            tailleRetour,
+            ratioForce: 1,
+          };
+        }
+      }
+
+      // CAS 2 : Spring en 2 ou 3 bougies (V-Shape / Displacement)
+      // A. Vérification de la rapidité (temps passé sous le niveau)
+      if (nbBougiesHors > maxBougiesHorsRange) {
+        return {
+          valide: false,
+          motif: `Retour trop lent (${nbBougiesHors} bougies > max ${maxBougiesHorsRange})`,
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      // B. Vérification de la taille (au moins une grande bougie au-dessus du seuil ATR)
+      const auMoinsUneGrande = (tailleSortie >= seuilGrandeBougie) || (tailleRetour >= seuilGrandeBougie);
+      if (!auMoinsUneGrande) {
+        return {
+          valide: false,
+          motif: `Bougies trop petites (< seuil ATR ${(seuilGrandeBougie / pipSize).toFixed(1)}p)`,
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      // C. Règle clé : la bougie de retour doit être >= bougie de liquidation
+      if (exigerRetourSuperieurOuEgal && ratioForce < 0.95) {
+        return {
+          valide: false,
+          motif: `Bougie retour inférieure à la sortie (Force: ${(ratioForce * 100).toFixed(0)}% < 95%)`,
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      // D. La bougie de réintégration doit être haussière
+      if (bRetour.close < bRetour.open) {
+        return {
+          valide: false,
+          motif: 'Bougie de réintégration baissière',
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      return {
+        valide: true,
+        motif: `V-Shape Haussier validé (${nbBougiesHors}b, Force: ${(ratioForce * 100).toFixed(0)}%)`,
+        pattern: 'V-Shape 2/3-Bougies',
+        tailleSortie,
+        tailleRetour,
+        ratioForce,
+      };
+    } else {
+      // UTAD (Distribution - Vente au-dessus de la résistance)
+      let maxHigh = -9999999;
+      let indexSommet = debut;
+      for (let k = debut; k <= fin; k++) {
+        if (bougies[k].high > maxHigh) {
+          maxHigh = bougies[k].high;
+          indexSommet = k;
+        }
+      }
+
+      const bSortie = bougies[indexSommet];
+      const indexRetour = fin;
+      const bRetour = bougies[indexRetour];
+      const nbBougiesHors = Math.max(1, indexRetour - indexSommet + 1);
+
+      const tailleSortie = bSortie.high - bSortie.low;
+      const tailleRetour = bRetour.high - bRetour.low;
+      const ratioForce = tailleRetour / Math.max(1e-6, tailleSortie);
+
+      // CAS 1 : UTAD en 1 seule bougie (Étoile filante / Pinbar haute)
+      if (indexSommet === indexRetour) {
+        const corpsHaut = Math.max(bSortie.open, bSortie.close);
+        const mecheHaute = bSortie.high - corpsHaut;
+        const ratioMeche = mecheHaute / Math.max(1e-6, tailleSortie);
+
+        const estGrande = tailleSortie >= seuilGrandeBougie;
+        const aRejet = ratioMeche >= ratioMecheRejetSimple;
+
+        if (estGrande && aRejet) {
+          return {
+            valide: true,
+            motif: `Pinbar Haute 1-Bougie (Taille: ${(tailleSortie / pipSize).toFixed(1)}p, Mèche: ${(ratioMeche * 100).toFixed(0)}%)`,
+            pattern: 'Pinbar 1-Bougie',
+            tailleSortie,
+            tailleRetour,
+            ratioForce: 1,
+          };
+        } else {
+          return {
+            valide: false,
+            motif: `Pinbar Haute rejetée (Grande: ${estGrande ? 'OUI' : 'NON'}, Rejet: ${(ratioMeche * 100).toFixed(0)}% vs min ${(ratioMecheRejetSimple * 100).toFixed(0)}%)`,
+            pattern: 'Pinbar Invalide',
+            tailleSortie,
+            tailleRetour,
+            ratioForce: 1,
+          };
+        }
+      }
+
+      // CAS 2 : UTAD en 2 ou 3 bougies (V-Shape Inversé)
+      if (nbBougiesHors > maxBougiesHorsRange) {
+        return {
+          valide: false,
+          motif: `Retour trop lent (${nbBougiesHors} bougies > max ${maxBougiesHorsRange})`,
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      const auMoinsUneGrande = (tailleSortie >= seuilGrandeBougie) || (tailleRetour >= seuilGrandeBougie);
+      if (!auMoinsUneGrande) {
+        return {
+          valide: false,
+          motif: `Bougies trop petites (< seuil ATR ${(seuilGrandeBougie / pipSize).toFixed(1)}p)`,
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      if (exigerRetourSuperieurOuEgal && ratioForce < 0.95) {
+        return {
+          valide: false,
+          motif: `Bougie retour inférieure à la sortie (Force: ${(ratioForce * 100).toFixed(0)}% < 95%)`,
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      if (bRetour.close > bRetour.open) {
+        return {
+          valide: false,
+          motif: 'Bougie de réintégration haussière (non vendeuse)',
+          pattern: 'V-Shape Rejeté',
+          tailleSortie,
+          tailleRetour,
+          ratioForce,
+        };
+      }
+
+      return {
+        valide: true,
+        motif: `V-Shape Baissier validé (${nbBougiesHors}b, Force: ${(ratioForce * 100).toFixed(0)}%)`,
+        pattern: 'V-Shape 2/3-Bougies',
+        tailleSortie,
+        tailleRetour,
+        ratioForce,
+      };
+    }
+  }
+
+  // 7️⃣ Détection des Trading Ranges, des Springs et des UTAD
   const boitesVisuelles: VisualBox[] = [];
   const lignesVisuelles: VisualLine[] = [];
   const labelsVisuels: VisualLabel[] = [];
@@ -304,23 +578,23 @@ export function calculerWyckoffPointAndFigure(
       let minBas = 9999999;
       let maxHaut = -9999999;
       const creuxPrecedents: number[] = [];
+      const debutRange = Math.max(0, c - (colonnesMinRange * 3) - 1);
 
-      for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {
-        if (r >= 0) {
-          if (colonnes[r].type === 'O') creuxPrecedents.push(colonnes[r].bas);
-          if (colonnes[r].bas < minBas) minBas = colonnes[r].bas;
-          if (colonnes[r].haut > maxHaut) maxHaut = colonnes[r].haut;
-        }
+      for (let r = debutRange; r < c - 1; r++) {
+        if (colonnes[r].type === 'O') creuxPrecedents.push(colonnes[r].bas);
+        if (colonnes[r].bas < minBas) minBas = colonnes[r].bas;
+        if (colonnes[r].haut > maxHaut) maxHaut = colonnes[r].haut;
       }
 
       if (creuxPrecedents.length >= 2) {
-        const supportEstime = Math.min(...creuxPrecedents.slice(0, 2));
+        const creuxTries = [...creuxPrecedents].sort((a, b) => a - b);
+        const supportEstime = creuxTries[0];
 
-        // 🔍 Comptage précis des colonnes 'O' distinctes ayant rebondi sur ce support (à ±1 boîte)
+        // 🔍 Comptage précis des colonnes 'O' distinctes ayant rebondi sur ce support (à ±1.5 boîtes)
         let nbRetests = 0;
-        for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {
-          if (r >= 0 && colonnes[r].type === 'O') {
-            if (Math.abs(colonnes[r].bas - supportEstime) <= tailleBox) {
+        for (let r = debutRange; r < c - 1; r++) {
+          if (colonnes[r].type === 'O') {
+            if (Math.abs(colonnes[r].bas - supportEstime) <= (tailleBox * 1.5)) {
               nbRetests++;
             }
           }
@@ -334,13 +608,14 @@ export function calculerWyckoffPointAndFigure(
         const qualiteNiveau = qualifierSoliditeNiveau(nbRetests);
 
         const depassementBas = supportEstime - colPrecedente.bas;
-        const aCasseSupport = depassementBas >= tailleBox && depassementBas <= (4 * tailleBox);
-        const aReintegre = colActuelle.haut >= supportEstime + tailleBox;
+        const aCasseSupport = depassementBas >= (tailleBox * 0.5) && depassementBas <= (8 * tailleBox);
+        const aReintegre = colActuelle.haut >= supportEstime + (tailleBox * 0.5);
 
         if (aCasseSupport && aReintegre) {
           const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);
+          const testBougies = verifierGrandesBougiesWyckoff('spring', colPrecedente.indexDebut, colActuelle.indexFin);
 
-          if (testVolume.valide) {
+          if (testVolume.valide && testBougies.valide) {
             const bgSignal = bougies[colActuelle.indexFin];
             const largeurRange = c - (c - colonnesMinRange - 1);
             // Loi de Cause à Effet de Wyckoff : projection proportionnelle à la largeur du Range
@@ -357,6 +632,9 @@ export function calculerWyckoffPointAndFigure(
               nbRetests: nbRetests,
               qualiteNiveau: qualiteNiveau,
               motifVolume: testVolume.motif,
+              patternBougie: testBougies.pattern,
+              motifBougie: testBougies.motif,
+              ratioForceRetour: testBougies.ratioForce,
               temps: bgSignal.time,
             });
 
@@ -412,11 +690,13 @@ export function calculerWyckoffPointAndFigure(
 
             const tagQualite = nbRetests >= 4 ? ` [A+ ${nbRetests}T]` : ` [${nbRetests}T]`;
             const tagVol = activerFiltreVolume ? ' Vol' : '';
+            const tagPattern = activerFiltreGrandesBougies ? ` ${testBougies.pattern.includes('Pinbar') ? '⚡Pinbar' : '🚀V-Shape'}` : '';
+
             labelsVisuels.push({
               id: 'lbl-spring-' + c,
               prix: bgSignal.low,
               date: bgSignal.time,
-              texte: `▲ SPRING${tagQualite}${tagVol ? ' /' + tagVol : ''}`,
+              texte: `▲ SPRING${tagQualite}${tagPattern}${tagVol ? ' /' + tagVol : ''}`,
               couleur: nbRetests >= 4 ? '#00e676' : '#089981',
               position: 'below',
             });
@@ -430,23 +710,23 @@ export function calculerWyckoffPointAndFigure(
       let minBas = 9999999;
       let maxHaut = -9999999;
       const sommetsPrecedents: number[] = [];
+      const debutRange = Math.max(0, c - (colonnesMinRange * 3) - 1);
 
-      for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {
-        if (r >= 0) {
-          if (colonnes[r].type === 'X') sommetsPrecedents.push(colonnes[r].haut);
-          if (colonnes[r].bas < minBas) minBas = colonnes[r].bas;
-          if (colonnes[r].haut > maxHaut) maxHaut = colonnes[r].haut;
-        }
+      for (let r = debutRange; r < c - 1; r++) {
+        if (colonnes[r].type === 'X') sommetsPrecedents.push(colonnes[r].haut);
+        if (colonnes[r].bas < minBas) minBas = colonnes[r].bas;
+        if (colonnes[r].haut > maxHaut) maxHaut = colonnes[r].haut;
       }
 
       if (sommetsPrecedents.length >= 2) {
-        const resistanceEstimee = Math.max(...sommetsPrecedents.slice(0, 2));
+        const sommetsTries = [...sommetsPrecedents].sort((a, b) => b - a);
+        const resistanceEstimee = sommetsTries[0];
 
-        // 🔍 Comptage précis des colonnes 'X' distinctes ayant rebondi sur cette résistance (à ±1 boîte)
+        // 🔍 Comptage précis des colonnes 'X' distinctes ayant rebondi sur cette résistance (à ±1.5 boîtes)
         let nbRetests = 0;
-        for (let r = c - colonnesMinRange - 1; r < c - 1; r++) {
-          if (r >= 0 && colonnes[r].type === 'X') {
-            if (Math.abs(colonnes[r].haut - resistanceEstimee) <= tailleBox) {
+        for (let r = debutRange; r < c - 1; r++) {
+          if (colonnes[r].type === 'X') {
+            if (Math.abs(colonnes[r].haut - resistanceEstimee) <= (tailleBox * 1.5)) {
               nbRetests++;
             }
           }
@@ -460,13 +740,14 @@ export function calculerWyckoffPointAndFigure(
         const qualiteNiveau = qualifierSoliditeNiveau(nbRetests);
 
         const depassementHaut = colPrecedente.haut - resistanceEstimee;
-        const aCasseResistance = depassementHaut >= tailleBox && depassementHaut <= (4 * tailleBox);
-        const aReintegre = colActuelle.bas <= resistanceEstimee - tailleBox;
+        const aCasseResistance = depassementHaut >= (tailleBox * 0.5) && depassementHaut <= (8 * tailleBox);
+        const aReintegre = colActuelle.bas <= resistanceEstimee - (tailleBox * 0.5);
 
         if (aCasseResistance && aReintegre) {
           const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);
+          const testBougies = verifierGrandesBougiesWyckoff('utad', colPrecedente.indexDebut, colActuelle.indexFin);
 
-          if (testVolume.valide) {
+          if (testVolume.valide && testBougies.valide) {
             const bgSignal = bougies[colActuelle.indexFin];
             const largeurRange = c - (c - colonnesMinRange - 1);
             const cibleWyckoff = resistanceEstimee - (largeurRange * tailleBox * reversalCount);
@@ -482,6 +763,9 @@ export function calculerWyckoffPointAndFigure(
               nbRetests: nbRetests,
               qualiteNiveau: qualiteNiveau,
               motifVolume: testVolume.motif,
+              patternBougie: testBougies.pattern,
+              motifBougie: testBougies.motif,
+              ratioForceRetour: testBougies.ratioForce,
               temps: bgSignal.time,
             });
 
@@ -537,11 +821,13 @@ export function calculerWyckoffPointAndFigure(
 
             const tagQualite = nbRetests >= 4 ? ` [A+ ${nbRetests}T]` : ` [${nbRetests}T]`;
             const tagVol = activerFiltreVolume ? ' Vol' : '';
+            const tagPattern = activerFiltreGrandesBougies ? ` ${testBougies.pattern.includes('Pinbar') ? '⚡Pinbar' : '🚀V-Shape'}` : '';
+
             labelsVisuels.push({
               id: 'lbl-utad-' + c,
               prix: bgSignal.high,
               date: bgSignal.time,
-              texte: `▼ UTAD${tagQualite}${tagVol ? ' /' + tagVol : ''}`,
+              texte: `▼ UTAD${tagQualite}${tagPattern}${tagVol ? ' /' + tagVol : ''}`,
               couleur: nbRetests >= 4 ? '#ff1744' : '#ef5350',
               position: 'above',
             });

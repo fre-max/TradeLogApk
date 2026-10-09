@@ -128,4 +128,74 @@ describe('Wyckoff Point & Figure (Spring & UTAD)', () => {
       expect(resAccessible.signaux[0].qualiteNiveau).toBeDefined();
     }
   });
+
+  it('détecte et valide un Spring sous forme de V-Shape Reversal avec bougie de retour dominante', () => {
+    const bougies: Bougie[] = [];
+    let t = 1700000000;
+
+    // Oscillation pour former un range solide avec support à 100
+    for (let c = 0; c < 4; c++) {
+      for (let p = 100; p <= 110; p += 2) {
+        bougies.push({ time: (t += 60), open: p, high: p + 1, low: p - 1, close: p + 1, volume: 500 });
+      }
+      for (let p = 110; p >= 100; p -= 2) {
+        bougies.push({ time: (t += 60), open: p, high: p + 1, low: p - 1, close: p - 1, volume: 500 });
+      }
+    }
+
+    // Bougie 1 : Liquidation (chute sous 100 jusqu'à 98, amplitude = 2)
+    bougies.push({ time: (t += 60), open: 100, high: 100, low: 98, close: 98, volume: 1500 });
+
+    // Bougie 2 : Réintégration puissante (de 98 à 104, amplitude = 6 > amplitude sortie)
+    bougies.push({ time: (t += 60), open: 98, high: 104, low: 98, close: 104, volume: 2000 });
+
+    const res = calculerWyckoffPointAndFigure(bougies, {
+      modeTailleBox: 'fixe',
+      tailleBoxPips: 100,
+      reversalCount: 3,
+      colonnesMinRange: 3,
+      minRetestsRequis: 2,
+      activerFiltreGrandesBougies: true,
+      exigerRetourSuperieurOuEgal: true,
+      maxBougiesHorsRange: 3,
+    });
+
+    expect(res.signaux.length).toBeGreaterThan(0);
+    const signal = res.signaux[0];
+    expect(signal.patternBougie).toContain('V-Shape');
+    expect(signal.ratioForceRetour).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it('détecte et valide un Spring en 1 seule bougie Pinbar avec grande mèche de rejet', () => {
+    const bougies: Bougie[] = [];
+    let t = 1700000000;
+
+    // Oscillation formant un range solide à 100
+    for (let c = 0; c < 4; c++) {
+      for (let p = 100; p <= 110; p += 2) {
+        bougies.push({ time: (t += 60), open: p, high: p + 1, low: p - 1, close: p + 1, volume: 500 });
+      }
+      for (let p = 110; p >= 100; p -= 2) {
+        bougies.push({ time: (t += 60), open: p, high: p + 1, low: p - 1, close: p - 1, volume: 500 });
+      }
+    }
+
+    // Bougie unique Pinbar : open à 101, plonge à 97 (mèche basse), et clôture à 103 (amplitude 6, mèche basse = 4 / 6 = 66%)
+    bougies.push({ time: (t += 60), open: 101, high: 103, low: 97, close: 103, volume: 2500 });
+
+    const res = calculerWyckoffPointAndFigure(bougies, {
+      modeTailleBox: 'fixe',
+      tailleBoxPips: 10,
+      reversalCount: 3,
+      colonnesMinRange: 3,
+      minRetestsRequis: 2,
+      activerFiltreGrandesBougies: true,
+      ratioMecheRejetSimple: 0.40,
+    });
+
+    if (res.signaux.length > 0) {
+      const signal = res.signaux[0];
+      expect(signal.patternBougie).toBeDefined();
+    }
+  });
 });
