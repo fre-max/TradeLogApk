@@ -29,7 +29,7 @@ import { calculerLiquidationSweepCombo } from './liquidationSweepCombo';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.11.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.12.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -3276,6 +3276,8 @@ return {
       exigerLiquiditeBalayee: true,
       sensibilitePivotLiquidite: 4,
       lookbackLiquidite: 100,
+      toleranceZoneSR: 0.15,
+      seuilMinLiquidations: 1,
       toleranceDeficit: 0.05,
       toleranceDepassement: 0.25,
       activerFiltreTaille: true,
@@ -3285,7 +3287,9 @@ return {
       activerAchat: true,
       activerVente: true,
       afficherLigneLiquidite: true,
+      afficherLignesMultiSweep: true,
       afficherZoneSweep: true,
+      afficherZoneSR: true,
       bullColor: '#00E676',
       bearColor: '#F23645',
       texteLabel: 'Liq/Reint',
@@ -3324,6 +3328,36 @@ return {
         groupe: 'Filtre de Prise de Liquidité',
       },
       {
+        cle: 'toleranceZoneSR',
+        label: 'Tolérance Zone S/R (% Prix)',
+        description: 'Marge en pourcentage pour regrouper les sommets ou creux sur la même zone de support/résistance (0.15 = 0.15%)',
+        type: 'number',
+        valeurParDefaut: 0.15,
+        min: 0.01,
+        max: 1.0,
+        step: 0.01,
+        groupe: 'Multi-Liquidation & Niveaux S/R',
+      },
+      {
+        cle: 'seuilMinLiquidations',
+        label: 'Type de Liquidation Requis',
+        description: '1 = Tous les signaux (Simple 1x, Double 2x, Triple 3x), 2 = Doubles & Triples sweeps uniquement (>= 2), 3 = Triples sweeps uniquement (3x)',
+        type: 'number',
+        valeurParDefaut: 1,
+        min: 1,
+        max: 3,
+        step: 1,
+        groupe: 'Multi-Liquidation & Niveaux S/R',
+      },
+      {
+        cle: 'afficherLignesMultiSweep',
+        label: 'Lignes vers Balayages Antérieurs',
+        description: 'Trace des lignes reliant tous les sommets ou creux antérieurs qui forment la multi-liquidation',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
         cle: 'afficherLigneLiquidite',
         label: 'Afficher la Ligne de Liquidité Balayée',
         description: 'Trace la ligne en pointillés reliant le creux ou sommet d\'origine jusqu\'au moment du balayage',
@@ -3335,6 +3369,14 @@ return {
         cle: 'afficherZoneSweep',
         label: 'Afficher la Boîte de Zone de Sweep',
         description: 'Affiche le rectangle semi-transparent illustrant l\'espace balayé sous ou sur la liquidité',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherZoneSR',
+        label: 'Afficher la Boîte de Zone S/R',
+        description: 'Affiche le rectangle semi-transparent englobant la zone de support ou résistance multi-testée',
         type: 'boolean',
         valeurParDefaut: true,
         groupe: 'Visuels & Graphique',

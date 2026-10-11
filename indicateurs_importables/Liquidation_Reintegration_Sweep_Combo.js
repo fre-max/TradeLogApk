@@ -1,14 +1,16 @@
 /**
  * ==============================================================================
  * INDICATEUR SCRIPTABLE AUTONOME : LIQ/REINT + SWEEP LIQUIDITÉ (BSL/SSL)
- * Version 1.0.0
+ * Version 1.1.0
  * 
  * Combine le setup de Price Action Liquidation & Réintégration avec l'analyse
- * de la liquidité balayée dans l'historique :
+ * de la liquidité balayée dans l'historique et la détection des Multi-Liquidations
+ * sur Support / Résistance (Simple 1x, Double 2x, Triple 3x) :
  * 1. Détecte le setup à 2 bougies (Bougie 1 étendue + Bougie 2 réintégration avec proximité asymétrique).
  * 2. Identifie quelle liquidité vendeuse (SSL) ou acheteuse (BSL) préalable a été balayée
  *    par la mèche extrême du setup (par Bougie 1 ou Bougie 2).
- * 3. Trace la ligne de liquidité balayée depuis son origine et délimite la zone de sweep.
+ * 3. Analyse si ce niveau S/R a subi de multiples balayages (Double ou Triple Liquidation).
+ * 4. Trace la ligne de liquidité balayée, les lignes de multi-sweep et délimite les zones.
  * 
  * 💡 UTILISATION SANS RÉINSTALLER L'APK :
  * 1. Transférez ce fichier sur votre smartphone.
@@ -45,6 +47,12 @@ return {
     const lookbackLiquidite = Math.max(10, Number(params.lookbackLiquidite ?? 100));
     const exigerLiquidite = params.exigerLiquiditeBalayee !== false;
 
+    const valZoneSR = params.toleranceZoneSR !== undefined ? params.toleranceZoneSR : 0.15;
+    const toleranceZoneSR = valZoneSR > 1 ? valZoneSR / 100 : (valZoneSR >= 0.05 ? valZoneSR / 100 : valZoneSR);
+    const seuilMinLiquidations = Math.max(1, Math.min(3, Number(params.seuilMinLiquidations ?? 1)));
+    const afficherLignesMultiSweep = params.afficherLignesMultiSweep !== false;
+    const afficherZoneSR = params.afficherZoneSR !== false;
+
     const activerFiltreTaille = params.activerFiltreTaille !== false;
     const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));
     const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 ?? 1.75));
@@ -65,6 +73,9 @@ return {
     let countVentes = 0;
     let countAchatsSweep = 0;
     let countVentesSweep = 0;
+    let countSimples = 0;
+    let countDoubles = 0;
+    let countTriples = 0;
 
     // Détection locale des pivots
     function estPivotHaut(arr, idx, sens, maxIdx) {
@@ -148,7 +159,8 @@ return {
                 prix: creux,
                 indexOrigine: k,
                 tempsOrigine: bougies[k].time,
-                profondeur: creux - prixExtreme
+                profondeur: creux - prixExtreme,
+                balayagesPrecedents: []
               };
               break;
             }
@@ -156,7 +168,33 @@ return {
         }
 
         if (exigerLiquidite && !liqTrouvee) continue;
-        if (liqTrouvee) countAchatsSweep++;
+
+        // Analyse multi-sweep support
+        if (liqTrouvee) {
+          const margeZone = Math.max(0.0001, liqTrouvee.prix * toleranceZoneSR);
+          const sensCluster = Math.max(1, Math.floor(sensibiliteLiquidite / 2));
+          for (let j = idxDebRecherche; j <= idxFinRecherche; j++) {
+            if (Math.abs(j - liqTrouvee.indexOrigine) < 2) continue;
+            if (estPivotBas(bougies, j, sensCluster, idxFinRecherche)) {
+              const lowJ = bougies[j].low;
+              if (lowJ <= liqTrouvee.prix + margeZone && lowJ >= liqTrouvee.prix - (margeZone * 3)) {
+                liqTrouvee.balayagesPrecedents.push({
+                  index: j,
+                  temps: bougies[j].time,
+                  prix: lowJ
+                });
+              }
+            }
+          }
+
+          liqTrouvee.totalSweeps = 1 + liqTrouvee.balayagesPrecedents.length;
+          if (liqTrouvee.totalSweeps < seuilMinLiquidations) continue;
+
+          countAchatsSweep++;
+          if (liqTrouvee.totalSweeps === 1) countSimples++;
+          else if (liqTrouvee.totalSweeps === 2) countDoubles++;
+          else countTriples++;
+        }
         countAchats++;
 
         signaux.push({
@@ -174,8 +212,15 @@ return {
           liquidite: liqTrouvee
         });
 
+        let badgeMulti = '';
+        if (liqTrouvee) {
+          if (liqTrouvee.totalSweeps === 2) badgeMulti = ' 🔥 [Double Sweep 2x]';
+          else if (liqTrouvee.totalSweeps >= 3) badgeMulti = ` 🚀 [Triple Sweep ${liqTrouvee.totalSweeps}x]`;
+          else badgeMulti = ' [1x]';
+        }
+
         const lbl = liqTrouvee
-          ? `${texteLabel}\nSweep SSL (${liqTrouvee.prix.toFixed(4)})`
+          ? `${texteLabel}${badgeMulti}\nSweep SSL (${liqTrouvee.prix.toFixed(4)})`
           : texteLabel;
 
         labels.push({ id: `c-a-lbl-${i}`, prix: b2.low, date: b2.time, texte: lbl, couleur: bullColor, position: 'below' });
@@ -193,6 +238,21 @@ return {
             label: `SSL Balayée (-${(liqTrouvee.profondeur * 10000).toFixed(1)} pips)`
           });
 
+          if (afficherLignesMultiSweep && liqTrouvee.balayagesPrecedents.length > 0) {
+            liqTrouvee.balayagesPrecedents.forEach((bal, idxBal) => {
+              lignes.push({
+                id: `c-a-ms-${i}-${idxBal}`,
+                prix: bal.prix,
+                dateDebut: bal.temps,
+                dateFin: b2.time,
+                couleur: 'rgba(0, 230, 118, 0.65)',
+                epaisseur: 1,
+                style: 'dotted',
+                label: `Sweep Support #${idxBal + 1}`
+              });
+            });
+          }
+
           boites.push({
             id: `c-a-box-${i}`,
             prixHaut: liqTrouvee.prix,
@@ -203,6 +263,20 @@ return {
             couleurBordure: bullColor,
             label: 'Zone de Sweep'
           });
+
+          if (afficherZoneSR && liqTrouvee.totalSweeps >= 2) {
+            const margeZone = liqTrouvee.prix * toleranceZoneSR;
+            boites.push({
+              id: `c-a-sr-${i}`,
+              prixHaut: liqTrouvee.prix + margeZone,
+              prixBas: liqTrouvee.prix - margeZone,
+              dateDebut: liqTrouvee.tempsOrigine,
+              dateFin: b2.time,
+              couleurFond: 'rgba(0, 230, 118, 0.08)',
+              couleurBordure: 'rgba(0, 230, 118, 0.4)',
+              label: `Zone Support (${liqTrouvee.totalSweeps}x Sweeps)`
+            });
+          }
         }
 
       // 4️⃣ Cas Vente (Sweep BSL + Reint)
@@ -220,7 +294,8 @@ return {
                 prix: sommet,
                 indexOrigine: k,
                 tempsOrigine: bougies[k].time,
-                profondeur: prixExtreme - sommet
+                profondeur: prixExtreme - sommet,
+                balayagesPrecedents: []
               };
               break;
             }
@@ -228,7 +303,32 @@ return {
         }
 
         if (exigerLiquidite && !liqTrouvee) continue;
-        if (liqTrouvee) countVentesSweep++;
+
+        if (liqTrouvee) {
+          const margeZone = Math.max(0.0001, liqTrouvee.prix * toleranceZoneSR);
+          const sensCluster = Math.max(1, Math.floor(sensibiliteLiquidite / 2));
+          for (let j = idxDebRecherche; j <= idxFinRecherche; j++) {
+            if (Math.abs(j - liqTrouvee.indexOrigine) < 2) continue;
+            if (estPivotHaut(bougies, j, sensCluster, idxFinRecherche)) {
+              const highJ = bougies[j].high;
+              if (highJ >= liqTrouvee.prix - margeZone && highJ <= liqTrouvee.prix + (margeZone * 3)) {
+                liqTrouvee.balayagesPrecedents.push({
+                  index: j,
+                  temps: bougies[j].time,
+                  prix: highJ
+                });
+              }
+            }
+          }
+
+          liqTrouvee.totalSweeps = 1 + liqTrouvee.balayagesPrecedents.length;
+          if (liqTrouvee.totalSweeps < seuilMinLiquidations) continue;
+
+          countVentesSweep++;
+          if (liqTrouvee.totalSweeps === 1) countSimples++;
+          else if (liqTrouvee.totalSweeps === 2) countDoubles++;
+          else countTriples++;
+        }
         countVentes++;
 
         signaux.push({
@@ -246,8 +346,15 @@ return {
           liquidite: liqTrouvee
         });
 
+        let badgeMulti = '';
+        if (liqTrouvee) {
+          if (liqTrouvee.totalSweeps === 2) badgeMulti = ' 🔥 [Double Sweep 2x]';
+          else if (liqTrouvee.totalSweeps >= 3) badgeMulti = ` 🚀 [Triple Sweep ${liqTrouvee.totalSweeps}x]`;
+          else badgeMulti = ' [1x]';
+        }
+
         const lbl = liqTrouvee
-          ? `${texteLabel}\nSweep BSL (${liqTrouvee.prix.toFixed(4)})`
+          ? `${texteLabel}${badgeMulti}\nSweep BSL (${liqTrouvee.prix.toFixed(4)})`
           : texteLabel;
 
         labels.push({ id: `c-v-lbl-${i}`, prix: b2.high, date: b2.time, texte: lbl, couleur: bearColor, position: 'above' });
@@ -265,6 +372,21 @@ return {
             label: `BSL Balayée (+${(liqTrouvee.profondeur * 10000).toFixed(1)} pips)`
           });
 
+          if (afficherLignesMultiSweep && liqTrouvee.balayagesPrecedents.length > 0) {
+            liqTrouvee.balayagesPrecedents.forEach((bal, idxBal) => {
+              lignes.push({
+                id: `c-v-ms-${i}-${idxBal}`,
+                prix: bal.prix,
+                dateDebut: bal.temps,
+                dateFin: b2.time,
+                couleur: 'rgba(242, 54, 69, 0.65)',
+                epaisseur: 1,
+                style: 'dotted',
+                label: `Sweep Résistance #${idxBal + 1}`
+              });
+            });
+          }
+
           boites.push({
             id: `c-v-box-${i}`,
             prixHaut: prixExtreme,
@@ -275,29 +397,36 @@ return {
             couleurBordure: bearColor,
             label: 'Zone de Sweep'
           });
+
+          if (afficherZoneSR && liqTrouvee.totalSweeps >= 2) {
+            const margeZone = liqTrouvee.prix * toleranceZoneSR;
+            boites.push({
+              id: `c-v-sr-${i}`,
+              prixHaut: liqTrouvee.prix + margeZone,
+              prixBas: liqTrouvee.prix - margeZone,
+              dateDebut: liqTrouvee.tempsOrigine,
+              dateFin: b2.time,
+              couleurFond: 'rgba(242, 54, 69, 0.08)',
+              couleurBordure: 'rgba(242, 54, 69, 0.4)',
+              label: `Zone Résistance (${liqTrouvee.totalSweeps}x Sweeps)`
+            });
+          }
         }
       }
     }
 
     return {
-      donnees: {
-        signaux: signaux,
-        statistiques: {
-          totalSignaux: signaux.length,
-          totalAchats: countAchats,
-          totalVentes: countVentes,
-          totalLiquiditesBalayees: countAchatsSweep + countVentesSweep,
-          totalAchatsAvecSweep: countAchatsSweep,
-          totalVentesAvecSweep: countVentesSweep
-        }
-      },
-      primitives: {
-        labels: labels,
-        lignes: lignes,
-        boites: boites,
-        points: points
-      },
-      typeSpecial: 'liquidation-sweep-combo'
+      signaux,
+      primitives: { labels, lignes, boites, points },
+      statistiques: {
+        totalSignaux: signaux.length,
+        totalAchats: countAchats,
+        totalVentes: countVentes,
+        totalLiquiditesBalayees: countAchatsSweep + countVentesSweep,
+        totalSimplesLiquidations: countSimples,
+        totalDoublesLiquidations: countDoubles,
+        totalTriplesLiquidations: countTriples
+      }
     };
   }
 };

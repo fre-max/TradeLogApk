@@ -1,13 +1,15 @@
 {
   "nom": "Liq/Reint + Sweep Liquidité (BSL/SSL)",
-  "description": "Combine le setup de chandelier Liquidation & Réintégration avec la détection de la liquidité balayée. Montre précisément la ligne du niveau SSL ou BSL qui a été balayé par la mèche extrême, la zone de sweep et le signal de reprise.",
+  "description": "Combine le setup de chandelier Liquidation & Réintégration avec la détection de la liquidité balayée et l'analyse des Multi-Liquidations sur Support/Résistance (Simple 1x, Double 2x, Triple 3x). Montre précisément la ligne du niveau SSL ou BSL qui a été balayé par la mèche extrême, la zone de sweep et le signal de reprise.",
   "auteur": "TradeLog Strategy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "overlay",
   "parametres": {
     "exigerLiquiditeBalayee": true,
     "sensibilitePivotLiquidite": 4,
     "lookbackLiquidite": 100,
+    "toleranceZoneSR": 0.15,
+    "seuilMinLiquidations": 1,
     "toleranceDeficit": 0.05,
     "toleranceDepassement": 0.25,
     "activerFiltreTaille": true,
@@ -17,7 +19,9 @@
     "activerAchat": true,
     "activerVente": true,
     "afficherLigneLiquidite": true,
+    "afficherLignesMultiSweep": true,
     "afficherZoneSweep": true,
+    "afficherZoneSR": true,
     "bullColor": "#00E676",
     "bearColor": "#F23645",
     "texteLabel": "Liq/Reint"
@@ -54,6 +58,36 @@
       "groupe": "Filtre de Prise de Liquidité"
     },
     {
+      "cle": "toleranceZoneSR",
+      "label": "Tolérance Zone S/R (% Prix)",
+      "description": "Marge en pourcentage pour regrouper les sommets ou creux sur la même zone de support/résistance (0.15 = 0.15%)",
+      "type": "number",
+      "valeurParDefaut": 0.15,
+      "min": 0.01,
+      "max": 1.0,
+      "step": 0.01,
+      "groupe": "Multi-Liquidation & Niveaux S/R"
+    },
+    {
+      "cle": "seuilMinLiquidations",
+      "label": "Type de Liquidation Requis",
+      "description": "1 = Tous les signaux (Simple 1x, Double 2x, Triple 3x), 2 = Doubles & Triples sweeps uniquement (>= 2), 3 = Triples sweeps uniquement (3x)",
+      "type": "number",
+      "valeurParDefaut": 1,
+      "min": 1,
+      "max": 3,
+      "step": 1,
+      "groupe": "Multi-Liquidation & Niveaux S/R"
+    },
+    {
+      "cle": "afficherLignesMultiSweep",
+      "label": "Lignes vers Balayages Antérieurs",
+      "description": "Trace des lignes reliant tous les sommets ou creux antérieurs qui forment la multi-liquidation",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
       "cle": "afficherLigneLiquidite",
       "label": "Afficher la Ligne de Liquidité Balayée",
       "description": "Trace la ligne en pointillés reliant le creux ou sommet d'origine jusqu'au moment du balayage",
@@ -65,6 +99,14 @@
       "cle": "afficherZoneSweep",
       "label": "Afficher la Boîte de Zone de Sweep",
       "description": "Affiche le rectangle semi-transparent illustrant l'espace balayé sous ou sur la liquidité",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "afficherZoneSR",
+      "label": "Afficher la Boîte de Zone S/R",
+      "description": "Affiche le rectangle semi-transparent englobant la zone de support ou résistance multi-testée",
       "type": "boolean",
       "valeurParDefaut": true,
       "groupe": "Visuels & Graphique"
@@ -163,7 +205,14 @@
       "type": "string",
       "valeurParDefaut": "#F23645",
       "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "texteLabel",
+      "label": "Texte du Signal",
+      "description": "Texte affiché sur le graphique au moment de la confirmation",
+      "type": "string",
+      "valeurParDefaut": "Liq/Reint",
+      "groupe": "Visuels & Graphique"
     }
-  ],
-  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };\n\n    if (typeof calculerLiquidationSweepCombo === 'function') {\n      const res = calculerLiquidationSweepCombo(bougies, parametres);\n      return {\n        donnees: res,\n        primitives: res.primitives,\n        typeSpecial: 'liquidation-sweep-combo'\n      };\n    }\n\n    // Fallback dynamique\n    const params = parametres || {};\n    const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : 0.05;\n    const toleranceDeficit = valDeficit > 1 ? valDeficit / 100 : valDeficit;\n    const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 0.25;\n    const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;\n    const sensibiliteLiquidite = Math.max(2, Number(params.sensibilitePivotLiquidite ?? 4));\n    const lookbackLiquidite = Math.max(10, Number(params.lookbackLiquidite ?? 100));\n    const exigerLiquidite = params.exigerLiquiditeBalayee !== false;\n    const activerFiltreTaille = params.activerFiltreTaille !== false;\n    const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));\n    const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 ?? 1.75));\n    const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 ?? 1.75));\n    const activerAchat = params.activerAchat !== false;\n    const activerVente = params.activerVente !== false;\n    const bullColor = params.bullColor || '#00E676';\n    const bearColor = params.bearColor || '#F23645';\n    const texteLabel = params.texteLabel || 'Liq/Reint';\n\n    const signaux = [];\n    const labels = [];\n    const lignes = [];\n    const boites = [];\n    const points = [];\n    let countAchats = 0;\n    let countVentes = 0;\n    let countAchatsSweep = 0;\n    let countVentesSweep = 0;\n\n    function estPivotHaut(arr, idx, sens, maxIdx) {\n      const val = arr[idx].high;\n      for (let k = idx - sens; k < idx; k++) if (k >= 0 && arr[k].high > val) return false;\n      const lim = Math.min(maxIdx, idx + sens);\n      for (let k = idx + 1; k <= lim; k++) if (arr[k].high >= val) return false;\n      return true;\n    }\n\n    function estPivotBas(arr, idx, sens, maxIdx) {\n      const val = arr[idx].low;\n      for (let k = idx - sens; k < idx; k++) if (k >= 0 && arr[k].low < val) return false;\n      const lim = Math.min(maxIdx, idx + sens);\n      for (let k = idx + 1; k <= lim; k++) if (arr[k].low <= val) return false;\n      return true;\n    }\n\n    for (let i = 1; i < bougies.length; i++) {\n      const b1 = bougies[i - 1];\n      const b2 = bougies[i];\n      const range1 = b1.high - b1.low;\n      const range2 = b2.high - b2.low;\n      const corps2 = Math.abs(b2.open - b2.close);\n      const hauteurMoy = (range1 + range2) / 2;\n      if (hauteurMoy <= 0) continue;\n\n      const estAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open);\n      const estVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open);\n      if (!estAchat && !estVente) continue;\n\n      const ecartPrix = Math.abs(b1.open - b2.close);\n      const ratioEcart = ecartPrix / hauteurMoy;\n      let situation = 'RETRAIT';\n      let proximiteOk = false;\n      if (estAchat) {\n        if (b2.close >= b1.open) { situation = 'DEPASSEMENT'; proximiteOk = ratioEcart <= toleranceDepassement; }\n        else { situation = 'RETRAIT'; proximiteOk = ratioEcart <= toleranceDeficit; }\n      } else if (estVente) {\n        if (b2.close <= b1.open) { situation = 'DEPASSEMENT'; proximiteOk = ratioEcart <= toleranceDepassement; }\n        else { situation = 'RETRAIT'; proximiteOk = ratioEcart <= toleranceDeficit; }\n      }\n      if (!proximiteOk) continue;\n\n      let tailleOk = true;\n      if (activerFiltreTaille) {\n        const idxFin = i - 2;\n        const idxDeb = Math.max(0, i - 1 - periodeHistorique);\n        const nb = idxFin - idxDeb + 1;\n        if (nb >= 3) {\n          let sR = 0, sC = 0;\n          for (let k = idxDeb; k <= idxFin; k++) {\n            sR += (bougies[k].high - bougies[k].low);\n            sC += Math.abs(bougies[k].open - bougies[k].close);\n          }\n          const mR = sR / nb, mC = sC / nb;\n          tailleOk = range1 >= (multiplicateurBougie1 * mR) && corps2 >= (multiplicateurCorps2 * mC);\n        }\n      }\n      if (!tailleOk) continue;\n\n      const idxFinRecherche = i - 2;\n      const idxDebRecherche = Math.max(0, idxFinRecherche - lookbackLiquidite);\n      let liqTrouvee = null;\n\n      if (estAchat) {\n        const prixExtreme = Math.min(b1.low, b2.low);\n        const bougieExt = b2.low <= b1.low ? 2 : 1;\n        const hautRef = Math.max(b1.open, b1.high);\n        for (let k = idxFinRecherche; k >= idxDebRecherche; k--) {\n          if (estPivotBas(bougies, k, sensibiliteLiquidite, idxFinRecherche)) {\n            const creux = bougies[k].low;\n            if (prixExtreme < creux && creux <= hautRef) {\n              liqTrouvee = { type: 'SSL', prix: creux, indexOrigine: k, tempsOrigine: bougies[k].time, profondeur: creux - prixExtreme };\n              break;\n            }\n          }\n        }\n        if (exigerLiquidite && !liqTrouvee) continue;\n        if (liqTrouvee) countAchatsSweep++;\n        countAchats++;\n\n        signaux.push({\n          type: 'ACHAT',\n          indexBougie: i,\n          temps: b2.time,\n          prixSignal: b2.low,\n          prixExtreme,\n          bougieExtreme: bougieExt,\n          liquidite: liqTrouvee\n        });\n\n        const lbl = liqTrouvee ? `${texteLabel}\\nSweep SSL (${liqTrouvee.prix.toFixed(4)})` : texteLabel;\n        labels.push({ id: `c-a-lbl-${i}`, prix: b2.low, date: b2.time, texte: lbl, couleur: bullColor, position: 'below' });\n        points.push({ id: `c-a-pt-${i}`, prix: prixExtreme, date: bougieExt === 1 ? b1.time : b2.time, couleur: bullColor });\n        if (liqTrouvee) {\n          lignes.push({ id: `c-a-lig-${i}`, prix: liqTrouvee.prix, dateDebut: liqTrouvee.tempsOrigine, dateFin: b2.time, couleur: bullColor, epaisseur: 1.5, style: 'dashed', label: `SSL Balayée (-${(liqTrouvee.profondeur * 10000).toFixed(1)} pips)` });\n          boites.push({ id: `c-a-box-${i}`, prixHaut: liqTrouvee.prix, prixBas: prixExtreme, dateDebut: b1.time, dateFin: b2.time, couleurFond: 'rgba(0, 230, 118, 0.15)', couleurBordure: bullColor, label: 'Zone de Sweep' });\n        }\n      } else if (estVente) {\n        const prixExtreme = Math.max(b1.high, b2.high);\n        const bougieExt = b2.high >= b1.high ? 2 : 1;\n        const basRef = Math.min(b1.open, b1.low);\n        for (let k = idxFinRecherche; k >= idxDebRecherche; k--) {\n          if (estPivotHaut(bougies, k, sensibiliteLiquidite, idxFinRecherche)) {\n            const sommet = bougies[k].high;\n            if (prixExtreme > sommet && sommet >= basRef) {\n              liqTrouvee = { type: 'BSL', prix: sommet, indexOrigine: k, tempsOrigine: bougies[k].time, profondeur: prixExtreme - sommet };\n              break;\n            }\n          }\n        }\n        if (exigerLiquidite && !liqTrouvee) continue;\n        if (liqTrouvee) countVentesSweep++;\n        countVentes++;\n\n        signaux.push({\n          type: 'VENTE',\n          indexBougie: i,\n          temps: b2.time,\n          prixSignal: b2.high,\n          prixExtreme,\n          bougieExtreme: bougieExt,\n          liquidite: liqTrouvee\n        });\n\n        const lbl = liqTrouvee ? `${texteLabel}\\nSweep BSL (${liqTrouvee.prix.toFixed(4)})` : texteLabel;\n        labels.push({ id: `c-v-lbl-${i}`, prix: b2.high, date: b2.time, texte: lbl, couleur: bearColor, position: 'above' });\n        points.push({ id: `c-v-pt-${i}`, prix: prixExtreme, date: bougieExt === 1 ? b1.time : b2.time, couleur: bearColor });\n        if (liqTrouvee) {\n          lignes.push({ id: `c-v-lig-${i}`, prix: liqTrouvee.prix, dateDebut: liqTrouvee.tempsOrigine, dateFin: b2.time, couleur: bearColor, epaisseur: 1.5, style: 'dashed', label: `BSL Balayée (+${(liqTrouvee.profondeur * 10000).toFixed(1)} pips)` });\n          boites.push({ id: `c-v-box-${i}`, prixHaut: prixExtreme, prixBas: liqTrouvee.prix, dateDebut: b1.time, dateFin: b2.time, couleurFond: 'rgba(242, 54, 69, 0.15)', couleurBordure: bearColor, label: 'Zone de Sweep' });\n        }\n      }\n    }\n\n    return {\n      donnees: { signaux, statistiques: { totalSignaux: signaux.length, totalAchats: countAchats, totalVentes: countVentes, totalLiquiditesBalayees: countAchatsSweep + countVentesSweep } },\n      primitives: { labels, lignes, boites, points },\n      typeSpecial: 'liquidation-sweep-combo'\n    };\n  }\n};"
+  ]
 }
