@@ -34,10 +34,6 @@ export interface ParametresCandlestickPatterns {
   activerShootingStar?: boolean;
   activerHammer?: boolean;
   activerInvertedHammer?: boolean;
-  // Motif personnalisé : Liquidation & Réintégration (Sweep & Re-entry)
-  activerLiqReint?: boolean;
-  // Tolérance d'écart relatif entre Open(1) et Close(2) par rapport à la taille de la bougie (défaut: 0.05 = 5%)
-  toleranceLiqReint?: number;
 }
 
 /**
@@ -130,12 +126,6 @@ export function calculerCandlestickPatterns(
   const actShootingStar = params.activerShootingStar !== false;
   const actHammer = params.activerHammer !== false;
   const actInvertedHammer = params.activerInvertedHammer !== false;
-  // Motif personnalisé Liquidation & Réintégration (activé par défaut)
-  const actLiqReint = params.activerLiqReint !== false;
-  // Tolérance relative en pourcentage (ex: 0.05 pour 5%, normalise aussi si l'utilisateur entre 5)
-  const toleranceLiqReint = params.toleranceLiqReint !== undefined
-    ? (params.toleranceLiqReint > 1 ? params.toleranceLiqReint / 100 : params.toleranceLiqReint)
-    : 0.05;
 
   const motifsDetectes: MotifDetecte[] = [];
   const labelsVisuels: VisualLabel[] = [];
@@ -689,94 +679,6 @@ export function calculerCandlestickPatterns(
           position: 'below',
         });
         countHaussiers++;
-      }
-    }
-
-    // --------------------------------------------------------------------------
-    // 16. LIQUIDATION & RÉINTÉGRATION (Liq\nReint - Pattern Personnel)
-    //
-    // Principe :
-    // Deux bougies consécutives de sens opposés :
-    // 1. Bougie de Liquidation (i - 1) : Bougie impulsive.
-    // 2. Bougie de Réintégration (i) : Inverse immédiatement la direction.
-    //
-    // Règle de proximité proportionnelle (au lieu de pips fixes) :
-    // Le prix d'ouverture de la bougie de liquidation et la clôture de réintégration
-    // doivent être très proches (|Open1 - Close2| <= tolerance * HauteurMoyenne).
-    // La hauteur de référence est la moyenne des amplitudes des 2 bougies : (range1 + range) / 2.
-    // Cela garantit une adaptation parfaite à tous les actifs et tous les timeframes.
-    // --------------------------------------------------------------------------
-    const range1 = high1 - low1;
-    const hauteurMoyenne = (range1 + range) / 2;
-
-    if (actLiqReint && hauteurMoyenne > 0) {
-      // Écart absolu entre l'ouverture de la liquidation et la clôture de la réintégration
-      const ecartPrix = Math.abs(open1 - close);
-      // Hauteur moyenne des 2 bougies servant de base de proportionnalité
-      const ratioEcart = ecartPrix / hauteurMoyenne;
-      // Vérification de la tolérance (5% par défaut)
-      const estProche = ratioEcart <= toleranceLiqReint;
-
-      // 🔵 Cas Haussier (Bullish) :
-      // - Bougie 1 baissière (liquidation sous un niveau)
-      // - Bougie 2 haussière (réintégration acheteuse)
-      // - Close 2 très proche de Open 1
-      const estBullLiqReint =
-        close1 < open1 &&
-        close > open &&
-        estProche &&
-        tendanceBaisse;
-
-      if (estBullLiqReint) {
-        motifsDetectes.push({
-          nom: 'Bullish Liquidation Reintegration',
-          type: 'BULLISH',
-          texteCourt: 'Liq Reint',
-          indexBougie: i,
-          temps: cActuelle.time,
-          prix: low,
-          position: 'below',
-        });
-        labelsVisuels.push({
-          id: `liq-reint-bull-${i}`,
-          prix: low,
-          date: cActuelle.time,
-          texte: 'Liq\nReint',
-          couleur: bullColor,
-          position: 'below',
-        });
-        countHaussiers++;
-      }
-
-      // 🔴 Cas Baissier (Bearish) :
-      // - Bougie 1 haussière (liquidation au-dessus d'un niveau)
-      // - Bougie 2 baissière (réintégration vendeuse)
-      // - Close 2 très proche de Open 1
-      const estBearLiqReint =
-        close1 > open1 &&
-        close < open &&
-        estProche &&
-        tendanceHausse;
-
-      if (estBearLiqReint) {
-        motifsDetectes.push({
-          nom: 'Bearish Liquidation Reintegration',
-          type: 'BEARISH',
-          texteCourt: 'Liq Reint',
-          indexBougie: i,
-          temps: cActuelle.time,
-          prix: high,
-          position: 'above',
-        });
-        labelsVisuels.push({
-          id: `liq-reint-bear-${i}`,
-          prix: high,
-          date: cActuelle.time,
-          texte: 'Liq\nReint',
-          couleur: bearColor,
-          position: 'above',
-        });
-        countBaissiers++;
       }
     }
   }

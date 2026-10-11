@@ -1,0 +1,147 @@
+{
+  "nom": "Liquidation & Réintégration (Liq / Reint)",
+  "description": "Détecte les setups exclusifs de sweep / liquidation suivis d'une réintégration impulsive immédiate : Bougie 1 étendue (corps+mèches >= 1.75x moyenne), Bougie 2 au corps plein (>= 1.75x moyenne) et clôture asymétrique (marge en deçà <= 5%, marge en dépassement favorable élargie jusqu'à 25%).",
+  "auteur": "TradeLog Strategy",
+  "version": "1.1.0",
+  "type": "overlay",
+  "parametres": {
+    "toleranceDeficit": 0.05,
+    "toleranceDepassement": 0.25,
+    "activerFiltreTaille": true,
+    "periodeHistorique": 10,
+    "multiplicateurBougie1": 1.75,
+    "multiplicateurCorps2": 1.75,
+    "activerAchat": true,
+    "activerVente": true,
+    "bullColor": "#00E676",
+    "bearColor": "#F23645",
+    "texteLabel": "Liq\\nReint",
+    "activerFiltreTendance": false,
+    "trendBars": 5
+  },
+  "definitionsVariables": [
+    {
+      "cle": "toleranceDeficit",
+      "label": "Tolérance en Retrait (En deçà d'Open 1)",
+      "description": "Marge maximale admise si la réintégration reste un peu courte par rapport à l'ouverture de départ (0.05 = 5% de la hauteur moyenne)",
+      "type": "number",
+      "valeurParDefaut": 0.05,
+      "min": 0.01,
+      "max": 0.20,
+      "step": 0.01,
+      "groupe": "Règles de Proximité Asymétrique"
+    },
+    {
+      "cle": "toleranceDepassement",
+      "label": "Tolérance en Dépassement Favorable",
+      "description": "Marge élargie autorisée si la réintégration dépasse l'ouverture de départ dans le sens du retournement (0.25 = 25% de la hauteur moyenne)",
+      "type": "number",
+      "valeurParDefaut": 0.25,
+      "min": 0.05,
+      "max": 1.00,
+      "step": 0.05,
+      "groupe": "Règles de Proximité Asymétrique"
+    },
+    {
+      "cle": "activerFiltreTaille",
+      "label": "Activer le Filtre de Taille & Impulsion",
+      "description": "Exige que les bougies dépassent la moyenne récente pour confirmer un vrai sweep et un fort engagement",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "periodeHistorique",
+      "label": "Période Récente de Référence",
+      "description": "Nombre de bougies d'historique servant à calculer la moyenne de référence",
+      "type": "number",
+      "valeurParDefaut": 10,
+      "min": 3,
+      "max": 50,
+      "step": 1,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "multiplicateurBougie1",
+      "label": "Multiplicateur Bougie 1 (Entière)",
+      "description": "Multiplicateur minimum pour toute la bougie 1 de liquidation (corps + mèches) par rapport à la moyenne des tailles",
+      "type": "number",
+      "valeurParDefaut": 1.75,
+      "min": 1.0,
+      "max": 5.0,
+      "step": 0.05,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "multiplicateurCorps2",
+      "label": "Multiplicateur Bougie 2 (Corps Pur)",
+      "description": "Multiplicateur minimum pour le corps de la bougie 2 de réintégration (sans les mèches) par rapport à la moyenne des corps",
+      "type": "number",
+      "valeurParDefaut": 1.75,
+      "min": 1.0,
+      "max": 5.0,
+      "step": 0.05,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "activerAchat",
+      "label": "Activer Signaux d'Achat (Long)",
+      "description": "Affiche les signaux de réintégration haussière après liquidation vendeuse",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "activerVente",
+      "label": "Activer Signaux de Vente (Short)",
+      "description": "Affiche les signaux de réintégration baissière après liquidation acheteuse",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "bullColor",
+      "label": "Couleur Signal Achat",
+      "description": "Couleur de l'étiquette acheteuse",
+      "type": "string",
+      "valeurParDefaut": "#00E676",
+      "groupe": "Couleurs & Style"
+    },
+    {
+      "cle": "bearColor",
+      "label": "Couleur Signal Vente",
+      "description": "Couleur de l'étiquette vendeuse",
+      "type": "string",
+      "valeurParDefaut": "#F23645",
+      "groupe": "Couleurs & Style"
+    },
+    {
+      "cle": "texteLabel",
+      "label": "Texte Affiché sur le Graphique",
+      "description": "Texte de l'étiquette (utiliser \\n pour un retour à la ligne)",
+      "type": "string",
+      "valeurParDefaut": "Liq\\nReint",
+      "groupe": "Couleurs & Style"
+    },
+    {
+      "cle": "activerFiltreTendance",
+      "label": "Activer Filtre de Tendance Globale",
+      "description": "Exige que le signal aille dans le sens opposé à la tendance des barres précédentes",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "trendBars",
+      "label": "Barres d'Estimation de Tendance",
+      "description": "Nombre de bougies pour estimer la tendance préalable",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "groupe": "Directions & Filtres"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 2) return { donnees: {}, primitives: {} };\n\n    if (typeof calculerLiquidationReintegration === 'function') {\n      const res = calculerLiquidationReintegration(bougies, parametres);\n      return {\n        donnees: res,\n        primitives: res.primitives,\n        typeSpecial: 'liquidation-reintegration'\n      };\n    }\n\n    const params = parametres || {};\n    const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : params.toleranceProximite;\n    const toleranceDeficit = valDeficit !== undefined\n      ? (valDeficit > 1 ? valDeficit / 100 : valDeficit)\n      : 0.05;\n    const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 0.25;\n    const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;\n\n    const activerFiltreTaille = params.activerFiltreTaille !== false;\n    const periodeHistorique = Math.max(3, Number(params.periodeHistorique !== undefined ? params.periodeHistorique : 10));\n    const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 !== undefined ? params.multiplicateurBougie1 : 1.75));\n    const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 !== undefined ? params.multiplicateurCorps2 : 1.75));\n    const activerAchat = params.activerAchat !== false;\n    const activerVente = params.activerVente !== false;\n    const activerFiltreTendance = Boolean(params.activerFiltreTendance);\n    const trendBars = Math.max(1, Number(params.trendBars !== undefined ? params.trendBars : 5));\n    const bullColor = params.bullColor || '#00E676';\n    const bearColor = params.bearColor || '#F23645';\n    const texteLabel = params.texteLabel !== undefined ? params.texteLabel : 'Liq\\nReint';\n\n    const signaux = [];\n    const labels = [];\n    let totalAchats = 0;\n    let totalVentes = 0;\n\n    for (let i = 1; i < bougies.length; i++) {\n      const b1 = bougies[i - 1];\n      const b2 = bougies[i];\n      const range1 = b1.high - b1.low;\n      const range2 = b2.high - b2.low;\n      const corps2 = Math.abs(b2.open - b2.close);\n      const hauteurMoyenne = (range1 + range2) / 2;\n      if (hauteurMoyenne <= 0) continue;\n\n      let tendanceHausse = true;\n      let tendanceBaisse = true;\n      if (activerFiltreTendance) {\n        const idxTrend = Math.max(0, i - trendBars);\n        const openTrend = bougies[idxTrend].open;\n        tendanceHausse = openTrend < b2.open;\n        tendanceBaisse = openTrend > b2.open;\n      }\n\n      const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;\n      const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;\n      if (!estCandidatAchat && !estCandidatVente) continue;\n\n      const ecartPrix = Math.abs(b1.open - b2.close);\n      const ratioEcart = ecartPrix / hauteurMoyenne;\n      let situationCloture = 'RETRAIT';\n      let respecteProximite = false;\n\n      if (estCandidatAchat) {\n        if (b2.close >= b1.open) {\n          situationCloture = 'DEPASSEMENT';\n          respecteProximite = ratioEcart <= toleranceDepassement;\n        } else {\n          situationCloture = 'RETRAIT';\n          respecteProximite = ratioEcart <= toleranceDeficit;\n        }\n      } else if (estCandidatVente) {\n        if (b2.close <= b1.open) {\n          situationCloture = 'DEPASSEMENT';\n          respecteProximite = ratioEcart <= toleranceDepassement;\n        } else {\n          situationCloture = 'RETRAIT';\n          respecteProximite = ratioEcart <= toleranceDeficit;\n        }\n      }\n      if (!respecteProximite) continue;\n\n      let respecteFiltreTaille = true;\n      let moyenneRangeHist = 0;\n      let moyenneCorpsHist = 0;\n\n      if (activerFiltreTaille) {\n        const indexFinHist = i - 2;\n        const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);\n        const nbBougiesHist = indexFinHist - indexDebutHist + 1;\n\n        if (nbBougiesHist >= 3) {\n          let sommeRangesHist = 0;\n          let sommeCorpsHist = 0;\n          for (let k = indexDebutHist; k <= indexFinHist; k++) {\n            const bHist = bougies[k];\n            sommeRangesHist += (bHist.high - bHist.low);\n            sommeCorpsHist += Math.abs(bHist.open - bHist.close);\n          }\n          moyenneRangeHist = sommeRangesHist / nbBougiesHist;\n          moyenneCorpsHist = sommeCorpsHist / nbBougiesHist;\n\n          const bougie1AssezGrande = range1 >= (multiplicateurBougie1 * moyenneRangeHist);\n          const corps2AssezGrand = corps2 >= (multiplicateurCorps2 * moyenneCorpsHist);\n          respecteFiltreTaille = bougie1AssezGrande && corps2AssezGrand;\n        }\n      }\n      if (!respecteFiltreTaille) continue;\n\n      if (estCandidatAchat) {\n        signaux.push({\n          type: 'ACHAT',\n          indexBougie: i,\n          temps: b2.time,\n          prix: b2.low,\n          open1: b1.open,\n          close2: b2.close,\n          ecartPrix,\n          ratioEcart,\n          situationCloture,\n          rangeBougie1: range1,\n          corpsBougie2: corps2,\n          moyenneRangeHist,\n          moyenneCorpsHist\n        });\n        labels.push({\n          id: 'liq-reint-achat-' + i,\n          prix: b2.low,\n          date: b2.time,\n          texte: texteLabel,\n          couleur: bullColor,\n          position: 'below'\n        });\n        totalAchats++;\n      } else if (estCandidatVente) {\n        signaux.push({\n          type: 'VENTE',\n          indexBougie: i,\n          temps: b2.time,\n          prix: b2.high,\n          open1: b1.open,\n          close2: b2.close,\n          ecartPrix,\n          ratioEcart,\n          situationCloture,\n          rangeBougie1: range1,\n          corpsBougie2: corps2,\n          moyenneRangeHist,\n          moyenneCorpsHist\n        });\n        labels.push({\n          id: 'liq-reint-vente-' + i,\n          prix: b2.high,\n          date: b2.time,\n          texte: texteLabel,\n          couleur: bearColor,\n          position: 'above'\n        });\n        totalVentes++;\n      }\n    }\n\n    return {\n      donnees: {\n        signaux,\n        statistiques: {\n          totalSignaux: signaux.length,\n          totalAchats,\n          totalVentes\n        }\n      },\n      primitives: { labels },\n      typeSpecial: 'liquidation-reintegration'\n    };\n  }\n};"
+}

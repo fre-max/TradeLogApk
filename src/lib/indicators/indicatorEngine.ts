@@ -22,11 +22,12 @@ import { calculerMethodeCSlice } from './methodeCSliceDensity';
 import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
 import { calculerFractalZigZag } from './fractalZigZag';
 import { calculerCandlestickPatterns } from './candlestickPatterns';
+import { calculerLiquidationReintegration } from './liquidationReintegration';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
-const VERSION_CATALOGUE_INDICATEURS = '3.6.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.9.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -2864,7 +2865,7 @@ return {
   {
     id: 'script-candlestick-patterns-repo32',
     nom: 'Candlesticks Patterns Identified (repo32)',
-    description: 'Détection automatique de 15 figures en chandeliers japonais (Doji, Engulfing, Harami, Hammer...) + motif exclusif Liquidation & Réintégration (Liq\\nReint) proportionnel.',
+    description: 'Détection automatique de 15 figures en chandeliers japonais (Doji, Engulfing, Harami, Hammer, Morning/Evening Star, Kickers...) selon le script officiel TradingView de repo32 (mise à jour 1-17-26).',
     auteur: 'repo32 / TradeLog',
     version: '1.17.26',
     type: 'overlay',
@@ -2893,25 +2894,12 @@ return {
       activerShootingStar: true,
       activerHammer: true,
       activerInvertedHammer: true,
-      activerLiqReint: true,
-      toleranceLiqReint: 0.05,
     },
     definitionsVariables: [
       {
         cle: 'dojiSize',
         label: 'Taille Relative du Doji',
         description: 'Proportion maximale du corps par rapport à la hauteur totale (0.05 = 5%)',
-        type: 'number',
-        valeurParDefaut: 0.05,
-        min: 0.01,
-        max: 0.20,
-        step: 0.01,
-        groupe: 'Sensibilité & Tendance',
-      },
-      {
-        cle: 'toleranceLiqReint',
-        label: 'Tolérance Liq/Reint (Proportionnelle)',
-        description: 'Marge maximale d\'écart entre Open(1) et Close(2) par rapport à la taille moyenne des 2 bougies (0.05 = 5%)',
         type: 'number',
         valeurParDefaut: 0.05,
         min: 0.01,
@@ -3082,14 +3070,6 @@ return {
         valeurParDefaut: true,
         groupe: 'Sélection des Motifs',
       },
-      {
-        cle: 'activerLiqReint',
-        label: 'Liquidation & Réintégration (Liq\\nReint)',
-        description: 'Détecte le pattern à 2 bougies : sweep extrême puis réintégration avec Close(2) ≈ Open(1)',
-        type: 'boolean',
-        valeurParDefaut: true,
-        groupe: 'Sélection des Motifs',
-      },
     ],
     creeLe: '2026-10-09T00:00:00.000Z',
     misAJourLe: '2026-10-09T00:00:00.000Z',
@@ -3107,6 +3087,175 @@ return {
       donnees: res,
       primitives: res.primitives,
       typeSpecial: 'candlestick-patterns'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-liquidation-reintegration',
+    nom: 'Liquidation & Réintégration (Liq / Reint)',
+    description: 'Détecte les setups exclusifs de sweep / liquidation suivis d\'une réintégration impulsive immédiate : Bougie 1 étendue (corps+mèches >= 1.75x moyenne), Bougie 2 au corps plein (>= 1.75x moyenne) et clôture millimétrée au niveau de l\'ouverture de départ (marge <= 5%).',
+    auteur: 'TradeLog Strategy',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq\\nReint',
+      activerFiltreTendance: false,
+      trendBars: 5,
+    },
+    definitionsVariables: [
+      {
+        cle: 'toleranceDeficit',
+        label: 'Tolérance en Retrait (En deçà d\'Open 1)',
+        description: 'Marge maximale admise si la réintégration reste un peu courte par rapport à l\'ouverture de départ (0.05 = 5% de la hauteur moyenne)',
+        type: 'number',
+        valeurParDefaut: 0.05,
+        min: 0.01,
+        max: 0.20,
+        step: 0.01,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'toleranceDepassement',
+        label: 'Tolérance en Dépassement Favorable',
+        description: 'Marge élargie autorisée si la réintégration dépasse l\'ouverture de départ dans le sens du retournement (0.25 = 25% de la hauteur moyenne)',
+        type: 'number',
+        valeurParDefaut: 0.25,
+        min: 0.05,
+        max: 1.00,
+        step: 0.05,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'activerFiltreTaille',
+        label: 'Activer le Filtre de Taille & Impulsion',
+        description: 'Exige que les bougies dépassent la moyenne récente pour confirmer un vrai sweep et un fort engagement',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'periodeHistorique',
+        label: 'Période Récente de Référence',
+        description: 'Nombre de bougies d\'historique servant à calculer la moyenne de référence',
+        type: 'number',
+        valeurParDefaut: 10,
+        min: 3,
+        max: 50,
+        step: 1,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurBougie1',
+        label: 'Multiplicateur Bougie 1 (Entière)',
+        description: 'Multiplicateur minimum pour toute la bougie 1 de liquidation (corps + mèches) par rapport à la moyenne des tailles',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurCorps2',
+        label: 'Multiplicateur Bougie 2 (Corps Pur)',
+        description: 'Multiplicateur minimum pour le corps de la bougie 2 de réintégration (sans les mèches) par rapport à la moyenne des corps',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'activerAchat',
+        label: 'Activer Signaux d\'Achat (Long)',
+        description: 'Affiche les signaux de réintégration haussière après liquidation vendeuse',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'activerVente',
+        label: 'Activer Signaux de Vente (Short)',
+        description: 'Affiche les signaux de réintégration baissière après liquidation acheteuse',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat',
+        description: 'Couleur de l\'étiquette acheteuse',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Couleurs & Style',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente',
+        description: 'Couleur de l\'étiquette vendeuse',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Couleurs & Style',
+      },
+      {
+        cle: 'texteLabel',
+        label: 'Texte Affiché sur le Graphique',
+        description: 'Texte de l\'étiquette (utiliser \\n pour un retour à la ligne)',
+        type: 'string',
+        valeurParDefaut: 'Liq\\nReint',
+        groupe: 'Couleurs & Style',
+      },
+      {
+        cle: 'activerFiltreTendance',
+        label: 'Activer Filtre de Tendance Globale',
+        description: 'Exige que le signal aille dans le sens opposé à la tendance des barres précédentes',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'trendBars',
+        label: 'Barres d\'Estimation de Tendance',
+        description: 'Nombre de bougies pour estimer la tendance préalable',
+        type: 'number',
+        valeurParDefaut: 5,
+        min: 1,
+        max: 50,
+        step: 1,
+        groupe: 'Directions & Filtres',
+      },
+    ],
+    creeLe: '2026-10-11T00:00:00.000Z',
+    misAJourLe: '2026-10-11T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable Autonome : Liquidation & Réintégration (Liq / Reint)
+ * Détecte les setups impulsifs de sweep suivis d'une réintégration immédiate.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 2) return { donnees: {}, primitives: {} };
+
+    const res = calculerLiquidationReintegration(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liquidation-reintegration'
     };
   }
 };`
@@ -3222,6 +3371,8 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerFractalZigZag(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerCandlestickPatterns')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerCandlestickPatterns(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerLiquidationReintegration')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationReintegration(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeSRTL')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerDetectionLiquiditeSRTL(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeEQ')) {
@@ -3289,20 +3440,70 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
       }
     }
 
-    // Enrichit chaque indicateur avec ses definitionsVariables si absentes
-    return scripts.map((s) => {
+    // 🔄 Migration à la volée et nettoyage automatique pour garantir que les définitions officielles
+    // sont toujours parfaitement à jour (notamment la proximité asymétrique : toleranceDeficit et toleranceDepassement)
+    let aModifieAuVol = false;
+    const scriptsAjustes = scripts.map((s) => {
+      const officiel = INDICATEURS_PAR_DEFAUT.find((def) => def.id === s.id);
+      if (officiel) {
+        const paramsMigres = { ...officiel.parametres, ...(s.parametres || {}) };
+        if (paramsMigres.toleranceProximite !== undefined) {
+          if (paramsMigres.toleranceDeficit === undefined) {
+            paramsMigres.toleranceDeficit = paramsMigres.toleranceProximite;
+          }
+          if (paramsMigres.toleranceDepassement === undefined) {
+            paramsMigres.toleranceDepassement = 0.25;
+          }
+          delete paramsMigres.toleranceProximite;
+          aModifieAuVol = true;
+        }
+
+        return {
+          ...s,
+          nom: officiel.nom,
+          description: officiel.description,
+          code: officiel.code,
+          definitionsVariables: officiel.definitionsVariables,
+          parametres: paramsMigres,
+        };
+      }
+
+      // Si c'est un indicateur importé ou personnalisé de Liquidation & Réintégration
+      if (s.id.includes('liquidation') || s.nom.toLowerCase().includes('liquidation')) {
+        const officielLiq = INDICATEURS_PAR_DEFAUT.find((def) => def.id === 'script-liquidation-reintegration');
+        if (officielLiq?.definitionsVariables) {
+          const paramsMigres = { ...officielLiq.parametres, ...(s.parametres || {}) };
+          if (paramsMigres.toleranceProximite !== undefined) {
+            if (paramsMigres.toleranceDeficit === undefined) {
+              paramsMigres.toleranceDeficit = paramsMigres.toleranceProximite;
+            }
+            if (paramsMigres.toleranceDepassement === undefined) {
+              paramsMigres.toleranceDepassement = 0.25;
+            }
+            delete paramsMigres.toleranceProximite;
+            aModifieAuVol = true;
+          }
+          return {
+            ...s,
+            definitionsVariables: officielLiq.definitionsVariables,
+            parametres: paramsMigres,
+          };
+        }
+      }
+
       if (s.definitionsVariables && s.definitionsVariables.length > 0) {
         return s;
-      }
-      const officiel = INDICATEURS_PAR_DEFAUT.find((def) => def.id === s.id);
-      if (officiel?.definitionsVariables) {
-        return { ...s, definitionsVariables: officiel.definitionsVariables };
       }
       return {
         ...s,
         definitionsVariables: genererDefinitionsVariablesAutomatiques(s.parametres || {}),
       };
     });
+
+    if (aModifieAuVol) {
+      localStorage.setItem(CLE_STORAGE_INDICATEURS, JSON.stringify(scriptsAjustes));
+    }
+    return scriptsAjustes;
   } catch (err) {
     console.warn('⚠️ [IndicatorEngine] Impossible de lire les indicateurs du stockage local:', err);
     return INDICATEURS_PAR_DEFAUT;
@@ -3397,6 +3598,7 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerWyckoffPointAndFigure',
       'calculerFractalZigZag',
       'calculerCandlestickPatterns',
+      'calculerLiquidationReintegration',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -3441,7 +3643,8 @@ export function evaluerIndicateurScript(
       calculerCompleteSetupVisualizer,
       calculerWyckoffPointAndFigure,
       calculerFractalZigZag,
-      calculerCandlestickPatterns
+      calculerCandlestickPatterns,
+      calculerLiquidationReintegration
     );
 
     // 2️⃣ Si le script expose une méthode calculer()

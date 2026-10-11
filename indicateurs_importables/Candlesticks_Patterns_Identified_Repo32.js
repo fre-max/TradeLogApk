@@ -43,11 +43,6 @@ return {
     const actShootingStar = params.activerShootingStar !== false;
     const actHammer = params.activerHammer !== false;
     const actInvertedHammer = params.activerInvertedHammer !== false;
-    // Motif personnel : Liquidation & Réintégration (Liq\nReint)
-    const actLiqReint = params.activerLiqReint !== false;
-    const toleranceLiqReint = params.toleranceLiqReint !== undefined
-      ? (params.toleranceLiqReint > 1 ? params.toleranceLiqReint / 100 : params.toleranceLiqReint)
-      : 0.05;
 
     const motifs = [];
     const labels = [];
@@ -404,44 +399,6 @@ return {
             position: 'below'
           });
           countHaussiers++;
-        }
-      }
-
-      // 16. LIQUIDATION & RÉINTÉGRATION ("Liq\nReint")
-      // Approximation dynamique proportionnelle : |Open(1) - Close(2)| <= tolerance * ((Range1 + Range2) / 2)
-      const range1 = high1 - low1;
-      const hauteurMoyenne = (range1 + range) / 2;
-      if (actLiqReint && hauteurMoyenne > 0) {
-        const ecartPrix = Math.abs(open1 - close);
-        const ratioEcart = ecartPrix / hauteurMoyenne;
-        const estProche = ratioEcart <= toleranceLiqReint;
-
-        // Cas Haussier (Bullish) : bougie 1 rouge, bougie 2 verte qui réintègre et clôture ≈ Open 1
-        if (close1 < open1 && close > open && estProche && tendanceBaisse) {
-          motifs.push({ nom: 'Bullish Liquidation Reintegration', type: 'BULLISH', index: i, temps: b.time });
-          labels.push({
-            id: 'liq-reint-bull-' + i,
-            prix: low,
-            date: b.time,
-            texte: 'Liq\nReint',
-            couleur: bullColor,
-            position: 'below'
-          });
-          countHaussiers++;
-        }
-
-        // Cas Baissier (Bearish) : bougie 1 verte, bougie 2 rouge qui réintègre et clôture ≈ Open 1
-        if (close1 > open1 && close < open && estProche && tendanceHausse) {
-          motifs.push({ nom: 'Bearish Liquidation Reintegration', type: 'BEARISH', index: i, temps: b.time });
-          labels.push({
-            id: 'liq-reint-bear-' + i,
-            prix: high,
-            date: b.time,
-            texte: 'Liq\nReint',
-            couleur: bearColor,
-            position: 'above'
-          });
-          countBaissiers++;
         }
       }
     }

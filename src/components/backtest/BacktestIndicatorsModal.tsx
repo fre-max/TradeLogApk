@@ -144,16 +144,32 @@ export const BacktestIndicatorsModal: React.FC<BacktestIndicatorsModalProps> = (
     afficherAlerte('✅ Paramètres enregistrés et appliqués en direct sur le graphique !');
   };
 
-  // 🔄 Rétablit les paramètres par défaut de l'indicateur sélectionné
+  // 🔄 Rétablit les paramètres et définitions par défaut de l'indicateur sélectionné
   const reinitialiserParametresIndicateur = () => {
     if (!indicateurSelectionne) return;
 
     const officiel = INDICATEURS_PAR_DEFAUT.find((d) => d.id === indicateurSelectionne.id);
-    let paramsParDefaut: Record<string, any> = {};
-
     if (officiel) {
-      paramsParDefaut = { ...officiel.parametres };
-    } else if (indicateurSelectionne.definitionsVariables) {
+      const indReinit: IndicatorScript = {
+        ...indicateurSelectionne,
+        parametres: { ...officiel.parametres },
+        definitionsVariables: officiel.definitionsVariables ? [...officiel.definitionsVariables] : [],
+        code: officiel.code,
+        nom: officiel.nom,
+        description: officiel.description,
+        misAJourLe: new Date().toISOString(),
+      };
+      setIndicateurSelectionne(indReinit);
+      setParametresTexte(JSON.stringify(officiel.parametres, null, 2));
+      sauvegarderScriptIndicateur(indReinit);
+      sauvegarderIndicateurStocke(indReinit);
+      setIndicateurs((prev) => prev.map((s) => (s.id === indReinit.id ? indReinit : s)));
+      afficherAlerte('🔄 Indicateur entièrement réinitialisé aux valeurs officielles.');
+      return;
+    }
+
+    let paramsParDefaut: Record<string, any> = {};
+    if (indicateurSelectionne.definitionsVariables) {
       for (const def of indicateurSelectionne.definitionsVariables) {
         paramsParDefaut[def.cle] = def.valeurParDefaut;
       }
