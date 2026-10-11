@@ -23,11 +23,13 @@ import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
 import { calculerFractalZigZag } from './fractalZigZag';
 import { calculerCandlestickPatterns } from './candlestickPatterns';
 import { calculerLiquidationReintegration } from './liquidationReintegration';
+import { calculerLiquidationSweepCombo } from './liquidationSweepCombo';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
-const VERSION_CATALOGUE_INDICATEURS = '3.9.0';
+const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
+const VERSION_CATALOGUE_INDICATEURS = '3.11.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -3259,6 +3261,226 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-liquidation-sweep-combo',
+    nom: 'Liq/Reint + Sweep Liquidité (BSL/SSL)',
+    description: 'Combine le setup de chandelier Liquidation & Réintégration avec la détection de la liquidité balayée. Montre précisément la ligne du niveau SSL ou BSL qui a été balayé par la mèche extrême, la zone de sweep et le signal de reprise.',
+    auteur: 'TradeLog Strategy',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      exigerLiquiditeBalayee: true,
+      sensibilitePivotLiquidite: 4,
+      lookbackLiquidite: 100,
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      afficherLigneLiquidite: true,
+      afficherZoneSweep: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+      activerFiltreTendance: false,
+      trendBars: 5,
+    },
+    definitionsVariables: [
+      {
+        cle: 'exigerLiquiditeBalayee',
+        label: 'Exiger Liquidité Antérieure Balayée',
+        description: 'Ne valide le setup QUE si le point extrême (mèche) a réellement balayé un creux (SSL) ou sommet (BSL) préalable',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre de Prise de Liquidité',
+      },
+      {
+        cle: 'sensibilitePivotLiquidite',
+        label: 'Sensibilité Détection Liquidité',
+        description: 'Nombre de bougies pour valider un niveau de creux ou de sommet de référence dans le passé',
+        type: 'number',
+        valeurParDefaut: 4,
+        min: 2,
+        max: 15,
+        step: 1,
+        groupe: 'Filtre de Prise de Liquidité',
+      },
+      {
+        cle: 'lookbackLiquidite',
+        label: 'Historique Recherche Liquidité',
+        description: 'Nombre maximal de bougies antérieures scannées pour trouver le niveau balayé',
+        type: 'number',
+        valeurParDefaut: 100,
+        min: 10,
+        max: 500,
+        step: 10,
+        groupe: 'Filtre de Prise de Liquidité',
+      },
+      {
+        cle: 'afficherLigneLiquidite',
+        label: 'Afficher la Ligne de Liquidité Balayée',
+        description: 'Trace la ligne en pointillés reliant le creux ou sommet d\'origine jusqu\'au moment du balayage',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherZoneSweep',
+        label: 'Afficher la Boîte de Zone de Sweep',
+        description: 'Affiche le rectangle semi-transparent illustrant l\'espace balayé sous ou sur la liquidité',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'toleranceDeficit',
+        label: 'Tolérance en Retrait (En deçà d\'Open 1)',
+        description: 'Marge maximale admise si la réintégration reste un peu courte par rapport à l\'ouverture de départ (0.05 = 5% de la hauteur moyenne)',
+        type: 'number',
+        valeurParDefaut: 0.05,
+        min: 0.01,
+        max: 0.20,
+        step: 0.01,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'toleranceDepassement',
+        label: 'Tolérance en Dépassement Favorable',
+        description: 'Marge élargie autorisée si la réintégration dépasse l\'ouverture de départ dans le sens du retournement (0.25 = 25% de la hauteur moyenne)',
+        type: 'number',
+        valeurParDefaut: 0.25,
+        min: 0.05,
+        max: 1.00,
+        step: 0.05,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'activerFiltreTaille',
+        label: 'Activer le Filtre de Taille & Impulsion',
+        description: 'Exige que les bougies dépassent la moyenne récente pour confirmer un vrai sweep et un fort engagement',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'periodeHistorique',
+        label: 'Période Récente de Référence',
+        description: 'Nombre de bougies d\'historique servant à calculer la moyenne de référence',
+        type: 'number',
+        valeurParDefaut: 10,
+        min: 3,
+        max: 50,
+        step: 1,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurBougie1',
+        label: 'Multiplicateur Bougie 1 (Entière)',
+        description: 'Multiplicateur minimum pour toute la bougie 1 de liquidation (corps + mèches) par rapport à la moyenne des tailles',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurCorps2',
+        label: 'Multiplicateur Bougie 2 (Corps Pur)',
+        description: 'Multiplicateur minimum pour le corps de la bougie 2 de réintégration (sans les mèches) par rapport à la moyenne des corps',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'activerAchat',
+        label: 'Activer Signaux d\'Achat (Long)',
+        description: 'Affiche les signaux d\'achat (Spring / Sweep de creux SSL)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'activerVente',
+        label: 'Activer Signaux de Vente (Short)',
+        description: 'Affiche les signaux de vente (UTAD / Sweep de sommet BSL)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat',
+        description: 'Couleur de l\'étiquette et de la ligne de liquidité balayée acheteuse',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente',
+        description: 'Couleur de l\'étiquette et de la ligne de liquidité balayée vendeuse',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'texteLabel',
+        label: 'Texte du Signal',
+        description: 'Texte affiché sur le graphique au moment de la confirmation',
+        type: 'string',
+        valeurParDefaut: 'Liq/Reint',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'activerFiltreTendance',
+        label: 'Activer Filtre de Tendance Globale',
+        description: 'Exige que le signal aille dans le sens opposé à la tendance des barres précédentes',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'trendBars',
+        label: 'Barres d\'Estimation de Tendance',
+        description: 'Nombre de bougies pour estimer la tendance préalable',
+        type: 'number',
+        valeurParDefaut: 5,
+        min: 1,
+        max: 50,
+        step: 1,
+        groupe: 'Directions & Filtres',
+      },
+    ],
+    creeLe: '2026-10-11T00:00:00.000Z',
+    misAJourLe: '2026-10-11T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Liq/Reint + Sweep Liquidité (BSL/SSL)
+ * Détecte le setup de réintégration et identifie la liquidité antérieure balayée.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };
+
+    const res = calculerLiquidationSweepCombo(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liquidation-sweep-combo'
+    };
+  }
+};`
   }
 ];
 
@@ -3371,6 +3593,8 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerFractalZigZag(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerCandlestickPatterns')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerCandlestickPatterns(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerLiquidationSweepCombo')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepCombo(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationReintegration')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationReintegration(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerDetectionLiquiditeSRTL')) {
@@ -3409,23 +3633,34 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
       const parsed = JSON.parse(jsonStocke) as IndicatorScript[];
       scripts = Array.isArray(parsed) && parsed.length > 0 ? parsed : INDICATEURS_PAR_DEFAUT;
 
-      // 🚀 Migration des nouveaux indicateurs officiels (ex: script-detection-liquidite et script-sweep-spring-validation)
-      // Exécutée une seule fois lors de la montée de version pour ne jamais réintroduire un indicateur supprimé par l'utilisateur
       const versionEnregistree = localStorage.getItem(CLE_STORAGE_VERSION_INDICATEURS);
+      const supprimesRaw = localStorage.getItem(CLE_STORAGE_INDICATEURS_SUPPRIMES);
+      const supprimesList: string[] = supprimesRaw ? JSON.parse(supprimesRaw) : [];
+      const setSupprimes = new Set(supprimesList);
+
+      const idsExistants = new Set(scripts.map((s) => s.id));
+      let aModifie = false;
+
+      // 🚀 Ajout automatique immédiat de tout nouvel indicateur officiel (ex: Liq/Reint + Sweep)
+      // s'il manque dans la liste et n'a pas été explicitement supprimé par l'utilisateur
+      for (const indDefaut of INDICATEURS_PAR_DEFAUT) {
+        if (!idsExistants.has(indDefaut.id) && !setSupprimes.has(indDefaut.id)) {
+          scripts.push(indDefaut);
+          idsExistants.add(indDefaut.id);
+          aModifie = true;
+          console.log(`✨ [IndicatorEngine] Nouvel indicateur officiel injecté automatiquement : ${indDefaut.nom}`);
+        }
+      }
+
+      // 🚀 Migration des mises à jour lors d'une montée de version du catalogue
       if (versionEnregistree !== VERSION_CATALOGUE_INDICATEURS) {
-        const idsExistants = new Set(scripts.map((s) => s.id));
-        let aModifie = false;
         for (const indDefaut of INDICATEURS_PAR_DEFAUT) {
-          if (!idsExistants.has(indDefaut.id)) {
-            scripts.push(indDefaut);
-            aModifie = true;
-          } else if (indDefaut.id.startsWith('script-')) {
-            // Mise à jour du code, du nom et des variables de l'indicateur officiel
+          if (indDefaut.id.startsWith('script-') && !setSupprimes.has(indDefaut.id)) {
             const idx = scripts.findIndex((s) => s.id === indDefaut.id);
             if (idx !== -1) {
               scripts[idx] = {
                 ...indDefaut,
-                visibleSurGraphique: indDefaut.id === 'script-sweep-spring-validation' ? true : (scripts[idx].visibleSurGraphique !== undefined ? scripts[idx].visibleSurGraphique : indDefaut.visibleSurGraphique),
+                visibleSurGraphique: scripts[idx].visibleSurGraphique !== undefined ? scripts[idx].visibleSurGraphique : indDefaut.visibleSurGraphique,
                 parametres: { ...indDefaut.parametres, ...scripts[idx].parametres },
               };
               aModifie = true;
@@ -3433,10 +3668,11 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
           }
         }
         localStorage.setItem(CLE_STORAGE_VERSION_INDICATEURS, VERSION_CATALOGUE_INDICATEURS);
-        if (aModifie) {
-          localStorage.setItem(CLE_STORAGE_INDICATEURS, JSON.stringify(scripts));
-          console.log('🔄 [IndicatorEngine] Nouveaux indicateurs officiels synchronisés dans le stockage local.');
-        }
+      }
+
+      if (aModifie) {
+        localStorage.setItem(CLE_STORAGE_INDICATEURS, JSON.stringify(scripts));
+        console.log('🔄 [IndicatorEngine] Stockage local des indicateurs synchronisé.');
       }
     }
 
@@ -3466,6 +3702,18 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
           definitionsVariables: officiel.definitionsVariables,
           parametres: paramsMigres,
         };
+      }
+
+      // Si c'est un indicateur importé ou personnalisé de Combo Sweep Liquidité
+      if (s.id.includes('combo') || s.nom.toLowerCase().includes('combo') || s.nom.toLowerCase().includes('sweep')) {
+        const officielCombo = INDICATEURS_PAR_DEFAUT.find((def) => def.id === 'script-liquidation-sweep-combo');
+        if (officielCombo?.definitionsVariables) {
+          return {
+            ...s,
+            definitionsVariables: officielCombo.definitionsVariables,
+            parametres: { ...officielCombo.parametres, ...(s.parametres || {}) },
+          };
+        }
       }
 
       // Si c'est un indicateur importé ou personnalisé de Liquidation & Réintégration
@@ -3546,6 +3794,15 @@ export function supprimerIndicateurStocke(idIndicateur: string): void {
     const scripts = recupererIndicateursStockes();
     const filtres = scripts.filter(s => s.id !== idIndicateur);
     localStorage.setItem(CLE_STORAGE_INDICATEURS, JSON.stringify(filtres));
+
+    // Mémorise la suppression pour ne pas le réinjecter automatiquement au redémarrage
+    const supprimesRaw = localStorage.getItem(CLE_STORAGE_INDICATEURS_SUPPRIMES);
+    const supprimesList: string[] = supprimesRaw ? JSON.parse(supprimesRaw) : [];
+    if (!supprimesList.includes(idIndicateur)) {
+      supprimesList.push(idIndicateur);
+      localStorage.setItem(CLE_STORAGE_INDICATEURS_SUPPRIMES, JSON.stringify(supprimesList));
+    }
+
     console.log(`🗑️ [IndicatorEngine] Indicateur "${idIndicateur}" supprimé.`);
   } catch (err) {
     console.error('❌ [IndicatorEngine] Erreur lors de la suppression de l\'indicateur:', err);
@@ -3557,6 +3814,7 @@ export function supprimerIndicateurStocke(idIndicateur: string): void {
  */
 export function reinitialiserIndicateursParDefaut(): IndicatorScript[] {
   try {
+    localStorage.removeItem(CLE_STORAGE_INDICATEURS_SUPPRIMES);
     localStorage.setItem(CLE_STORAGE_INDICATEURS, JSON.stringify(INDICATEURS_PAR_DEFAUT));
     localStorage.setItem(CLE_STORAGE_VERSION_INDICATEURS, VERSION_CATALOGUE_INDICATEURS);
     console.log('🔄 [IndicatorEngine] Indicateurs réinitialisés aux valeurs d\'origine.');
@@ -3599,6 +3857,7 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerFractalZigZag',
       'calculerCandlestickPatterns',
       'calculerLiquidationReintegration',
+      'calculerLiquidationSweepCombo',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -3644,7 +3903,8 @@ export function evaluerIndicateurScript(
       calculerWyckoffPointAndFigure,
       calculerFractalZigZag,
       calculerCandlestickPatterns,
-      calculerLiquidationReintegration
+      calculerLiquidationReintegration,
+      calculerLiquidationSweepCombo
     );
 
     // 2️⃣ Si le script expose une méthode calculer()
