@@ -1,15 +1,19 @@
 {
   "nom": "Liq/Reint + Sweep Liquidité (BSL/SSL)",
-  "description": "Combine le setup de chandelier Liquidation & Réintégration avec la détection de la liquidité balayée et l'analyse des Multi-Liquidations sur Support/Résistance (Simple 1x, Double 2x, Triple 3x). Montre précisément la ligne du niveau SSL ou BSL qui a été balayé par la mèche extrême, la zone de sweep et le signal de reprise.",
+  "description": "Combine le setup de chandelier Liquidation & Réintégration avec la détection de la liquidité balayée la plus adaptée (proportionnalité, relief du pivot et proximité). Montre précisément la ligne du niveau SSL ou BSL qui a été balayé par la mèche extrême, la zone de sweep et le signal de reprise avec score de pertinence.",
   "auteur": "TradeLog Strategy",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "overlay",
   "parametres": {
     "exigerLiquiditeBalayee": true,
-    "sensibilitePivotLiquidite": 4,
-    "lookbackLiquidite": 100,
-    "toleranceZoneSR": 0.15,
-    "seuilMinLiquidations": 1,
+    "modeSelectionLiquidite": "SCORE_OPTIMAL",
+    "sensibilitePivotLiquidite": 3,
+    "lookbackLiquidite": 80,
+    "distanceMinBougies": 3,
+    "reliefMinPivot": 0.5,
+    "penetrationMaxRatio": 1.5,
+    "penetrationMinRatio": 0.05,
+    "exigerNiveauIntact": true,
     "toleranceDeficit": 0.05,
     "toleranceDepassement": 0.25,
     "activerFiltreTaille": true,
@@ -19,12 +23,13 @@
     "activerAchat": true,
     "activerVente": true,
     "afficherLigneLiquidite": true,
-    "afficherLignesMultiSweep": true,
     "afficherZoneSweep": true,
-    "afficherZoneSR": true,
+    "afficherBadgeScore": true,
     "bullColor": "#00E676",
     "bearColor": "#F23645",
-    "texteLabel": "Liq/Reint"
+    "texteLabel": "Liq/Reint",
+    "activerFiltreTendance": false,
+    "trendBars": 5
   },
   "definitionsVariables": [
     {
@@ -33,56 +38,99 @@
       "description": "Ne valide le setup QUE si le point extrême (mèche) a réellement balayé un creux (SSL) ou sommet (BSL) préalable",
       "type": "boolean",
       "valeurParDefaut": true,
-      "groupe": "Filtre de Prise de Liquidité"
+      "groupe": "Sélection de la Liquidité Adaptée"
+    },
+    {
+      "cle": "modeSelectionLiquidite",
+      "label": "Mode de Sélection de Liquidité",
+      "description": "SCORE_OPTIMAL (compromis relief/pénétration/proximité), SWING_MAJEUR (plus fort relief) ou RECENT_VALIDE (premier niveau récent)",
+      "type": "select",
+      "valeurParDefaut": "SCORE_OPTIMAL",
+      "options": [
+        { "label": "Score Optimal (Recommandé)", "value": "SCORE_OPTIMAL" },
+        { "label": "Swing Majeur (Plus Fort Relief)", "value": "SWING_MAJEUR" },
+        { "label": "Récent Valide (Structure Immédiate)", "value": "RECENT_VALIDE" }
+      ],
+      "groupe": "Sélection de la Liquidité Adaptée"
     },
     {
       "cle": "sensibilitePivotLiquidite",
-      "label": "Sensibilité Détection Liquidité",
-      "description": "Nombre de bougies pour valider un niveau de creux ou de sommet de référence dans le passé",
+      "label": "Sensibilité Détection Pivot",
+      "description": "Nombre de bougies à gauche et à droite pour valider un sommet ou un creux",
       "type": "number",
-      "valeurParDefaut": 4,
+      "valeurParDefaut": 3,
       "min": 2,
-      "max": 15,
+      "max": 10,
       "step": 1,
-      "groupe": "Filtre de Prise de Liquidité"
+      "groupe": "Sélection de la Liquidité Adaptée"
     },
     {
       "cle": "lookbackLiquidite",
-      "label": "Historique Recherche Liquidité",
+      "label": "Historique Recherche (Bougies)",
       "description": "Nombre maximal de bougies antérieures scannées pour trouver le niveau balayé",
       "type": "number",
-      "valeurParDefaut": 100,
+      "valeurParDefaut": 80,
       "min": 10,
-      "max": 500,
+      "max": 300,
       "step": 10,
-      "groupe": "Filtre de Prise de Liquidité"
+      "groupe": "Sélection de la Liquidité Adaptée"
     },
     {
-      "cle": "toleranceZoneSR",
-      "label": "Tolérance Zone S/R (% Prix)",
-      "description": "Marge en pourcentage pour regrouper les sommets ou creux sur la même zone de support/résistance (0.15 = 0.15%)",
+      "cle": "distanceMinBougies",
+      "label": "Distance Minimale (Bougies)",
+      "description": "Écart minimal en bougies pour ignorer le micro-bruit interne immédiat",
       "type": "number",
-      "valeurParDefaut": 0.15,
-      "min": 0.01,
-      "max": 1.0,
-      "step": 0.01,
-      "groupe": "Multi-Liquidation & Niveaux S/R"
-    },
-    {
-      "cle": "seuilMinLiquidations",
-      "label": "Type de Liquidation Requis",
-      "description": "1 = Tous les signaux (Simple 1x, Double 2x, Triple 3x), 2 = Doubles & Triples sweeps uniquement (>= 2), 3 = Triples sweeps uniquement (3x)",
-      "type": "number",
-      "valeurParDefaut": 1,
+      "valeurParDefaut": 3,
       "min": 1,
-      "max": 3,
+      "max": 20,
       "step": 1,
-      "groupe": "Multi-Liquidation & Niveaux S/R"
+      "groupe": "Sélection de la Liquidité Adaptée"
     },
     {
-      "cle": "afficherLignesMultiSweep",
-      "label": "Lignes vers Balayages Antérieurs",
-      "description": "Trace des lignes reliant tous les sommets ou creux antérieurs qui forment la multi-liquidation",
+      "cle": "reliefMinPivot",
+      "label": "Relief Minimal du Pivot (Ratio)",
+      "description": "Hauteur minimale du creux ou sommet par rapport à la taille moyenne d'une bougie (0.5 = 50% de la taille moyenne)",
+      "type": "number",
+      "valeurParDefaut": 0.5,
+      "min": 0.1,
+      "max": 3.0,
+      "step": 0.1,
+      "groupe": "Proportionnalité & Pénétration"
+    },
+    {
+      "cle": "penetrationMaxRatio",
+      "label": "Pénétration Maximale Tolérée (Ratio)",
+      "description": "Dépassement maximal au-delà du niveau pour éviter les cassures franches / breakouts violents (1.5 = 150%)",
+      "type": "number",
+      "valeurParDefaut": 1.5,
+      "min": 0.5,
+      "max": 5.0,
+      "step": 0.1,
+      "groupe": "Proportionnalité & Pénétration"
+    },
+    {
+      "cle": "penetrationMinRatio",
+      "label": "Pénétration Minimale Requise (Ratio)",
+      "description": "Dépassement minimal nécessaire pour confirmer le déclenchement effectif des stop-loss (0.05 = 5%)",
+      "type": "number",
+      "valeurParDefaut": 0.05,
+      "min": 0.01,
+      "max": 0.5,
+      "step": 0.01,
+      "groupe": "Proportionnalité & Pénétration"
+    },
+    {
+      "cle": "exigerNiveauIntact",
+      "label": "Exiger Niveau Intact (Non-Mitigé)",
+      "description": "Garantit que le niveau n'a jamais été percé avant notre setup (liquidité fraîche)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Proportionnalité & Pénétration"
+    },
+    {
+      "cle": "afficherBadgeScore",
+      "label": "Afficher Badge de Score & Qualité",
+      "description": "Affiche la note de pertinence sur 100 et le statut majeur/mineur sur l'étiquette",
       "type": "boolean",
       "valeurParDefaut": true,
       "groupe": "Visuels & Graphique"
@@ -99,14 +147,6 @@
       "cle": "afficherZoneSweep",
       "label": "Afficher la Boîte de Zone de Sweep",
       "description": "Affiche le rectangle semi-transparent illustrant l'espace balayé sous ou sur la liquidité",
-      "type": "boolean",
-      "valeurParDefaut": true,
-      "groupe": "Visuels & Graphique"
-    },
-    {
-      "cle": "afficherZoneSR",
-      "label": "Afficher la Boîte de Zone S/R",
-      "description": "Affiche le rectangle semi-transparent englobant la zone de support ou résistance multi-testée",
       "type": "boolean",
       "valeurParDefaut": true,
       "groupe": "Visuels & Graphique"
@@ -213,6 +253,26 @@
       "type": "string",
       "valeurParDefaut": "Liq/Reint",
       "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "activerFiltreTendance",
+      "label": "Activer Filtre de Tendance Globale",
+      "description": "Exige que le signal aille dans le sens opposé à la tendance des barres précédentes",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "trendBars",
+      "label": "Barres d'Estimation de Tendance",
+      "description": "Nombre de bougies pour estimer la tendance préalable",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "groupe": "Directions & Filtres"
     }
-  ]
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };\n\n    const res = calculerLiquidationSweepCombo(bougies, parametres);\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'liquidation-sweep-combo'\n    };\n  }\n};"
 }

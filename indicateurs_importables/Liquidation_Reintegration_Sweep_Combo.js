@@ -1,16 +1,14 @@
 /**
  * ==============================================================================
  * INDICATEUR SCRIPTABLE AUTONOME : LIQ/REINT + SWEEP LIQUIDITÉ (BSL/SSL)
- * Version 1.1.0
+ * Version 1.2.0
  * 
  * Combine le setup de Price Action Liquidation & Réintégration avec l'analyse
- * de la liquidité balayée dans l'historique et la détection des Multi-Liquidations
- * sur Support / Résistance (Simple 1x, Double 2x, Triple 3x) :
+ * et la sélection intelligente de la Liquidité la plus Adaptée (BSL/SSL) :
  * 1. Détecte le setup à 2 bougies (Bougie 1 étendue + Bougie 2 réintégration avec proximité asymétrique).
- * 2. Identifie quelle liquidité vendeuse (SSL) ou acheteuse (BSL) préalable a été balayée
- *    par la mèche extrême du setup (par Bougie 1 ou Bougie 2).
- * 3. Analyse si ce niveau S/R a subi de multiples balayages (Double ou Triple Liquidation).
- * 4. Trace la ligne de liquidité balayée, les lignes de multi-sweep et délimite les zones.
+ * 2. Identifie et sélectionne la liquidité la plus pertinente balayée par la mèche extrême,
+ *    en évaluant la proportionnalité de la pénétration, le relief du pivot et la proximité.
+ * 3. Trace la ligne de liquidité balayée avec badge de score et délimite la zone de sweep.
  * 
  * 💡 UTILISATION SANS RÉINSTALLER L'APK :
  * 1. Transférez ce fichier sur votre smartphone.
@@ -27,6 +25,7 @@ return {
       return { donnees: {}, primitives: { labels: [], lignes: [], boites: [], points: [] } };
     }
 
+    // Si la fonction native du moteur est présente dans l'environnement
     if (typeof calculerLiquidationSweepCombo === 'function') {
       const res = calculerLiquidationSweepCombo(bougies, parametres);
       return {
@@ -43,15 +42,16 @@ return {
     const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 0.25;
     const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;
 
-    const sensibiliteLiquidite = Math.max(2, Number(params.sensibilitePivotLiquidite ?? 4));
-    const lookbackLiquidite = Math.max(10, Number(params.lookbackLiquidite ?? 100));
+    const modeSelection = params.modeSelectionLiquidite || 'SCORE_OPTIMAL';
+    const sensibiliteLiquidite = Math.max(2, Number(params.sensibilitePivotLiquidite ?? 3));
+    const lookbackLiquidite = Math.max(10, Number(params.lookbackLiquidite ?? 80));
+    const distanceMinBougies = Math.max(1, Number(params.distanceMinBougies ?? 3));
     const exigerLiquidite = params.exigerLiquiditeBalayee !== false;
 
-    const valZoneSR = params.toleranceZoneSR !== undefined ? params.toleranceZoneSR : 0.15;
-    const toleranceZoneSR = valZoneSR > 1 ? valZoneSR / 100 : (valZoneSR >= 0.05 ? valZoneSR / 100 : valZoneSR);
-    const seuilMinLiquidations = Math.max(1, Math.min(3, Number(params.seuilMinLiquidations ?? 1)));
-    const afficherLignesMultiSweep = params.afficherLignesMultiSweep !== false;
-    const afficherZoneSR = params.afficherZoneSR !== false;
+    const reliefMinPivot = Math.max(0.1, Number(params.reliefMinPivot ?? 0.5));
+    const penetrationMaxRatio = Math.max(0.5, Number(params.penetrationMaxRatio ?? 1.5));
+    const penetrationMinRatio = Math.max(0.01, Number(params.penetrationMinRatio ?? 0.05));
+    const exigerNiveauIntact = params.exigerNiveauIntact !== false;
 
     const activerFiltreTaille = params.activerFiltreTaille !== false;
     const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));
@@ -63,6 +63,9 @@ return {
     const bullColor = params.bullColor || '#00E676';
     const bearColor = params.bearColor || '#F23645';
     const texteLabel = params.texteLabel || 'Liq/Reint';
+    const afficherLignes = params.afficherLigneLiquidite !== false;
+    const afficherZones = params.afficherZoneSweep !== false;
+    const afficherBadgeScore = params.afficherBadgeScore !== false;
 
     const signaux = [];
     const labels = [];
@@ -73,11 +76,12 @@ return {
     let countVentes = 0;
     let countAchatsSweep = 0;
     let countVentesSweep = 0;
-    let countSimples = 0;
-    let countDoubles = 0;
-    let countTriples = 0;
+    let countMajeurs = 0;
+    let countMoyens = 0;
+    let countMineurs = 0;
+    let sommeScores = 0;
 
-    // Détection locale des pivots
+    // Fonctions locales de détection de pivots
     function estPivotHaut(arr, idx, sens, maxIdx) {
       const val = arr[idx].high;
       for (let k = idx - sens; k < idx; k++) if (k >= 0 && arr[k].high > val) return false;
@@ -91,6 +95,30 @@ return {
       for (let k = idx - sens; k < idx; k++) if (k >= 0 && arr[k].low < val) return false;
       const lim = Math.min(maxIdx, idx + sens);
       for (let k = idx + 1; k <= lim; k++) if (arr[k].low <= val) return false;
+      return true;
+    }
+
+    function calcRelief(arr, idx, sens, type) {
+      const d = Math.max(0, idx - sens * 2);
+      const f = Math.min(arr.length - 1, idx + sens * 2);
+      if (type === 'CREUX') {
+        const c = arr[idx].low;
+        let mx = c;
+        for (let j = d; j <= f; j++) if (arr[j].high > mx) mx = arr[j].high;
+        return Math.max(0.0001, mx - c);
+      } else {
+        const s = arr[idx].high;
+        let mn = s;
+        for (let j = d; j <= f; j++) if (arr[j].low < mn) mn = arr[j].low;
+        return Math.max(0.0001, s - mn);
+      }
+    }
+
+    function estIntact(arr, idx, fin, px, type) {
+      for (let j = idx + 1; j <= fin; j++) {
+        if (type === 'ACHAT' && arr[j].low < px) return false;
+        if (type === 'VENTE' && arr[j].high > px) return false;
+      }
       return true;
     }
 
@@ -108,7 +136,6 @@ return {
       const estVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open);
       if (!estAchat && !estVente) continue;
 
-      // Proximité asymétrique
       const ecartPrix = Math.abs(b1.open - b2.close);
       const ratioEcart = ecartPrix / hauteurMoy;
       let situation = 'RETRAIT';
@@ -122,299 +149,241 @@ return {
       }
       if (!proximiteOk) continue;
 
-      // Filtre de momentum historique
-      let tailleOk = true;
+      let moyRangeRef = hauteurMoy;
       if (activerFiltreTaille) {
-        const idxFin = i - 2;
-        const idxDeb = Math.max(0, i - 1 - periodeHistorique);
-        const nb = idxFin - idxDeb + 1;
-        if (nb >= 3) {
-          let sR = 0, sC = 0;
-          for (let k = idxDeb; k <= idxFin; k++) {
+        const finH = i - 2;
+        const debH = Math.max(0, i - 1 - periodeHistorique);
+        const nbH = finH - debH + 1;
+        if (nbH >= 3) {
+          let sR = 0; let sC = 0;
+          for (let k = debH; k <= finH; k++) {
             sR += (bougies[k].high - bougies[k].low);
             sC += Math.abs(bougies[k].open - bougies[k].close);
           }
-          const mR = sR / nb, mC = sC / nb;
-          tailleOk = range1 >= (multiplicateurBougie1 * mR) && corps2 >= (multiplicateurCorps2 * mC);
+          const mR = sR / nbH;
+          const mC = sC / nbH;
+          moyRangeRef = mR;
+          if (range1 < multiplicateurBougie1 * mR || corps2 < multiplicateurCorps2 * mC) continue;
         }
       }
-      if (!tailleOk) continue;
 
-      const idxFinRecherche = i - 2;
-      const idxDebRecherche = Math.max(0, idxFinRecherche - lookbackLiquidite);
-      let liqTrouvee = null;
+      let prixExtreme = 0;
+      let bougieExtreme = 1;
+      const indexFinRecherche = i - 2;
 
-      // 3️⃣ Cas Achat (Sweep SSL + Reint)
       if (estAchat) {
-        const prixExtreme = Math.min(b1.low, b2.low);
-        const bougieExt = b2.low <= b1.low ? 2 : 1;
-        const hautRef = Math.max(b1.open, b1.high);
+        if (b2.low <= b1.low) { prixExtreme = b2.low; bougieExtreme = 2; }
+        else { prixExtreme = b1.low; bougieExtreme = 1; }
 
-        for (let k = idxFinRecherche; k >= idxDebRecherche; k--) {
-          if (estPivotBas(bougies, k, sensibiliteLiquidite, idxFinRecherche)) {
-            const creux = bougies[k].low;
-            if (prixExtreme < creux && creux <= hautRef) {
-              liqTrouvee = {
-                type: 'SSL',
-                prix: creux,
-                indexOrigine: k,
-                tempsOrigine: bougies[k].time,
-                profondeur: creux - prixExtreme,
-                balayagesPrecedents: []
-              };
-              break;
+        // Sélection de la liquidité la plus adaptée
+        const idxDeb = Math.max(0, indexFinRecherche - lookbackLiquidite);
+        const idxMaxScan = Math.max(0, indexFinRecherche - distanceMinBougies);
+        const candidats = [];
+
+        for (let k = idxMaxScan; k >= idxDeb; k--) {
+          if (estPivotBas(bougies, k, sensibiliteLiquidite, indexFinRecherche)) {
+            const lowK = bougies[k].low;
+            if (prixExtreme < lowK && lowK <= Math.max(b1.open, b1.high)) {
+              if (exigerNiveauIntact && !estIntact(bougies, k, indexFinRecherche, lowK, 'ACHAT')) continue;
+              const profondeur = lowK - prixExtreme;
+              const rSweep = profondeur / moyRangeRef;
+              if (rSweep < penetrationMinRatio || rSweep > penetrationMaxRatio) continue;
+
+              const rel = calcRelief(bougies, k, sensibiliteLiquidite, 'CREUX');
+              const rRel = rel / moyRangeRef;
+              if (rRel < reliefMinPivot) continue;
+
+              const dist = i - k;
+              const ptsRel = Math.min(45, (rRel / 2.0) * 45);
+              let ptsSw = 35;
+              if (rSweep < 0.15) ptsSw = Math.max(10, 35 - ((0.15 - rSweep) / 0.15) * 25);
+              else if (rSweep > 0.8) ptsSw = Math.max(10, 35 - ((rSweep - 0.8) / (penetrationMaxRatio - 0.8 || 1)) * 25);
+              let ptsPr = 20;
+              if (dist > 35) ptsPr = Math.max(5, 20 - ((dist - 35) / Math.max(1, lookbackLiquidite - 35)) * 15);
+              const score = Math.min(100, Math.round(ptsRel + ptsSw + ptsPr));
+              const qualite = rRel >= 1.5 ? 'MAJEUR' : (rRel >= 0.75 ? 'MOYEN' : 'MINEUR');
+
+              candidats.push({
+                type: 'SSL', prix: lowK, indexOrigine: k, tempsOrigine: bougies[k].time,
+                distanceBougies: dist, profondeurSweep: profondeur, ratioSweep: rSweep,
+                reliefPivot: rel, ratioRelief: rRel, scoreAdequation: score, qualiteNiveau: qualite
+              });
             }
           }
         }
 
-        if (exigerLiquidite && !liqTrouvee) continue;
+        let elue = null;
+        if (candidats.length > 0) {
+          if (modeSelection === 'SWING_MAJEUR') elue = candidats.reduce((m, c) => c.ratioRelief > m.ratioRelief ? c : m, candidats[0]);
+          else if (modeSelection === 'RECENT_VALIDE') elue = candidats.reduce((m, c) => c.distanceBougies < m.distanceBougies ? c : m, candidats[0]);
+          else elue = candidats.reduce((m, c) => c.scoreAdequation > m.scoreAdequation ? c : m, candidats[0]);
+        }
 
-        // Analyse multi-sweep support
-        if (liqTrouvee) {
-          const margeZone = Math.max(0.0001, liqTrouvee.prix * toleranceZoneSR);
-          const sensCluster = Math.max(1, Math.floor(sensibiliteLiquidite / 2));
-          for (let j = idxDebRecherche; j <= idxFinRecherche; j++) {
-            if (Math.abs(j - liqTrouvee.indexOrigine) < 2) continue;
-            if (estPivotBas(bougies, j, sensCluster, idxFinRecherche)) {
-              const lowJ = bougies[j].low;
-              if (lowJ <= liqTrouvee.prix + margeZone && lowJ >= liqTrouvee.prix - (margeZone * 3)) {
-                liqTrouvee.balayagesPrecedents.push({
-                  index: j,
-                  temps: bougies[j].time,
-                  prix: lowJ
-                });
-              }
-            }
-          }
+        if (exigerLiquidite && !elue) continue;
 
-          liqTrouvee.totalSweeps = 1 + liqTrouvee.balayagesPrecedents.length;
-          if (liqTrouvee.totalSweeps < seuilMinLiquidations) continue;
-
+        if (elue) {
           countAchatsSweep++;
-          if (liqTrouvee.totalSweeps === 1) countSimples++;
-          else if (liqTrouvee.totalSweeps === 2) countDoubles++;
-          else countTriples++;
+          sommeScores += elue.scoreAdequation;
+          if (elue.qualiteNiveau === 'MAJEUR') countMajeurs++;
+          else if (elue.qualiteNiveau === 'MOYEN') countMoyens++;
+          else countMineurs++;
         }
         countAchats++;
 
         signaux.push({
-          type: 'ACHAT',
-          indexBougie: i,
-          temps: b2.time,
-          prixSignal: b2.low,
-          prixExtreme,
-          bougieExtreme: bougieExt,
-          open1: b1.open,
-          close2: b2.close,
-          ecartPrix,
-          ratioEcart,
-          situationCloture: situation,
-          liquidite: liqTrouvee
+          type: 'ACHAT', indexBougie: i, temps: b2.time, prixSignal: b2.low,
+          prixExtreme, bougieExtreme, open1: b1.open, close2: b2.close,
+          ecartPrix, ratioEcart, situationCloture: situation, rangeBougie1: range1, corpsBougie2: corps2,
+          liquidite: elue || undefined
         });
 
-        let badgeMulti = '';
-        if (liqTrouvee) {
-          if (liqTrouvee.totalSweeps === 2) badgeMulti = ' 🔥 [Double Sweep 2x]';
-          else if (liqTrouvee.totalSweeps >= 3) badgeMulti = ` 🚀 [Triple Sweep ${liqTrouvee.totalSweeps}x]`;
-          else badgeMulti = ' [1x]';
+        let badge = '';
+        if (elue && afficherBadgeScore) {
+          badge = ` [${elue.scoreAdequation}%${elue.qualiteNiveau === 'MAJEUR' ? ' ★' : ''}]`;
         }
+        labels.push({
+          id: `combo-achat-${i}`,
+          prix: b2.low,
+          date: b2.time,
+          texte: elue ? `${texteLabel}${badge}\nSweep SSL (${elue.prix.toFixed(4)})` : texteLabel,
+          couleur: bullColor,
+          position: 'below'
+        });
 
-        const lbl = liqTrouvee
-          ? `${texteLabel}${badgeMulti}\nSweep SSL (${liqTrouvee.prix.toFixed(4)})`
-          : texteLabel;
+        points.push({ id: `combo-pt-${i}`, prix: prixExtreme, date: bougieExtreme === 1 ? b1.time : b2.time, couleur: bullColor });
 
-        labels.push({ id: `c-a-lbl-${i}`, prix: b2.low, date: b2.time, texte: lbl, couleur: bullColor, position: 'below' });
-        points.push({ id: `c-a-pt-${i}`, prix: prixExtreme, date: bougieExt === 1 ? b1.time : b2.time, couleur: bullColor });
-
-        if (liqTrouvee) {
+        if (elue && afficherLignes) {
           lignes.push({
-            id: `c-a-lig-${i}`,
-            prix: liqTrouvee.prix,
-            dateDebut: liqTrouvee.tempsOrigine,
+            id: `combo-ligne-${i}`,
+            prix: elue.prix,
+            dateDebut: elue.tempsOrigine,
             dateFin: b2.time,
             couleur: bullColor,
             epaisseur: 1.5,
             style: 'dashed',
-            label: `SSL Balayée (-${(liqTrouvee.profondeur * 10000).toFixed(1)} pips)`
+            label: `SSL Balayée (${elue.qualiteNiveau} -${(elue.profondeurSweep * 10000).toFixed(1)}p)`
           });
-
-          if (afficherLignesMultiSweep && liqTrouvee.balayagesPrecedents.length > 0) {
-            liqTrouvee.balayagesPrecedents.forEach((bal, idxBal) => {
-              lignes.push({
-                id: `c-a-ms-${i}-${idxBal}`,
-                prix: bal.prix,
-                dateDebut: bal.temps,
-                dateFin: b2.time,
-                couleur: 'rgba(0, 230, 118, 0.65)',
-                epaisseur: 1,
-                style: 'dotted',
-                label: `Sweep Support #${idxBal + 1}`
-              });
-            });
-          }
-
+        }
+        if (elue && afficherZones) {
           boites.push({
-            id: `c-a-box-${i}`,
-            prixHaut: liqTrouvee.prix,
+            id: `combo-box-${i}`,
+            prixHaut: elue.prix,
             prixBas: prixExtreme,
             dateDebut: b1.time,
             dateFin: b2.time,
             couleurFond: 'rgba(0, 230, 118, 0.15)',
             couleurBordure: bullColor,
-            label: 'Zone de Sweep'
+            label: `Zone Sweep (${elue.scoreAdequation}%)`
           });
-
-          if (afficherZoneSR && liqTrouvee.totalSweeps >= 2) {
-            const margeZone = liqTrouvee.prix * toleranceZoneSR;
-            boites.push({
-              id: `c-a-sr-${i}`,
-              prixHaut: liqTrouvee.prix + margeZone,
-              prixBas: liqTrouvee.prix - margeZone,
-              dateDebut: liqTrouvee.tempsOrigine,
-              dateFin: b2.time,
-              couleurFond: 'rgba(0, 230, 118, 0.08)',
-              couleurBordure: 'rgba(0, 230, 118, 0.4)',
-              label: `Zone Support (${liqTrouvee.totalSweeps}x Sweeps)`
-            });
-          }
         }
-
-      // 4️⃣ Cas Vente (Sweep BSL + Reint)
       } else if (estVente) {
-        const prixExtreme = Math.max(b1.high, b2.high);
-        const bougieExt = b2.high >= b1.high ? 2 : 1;
-        const basRef = Math.min(b1.open, b1.low);
+        if (b2.high >= b1.high) { prixExtreme = b2.high; bougieExtreme = 2; }
+        else { prixExtreme = b1.high; bougieExtreme = 1; }
 
-        for (let k = idxFinRecherche; k >= idxDebRecherche; k--) {
-          if (estPivotHaut(bougies, k, sensibiliteLiquidite, idxFinRecherche)) {
-            const sommet = bougies[k].high;
-            if (prixExtreme > sommet && sommet >= basRef) {
-              liqTrouvee = {
-                type: 'BSL',
-                prix: sommet,
-                indexOrigine: k,
-                tempsOrigine: bougies[k].time,
-                profondeur: prixExtreme - sommet,
-                balayagesPrecedents: []
-              };
-              break;
+        const idxDeb = Math.max(0, indexFinRecherche - lookbackLiquidite);
+        const idxMaxScan = Math.max(0, indexFinRecherche - distanceMinBougies);
+        const candidats = [];
+
+        for (let k = idxMaxScan; k >= idxDeb; k--) {
+          if (estPivotHaut(bougies, k, sensibiliteLiquidite, indexFinRecherche)) {
+            const highK = bougies[k].high;
+            if (prixExtreme > highK && highK >= Math.min(b1.open, b1.low)) {
+              if (exigerNiveauIntact && !estIntact(bougies, k, indexFinRecherche, highK, 'VENTE')) continue;
+              const profondeur = prixExtreme - highK;
+              const rSweep = profondeur / moyRangeRef;
+              if (rSweep < penetrationMinRatio || rSweep > penetrationMaxRatio) continue;
+
+              const rel = calcRelief(bougies, k, sensibiliteLiquidite, 'SOMMET');
+              const rRel = rel / moyRangeRef;
+              if (rRel < reliefMinPivot) continue;
+
+              const dist = i - k;
+              const ptsRel = Math.min(45, (rRel / 2.0) * 45);
+              let ptsSw = 35;
+              if (rSweep < 0.15) ptsSw = Math.max(10, 35 - ((0.15 - rSweep) / 0.15) * 25);
+              else if (rSweep > 0.8) ptsSw = Math.max(10, 35 - ((rSweep - 0.8) / (penetrationMaxRatio - 0.8 || 1)) * 25);
+              let ptsPr = 20;
+              if (dist > 35) ptsPr = Math.max(5, 20 - ((dist - 35) / Math.max(1, lookbackLiquidite - 35)) * 15);
+              const score = Math.min(100, Math.round(ptsRel + ptsSw + ptsPr));
+              const qualite = rRel >= 1.5 ? 'MAJEUR' : (rRel >= 0.75 ? 'MOYEN' : 'MINEUR');
+
+              candidats.push({
+                type: 'BSL', prix: highK, indexOrigine: k, tempsOrigine: bougies[k].time,
+                distanceBougies: dist, profondeurSweep: profondeur, ratioSweep: rSweep,
+                reliefPivot: rel, ratioRelief: rRel, scoreAdequation: score, qualiteNiveau: qualite
+              });
             }
           }
         }
 
-        if (exigerLiquidite && !liqTrouvee) continue;
+        let elue = null;
+        if (candidats.length > 0) {
+          if (modeSelection === 'SWING_MAJEUR') elue = candidats.reduce((m, c) => c.ratioRelief > m.ratioRelief ? c : m, candidats[0]);
+          else if (modeSelection === 'RECENT_VALIDE') elue = candidats.reduce((m, c) => c.distanceBougies < m.distanceBougies ? c : m, candidats[0]);
+          else elue = candidats.reduce((m, c) => c.scoreAdequation > m.scoreAdequation ? c : m, candidats[0]);
+        }
 
-        if (liqTrouvee) {
-          const margeZone = Math.max(0.0001, liqTrouvee.prix * toleranceZoneSR);
-          const sensCluster = Math.max(1, Math.floor(sensibiliteLiquidite / 2));
-          for (let j = idxDebRecherche; j <= idxFinRecherche; j++) {
-            if (Math.abs(j - liqTrouvee.indexOrigine) < 2) continue;
-            if (estPivotHaut(bougies, j, sensCluster, idxFinRecherche)) {
-              const highJ = bougies[j].high;
-              if (highJ >= liqTrouvee.prix - margeZone && highJ <= liqTrouvee.prix + (margeZone * 3)) {
-                liqTrouvee.balayagesPrecedents.push({
-                  index: j,
-                  temps: bougies[j].time,
-                  prix: highJ
-                });
-              }
-            }
-          }
+        if (exigerLiquidite && !elue) continue;
 
-          liqTrouvee.totalSweeps = 1 + liqTrouvee.balayagesPrecedents.length;
-          if (liqTrouvee.totalSweeps < seuilMinLiquidations) continue;
-
+        if (elue) {
           countVentesSweep++;
-          if (liqTrouvee.totalSweeps === 1) countSimples++;
-          else if (liqTrouvee.totalSweeps === 2) countDoubles++;
-          else countTriples++;
+          sommeScores += elue.scoreAdequation;
+          if (elue.qualiteNiveau === 'MAJEUR') countMajeurs++;
+          else if (elue.qualiteNiveau === 'MOYEN') countMoyens++;
+          else countMineurs++;
         }
         countVentes++;
 
         signaux.push({
-          type: 'VENTE',
-          indexBougie: i,
-          temps: b2.time,
-          prixSignal: b2.high,
-          prixExtreme,
-          bougieExtreme: bougieExt,
-          open1: b1.open,
-          close2: b2.close,
-          ecartPrix,
-          ratioEcart,
-          situationCloture: situation,
-          liquidite: liqTrouvee
+          type: 'VENTE', indexBougie: i, temps: b2.time, prixSignal: b2.high,
+          prixExtreme, bougieExtreme, open1: b1.open, close2: b2.close,
+          ecartPrix, ratioEcart, situationCloture: situation, rangeBougie1: range1, corpsBougie2: corps2,
+          liquidite: elue || undefined
         });
 
-        let badgeMulti = '';
-        if (liqTrouvee) {
-          if (liqTrouvee.totalSweeps === 2) badgeMulti = ' 🔥 [Double Sweep 2x]';
-          else if (liqTrouvee.totalSweeps >= 3) badgeMulti = ` 🚀 [Triple Sweep ${liqTrouvee.totalSweeps}x]`;
-          else badgeMulti = ' [1x]';
+        let badge = '';
+        if (elue && afficherBadgeScore) {
+          badge = ` [${elue.scoreAdequation}%${elue.qualiteNiveau === 'MAJEUR' ? ' ★' : ''}]`;
         }
+        labels.push({
+          id: `combo-vente-${i}`,
+          prix: b2.high,
+          date: b2.time,
+          texte: elue ? `${texteLabel}${badge}\nSweep BSL (${elue.prix.toFixed(4)})` : texteLabel,
+          couleur: bearColor,
+          position: 'above'
+        });
 
-        const lbl = liqTrouvee
-          ? `${texteLabel}${badgeMulti}\nSweep BSL (${liqTrouvee.prix.toFixed(4)})`
-          : texteLabel;
+        points.push({ id: `combo-pt-${i}`, prix: prixExtreme, date: bougieExtreme === 1 ? b1.time : b2.time, couleur: bearColor });
 
-        labels.push({ id: `c-v-lbl-${i}`, prix: b2.high, date: b2.time, texte: lbl, couleur: bearColor, position: 'above' });
-        points.push({ id: `c-v-pt-${i}`, prix: prixExtreme, date: bougieExt === 1 ? b1.time : b2.time, couleur: bearColor });
-
-        if (liqTrouvee) {
+        if (elue && afficherLignes) {
           lignes.push({
-            id: `c-v-lig-${i}`,
-            prix: liqTrouvee.prix,
-            dateDebut: liqTrouvee.tempsOrigine,
+            id: `combo-ligne-${i}`,
+            prix: elue.prix,
+            dateDebut: elue.tempsOrigine,
             dateFin: b2.time,
             couleur: bearColor,
             epaisseur: 1.5,
             style: 'dashed',
-            label: `BSL Balayée (+${(liqTrouvee.profondeur * 10000).toFixed(1)} pips)`
+            label: `BSL Balayée (${elue.qualiteNiveau} +${(elue.profondeurSweep * 10000).toFixed(1)}p)`
           });
-
-          if (afficherLignesMultiSweep && liqTrouvee.balayagesPrecedents.length > 0) {
-            liqTrouvee.balayagesPrecedents.forEach((bal, idxBal) => {
-              lignes.push({
-                id: `c-v-ms-${i}-${idxBal}`,
-                prix: bal.prix,
-                dateDebut: bal.temps,
-                dateFin: b2.time,
-                couleur: 'rgba(242, 54, 69, 0.65)',
-                epaisseur: 1,
-                style: 'dotted',
-                label: `Sweep Résistance #${idxBal + 1}`
-              });
-            });
-          }
-
+        }
+        if (elue && afficherZones) {
           boites.push({
-            id: `c-v-box-${i}`,
+            id: `combo-box-${i}`,
             prixHaut: prixExtreme,
-            prixBas: liqTrouvee.prix,
+            prixBas: elue.prix,
             dateDebut: b1.time,
             dateFin: b2.time,
             couleurFond: 'rgba(242, 54, 69, 0.15)',
             couleurBordure: bearColor,
-            label: 'Zone de Sweep'
+            label: `Zone Sweep (${elue.scoreAdequation}%)`
           });
-
-          if (afficherZoneSR && liqTrouvee.totalSweeps >= 2) {
-            const margeZone = liqTrouvee.prix * toleranceZoneSR;
-            boites.push({
-              id: `c-v-sr-${i}`,
-              prixHaut: liqTrouvee.prix + margeZone,
-              prixBas: liqTrouvee.prix - margeZone,
-              dateDebut: liqTrouvee.tempsOrigine,
-              dateFin: b2.time,
-              couleurFond: 'rgba(242, 54, 69, 0.08)',
-              couleurBordure: 'rgba(242, 54, 69, 0.4)',
-              label: `Zone Résistance (${liqTrouvee.totalSweeps}x Sweeps)`
-            });
-          }
         }
       }
     }
 
+    const totalSweep = countAchatsSweep + countVentesSweep;
     return {
       signaux,
       primitives: { labels, lignes, boites, points },
@@ -422,10 +391,13 @@ return {
         totalSignaux: signaux.length,
         totalAchats: countAchats,
         totalVentes: countVentes,
-        totalLiquiditesBalayees: countAchatsSweep + countVentesSweep,
-        totalSimplesLiquidations: countSimples,
-        totalDoublesLiquidations: countDoubles,
-        totalTriplesLiquidations: countTriples
+        totalLiquiditesBalayees: totalSweep,
+        totalAchatsAvecSweep: countAchatsSweep,
+        totalVentesAvecSweep: countVentesSweep,
+        totalNiveauxMajeurs: countMajeurs,
+        totalNiveauxMoyens: countMoyens,
+        totalNiveauxMineurs: countMineurs,
+        scoreMoyenAdequation: totalSweep > 0 ? Math.round(sommeScores / totalSweep) : 0
       }
     };
   }

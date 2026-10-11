@@ -4,29 +4,36 @@ import type { VisualPrimitives, VisualLabel, VisualLine, VisualBox, VisualPoint 
 /**
  * Options de configuration pour l'indicateur combiné :
  * Liquidation & Réintégration avec Détection de la Liquidité Balayée (Sweep BSL/SSL)
- * et analyse des Multi-Liquidations sur Support / Résistance (Double & Triple Sweeps).
+ * et Sélection Intelligente de la Liquidité la plus Adaptée (Proportionnalité, Relief & Proximité).
  */
 export interface ParametresLiquidationSweepCombo {
-  // ── 🎯 Filtres de Détection de Liquidité ──
-  // Nombre de bougies à gauche et à droite pour valider un sommet/creux comme niveau de liquidité (défaut: 4)
+  // ── 🎯 Détection & Sélection de la Liquidité la plus Adaptée ──
+  // Mode de sélection si plusieurs niveaux ont été balayés par le point extrême :
+  // 'SCORE_OPTIMAL' : Combine proportionnalité, relief du pivot et proximité (recommandé)
+  // 'SWING_MAJEUR' : Priorité au sommet ou creux le plus marquant/profond
+  // 'RECENT_VALIDE' : Priorité au niveau le plus récent respectant les filtres
+  modeSelectionLiquidite?: 'SCORE_OPTIMAL' | 'SWING_MAJEUR' | 'RECENT_VALIDE';
+
+  // Nombre de bougies à gauche et à droite pour valider un sommet/creux (défaut: 3)
   sensibilitePivotLiquidite?: number;
-  // Nombre maximal de bougies antérieures à analyser pour trouver la liquidité (défaut: 100)
+  // Nombre maximal de bougies antérieures scannées (défaut: 80)
   lookbackLiquidite?: number;
+  // Distance minimale en bougies avant le setup pour ignorer le micro-bruit immédiat (défaut: 3)
+  distanceMinBougies?: number;
   // Si true, le signal n'est validé QUE si une vraie liquidité antérieure a été balayée (défaut: true)
   exigerLiquiditeBalayee?: boolean;
 
-  // ── 🔄 Analyse des Multi-Liquidations (Double / Triple Sweeps sur Support & Résistance) ──
-  // Tolérance pour regrouper les sommets/creux sur la même zone S/R (défaut: 0.15 = 0.15% du prix)
-  toleranceZoneSR?: number;
-  // Seuil minimal de liquidations requis :
-  // 1 = Tous les signaux (Simple 1x, Double 2x, Triple 3x)
-  // 2 = Multi-liquidations uniquement (Double 2x et Triple 3x)
-  // 3 = Triple liquidation uniquement (3x+)
-  seuilMinLiquidations?: number;
-  // Afficher des lignes en pointillés vers tous les balayages antérieurs du même niveau S/R (défaut: true)
-  afficherLignesMultiSweep?: boolean;
-  // Afficher la boîte de la zone S/R englobant les différents tests (défaut: true)
-  afficherZoneSR?: boolean;
+  // ── ⚖️ Filtres de Proportionnalité & Pénétration (Sweet Spot) ──
+  // Relief minimum du pivot par rapport à la taille moyenne d'une bougie (défaut: 0.5x)
+  // Permet d'ignorer les petits paliers plats sans enjeu de stops
+  reliefMinPivot?: number;
+  // Pénétration maximale tolérée (défaut: 1.5 = 150% de la taille moyenne)
+  // Évite les cassures excessives (breakout brutal au lieu d'une manipulation/chasse de stops)
+  penetrationMaxRatio?: number;
+  // Pénétration minimale requise pour garantir que les stops ont été touchés (défaut: 0.05 = 5%)
+  penetrationMinRatio?: number;
+  // Exige que la liquidité soit restée intacte (non déjà franchie) jusqu'à notre setup (défaut: true)
+  exigerNiveauIntact?: boolean;
 
   // ── 🕯️ Paramètres du Chandelier Liq/Reint ──
   // Tolérance si la réintégration reste en deçà d'Open1 (défaut: 0.05 = 5%)
@@ -49,41 +56,33 @@ export interface ParametresLiquidationSweepCombo {
   trendBars?: number;
 
   // ── 🎨 Affichage Graphique ──
-  // Afficher la ligne reliant la liquidité balayée au point de sweep (défaut: true)
+  // Afficher la ligne reliant la liquidité balayée au setup (défaut: true)
   afficherLigneLiquidite?: boolean;
   // Afficher la boîte rectangulaire de la zone de sweep (défaut: true)
   afficherZoneSweep?: boolean;
+  // Afficher le badge avec le score de pertinence et la qualité (défaut: true)
+  afficherBadgeScore?: boolean;
   bullColor?: string;
   bearColor?: string;
   texteLabel?: string;
 }
 
 /**
- * Détail d'un contact ou balayage individuel d'un niveau S/R dans le passé
- */
-export interface ContactZoneSR {
-  index: number;
-  temps: number | string;
-  prix: number;
-  profondeurSweep: number;
-}
-
-/**
- * Informations sur la liquidité antérieure balayée par le setup,
- * avec compteur de multi-liquidations (Simple, Double ou Triple).
+ * Informations complètes sur la liquidité antérieure sélectionnée comme la plus adaptée
  */
 export interface LiquiditeBalayee {
   type: 'SSL' | 'BSL';
   prix: number;
   indexOrigine: number;
   tempsOrigine: number | string;
-  profondeurSweep: number; // Distance franchie au-delà du niveau en pips / prix
-  ratioSweep: number;      // Profondeur par rapport à la taille moyenne des bougies
-
-  // ── 🎯 Analyse Multi-Liquidation ──
-  compteurLiquidations: number;               // 1 = Simple, 2 = Double, 3+ = Triple
-  typeMultiLiquidation: 'SIMPLE' | 'DOUBLE' | 'TRIPLE';
-  balayagesPrecedents: ContactZoneSR[];       // Détail des balayages / tests antérieurs dans la même zone
+  distanceBougies: number;       // Nombre de bougies d'écart par rapport au setup
+  profondeurSweep: number;       // Distance en prix franchie au-delà du niveau
+  ratioSweep: number;            // Profondeur / taille moyenne d'une bougie
+  reliefPivot: number;           // Hauteur en prix du swing du pivot (dégagement local)
+  ratioRelief: number;           // Relief / taille moyenne d'une bougie
+  scoreAdequation: number;       // Score de 0 à 100 mesurant la pertinence globale
+  qualiteNiveau: 'MAJEUR' | 'MOYEN' | 'MINEUR'; // Classification claire pour le trader
+  estIntact: boolean;            // Vrai si le niveau n'avait jamais été franchi avant
 }
 
 /**
@@ -94,8 +93,8 @@ export interface SignalLiquidationSweepCombo {
   indexBougie: number;
   temps: number | string;
   prixSignal: number;
-  prixExtreme: number;     // Point bas le plus bas (Achat) ou haut le plus haut (Vente)
-  bougieExtreme: 1 | 2;    // Indique si le sweep extrême a été fait par la Bougie 1 ou la Bougie 2
+  prixExtreme: number;          // Point bas le plus bas (Achat) ou haut le plus haut (Vente)
+  bougieExtreme: 1 | 2;         // Indique si le sweep extrême provient de Bougie 1 ou Bougie 2
   open1: number;
   close2: number;
   ecartPrix: number;
@@ -103,7 +102,7 @@ export interface SignalLiquidationSweepCombo {
   situationCloture: 'DEPASSEMENT' | 'RETRAIT';
   rangeBougie1: number;
   corpsBougie2: number;
-  liquidite?: LiquiditeBalayee; // Liquidité trouvée et balayée (avec statut multi-sweep)
+  liquidite?: LiquiditeBalayee;  // Liquidité la plus adaptée sélectionnée
 }
 
 /**
@@ -119,9 +118,10 @@ export interface ResultatLiquidationSweepCombo {
     totalLiquiditesBalayees: number;
     totalAchatsAvecSweep: number;
     totalVentesAvecSweep: number;
-    totalSimplesLiquidations: number;
-    totalDoublesLiquidations: number;
-    totalTriplesLiquidations: number;
+    totalNiveauxMajeurs: number;
+    totalNiveauxMoyens: number;
+    totalNiveauxMineurs: number;
+    scoreMoyenAdequation: number;
   };
 }
 
@@ -162,149 +162,223 @@ function estPivotBasLocal(bougies: Bougie[], index: number, sensibilite: number,
 }
 
 /**
- * Recherche dans l'historique antérieur la liquidité (SSL ou BSL) balayée par le setup,
- * et compte le nombre de balayages successifs (Simple, Double ou Triple liquidation) sur ce niveau S/R.
+ * Calcule le relief (amplitude du creux ou du sommet) dans son voisinage direct.
+ * Plus le relief est grand, plus le swing est évident pour tous les participants.
  */
-function trouverLiquiditeBalayee(
+function calculerReliefPivot(
+  bougies: Bougie[],
+  indexPivot: number,
+  sensibilite: number,
+  typePivot: 'CREUX' | 'SOMMET'
+): number {
+  const indexDebut = Math.max(0, indexPivot - sensibilite * 2);
+  const indexFin = Math.min(bougies.length - 1, indexPivot + sensibilite * 2);
+
+  if (typePivot === 'CREUX') {
+    // Hauteur entre le creux et le plus haut sommet du voisinage
+    const prixCreux = bougies[indexPivot].low;
+    let maxHigh = prixCreux;
+    for (let i = indexDebut; i <= indexFin; i++) {
+      if (bougies[i].high > maxHigh) {
+        maxHigh = bougies[i].high;
+      }
+    }
+    return Math.max(0.0001, maxHigh - prixCreux);
+  } else {
+    // Hauteur entre le sommet et le plus bas creux du voisinage
+    const prixSommet = bougies[indexPivot].high;
+    let minLow = prixSommet;
+    for (let i = indexDebut; i <= indexFin; i++) {
+      if (bougies[i].low < minLow) {
+        minLow = bougies[i].low;
+      }
+    }
+    return Math.max(0.0001, prixSommet - minLow);
+  }
+}
+
+/**
+ * Vérifie si le niveau de prix est resté intact (non violé) entre sa création
+ * et l'arrivée du setup de bougies.
+ */
+function verifierNiveauIntact(
+  bougies: Bougie[],
+  indexPivot: number,
+  indexFinRecherche: number,
+  prixNiveau: number,
+  direction: 'ACHAT' | 'VENTE'
+): boolean {
+  for (let i = indexPivot + 1; i <= indexFinRecherche; i++) {
+    if (direction === 'ACHAT') {
+      // Pour un SSL (creux), si une bougie antérieure est déjà descendue sous le niveau
+      if (bougies[i].low < prixNiveau) return false;
+    } else {
+      // Pour un BSL (sommet), si une bougie antérieure est déjà montée au-dessus du niveau
+      if (bougies[i].high > prixNiveau) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Recherche et sélectionne la liquidité la plus adaptée parmi tous les pivots balayés,
+ * selon les critères de proportionnalité, de relief et de proximité.
+ */
+function trouverLiquiditeLaPlusAdaptee(
   bougies: Bougie[],
   direction: 'ACHAT' | 'VENTE',
   prixExtreme: number,
   indexFinRecherche: number,
+  indexSetupActuel: number,
   sensibilite: number,
   lookback: number,
+  distanceMinBougies: number,
+  reliefMinRatio: number,
+  penetrationMaxRatio: number,
+  penetrationMinRatio: number,
+  exigerNiveauIntact: boolean,
+  modeSelection: 'SCORE_OPTIMAL' | 'SWING_MAJEUR' | 'RECENT_VALIDE',
   prixReferenceHaut: number,
   prixReferenceBas: number,
-  toleranceZoneSR: number
+  tailleMoyenneBougie: number
 ): LiquiditeBalayee | null {
   const indexDebut = Math.max(0, indexFinRecherche - lookback);
-  let pivotTrouve: { prix: number; index: number; temps: number | string } | null = null;
-  let distanceMin = Infinity;
+  const indexMaxScan = Math.max(0, indexFinRecherche - distanceMinBougies);
 
-  // 1️⃣ Trouver le pivot le plus récent et pertinent balayé par le point extrême
-  for (let k = indexFinRecherche; k >= indexDebut; k--) {
+  // Liste des candidats éligibles balayés
+  const candidats: LiquiditeBalayee[] = [];
+
+  for (let k = indexMaxScan; k >= indexDebut; k--) {
+    let estPivot = false;
+    let prixPivot = 0;
+
     if (direction === 'ACHAT') {
-      // 🟢 En Achat : on cherche un creux (SSL) balayé par le point bas extrême
+      // En Achat : on cherche un creux (SSL) balayé par le point bas extrême
       if (estPivotBasLocal(bougies, k, sensibilite, indexFinRecherche)) {
-        const prixCreux = bougies[k].low;
-        if (prixExtreme < prixCreux && prixCreux <= prixReferenceHaut) {
-          const distanceBougies = indexFinRecherche - k;
-          if (distanceBougies < distanceMin) {
-            distanceMin = distanceBougies;
-            pivotTrouve = {
-              prix: prixCreux,
-              index: k,
-              temps: bougies[k].time,
-            };
-            break; // On a le creux SSL de référence le plus récent
-          }
+        prixPivot = bougies[k].low;
+        // La mèche extrême a percé le creux, et le creux reste sous la référence haute
+        if (prixExtreme < prixPivot && prixPivot <= prixReferenceHaut) {
+          estPivot = true;
         }
       }
     } else {
-      // 🔴 En Vente : on cherche un sommet (BSL) balayé par le point haut extrême
+      // En Vente : on cherche un sommet (BSL) balayé par le point haut extrême
       if (estPivotHautLocal(bougies, k, sensibilite, indexFinRecherche)) {
-        const prixSommet = bougies[k].high;
-        if (prixExtreme > prixSommet && prixSommet >= prixReferenceBas) {
-          const distanceBougies = indexFinRecherche - k;
-          if (distanceBougies < distanceMin) {
-            distanceMin = distanceBougies;
-            pivotTrouve = {
-              prix: prixSommet,
-              index: k,
-              temps: bougies[k].time,
-            };
-            break; // On a le sommet BSL de référence le plus récent
-          }
+        prixPivot = bougies[k].high;
+        // La mèche extrême a dépassé le sommet, et le sommet reste au-dessus de la référence basse
+        if (prixExtreme > prixPivot && prixPivot >= prixReferenceBas) {
+          estPivot = true;
         }
       }
     }
-  }
 
-  if (!pivotTrouve) return null;
+    if (!estPivot) continue;
 
-  // 2️⃣ Analyse Multi-Liquidation sur la zone S/R :
-  // Définition de la largeur de la zone de Support ou de Résistance
-  const prixNiveau = pivotTrouve.prix;
-  const margeZone = Math.max(0.0001, prixNiveau * toleranceZoneSR);
-  const balayagesPrecedents: ContactZoneSR[] = [];
-  const sensibiliteCluster = Math.max(1, Math.floor(sensibilite / 2));
-
-  // On scanne l'historique sur la fenêtre pour trouver les autres creux/sommets
-  // qui ont déjà touché ou percé cette zone de Support ou Résistance
-  for (let j = indexDebut; j <= indexFinRecherche; j++) {
-    // On évite la bougie du pivot d'origine lui-même pour ne pas le compter en double
-    if (Math.abs(j - pivotTrouve.index) < 2) continue;
-
-    if (direction === 'ACHAT') {
-      // Support (SSL) : recherche de creux antérieurs dans la zone de support
-      if (estPivotBasLocal(bougies, j, sensibiliteCluster, indexFinRecherche)) {
-        const lowJ = bougies[j].low;
-        // Le creux est dans la zone S/R (proche du niveau ou l'ayant déjà balayé)
-        if (lowJ <= prixNiveau + margeZone && lowJ >= prixNiveau - (margeZone * 3)) {
-          balayagesPrecedents.push({
-            index: j,
-            temps: bougies[j].time,
-            prix: lowJ,
-            profondeurSweep: Math.max(0, prixNiveau - lowJ),
-          });
-        }
-      }
-    } else {
-      // Résistance (BSL) : recherche de sommets antérieurs dans la zone de résistance
-      if (estPivotHautLocal(bougies, j, sensibiliteCluster, indexFinRecherche)) {
-        const highJ = bougies[j].high;
-        if (highJ >= prixNiveau - margeZone && highJ <= prixNiveau + (margeZone * 3)) {
-          balayagesPrecedents.push({
-            index: j,
-            temps: bougies[j].time,
-            prix: highJ,
-            profondeurSweep: Math.max(0, highJ - prixNiveau),
-          });
-        }
-      }
+    // 1️⃣ Vérification si le niveau était intact
+    const estIntact = verifierNiveauIntact(bougies, k, indexFinRecherche, prixPivot, direction);
+    if (exigerNiveauIntact && !estIntact) {
+      continue; // Niveau déjà violé dans le passé : ignoré
     }
+
+    // 2️⃣ Analyse de la pénétration (Sweet Spot du sweep)
+    const profondeurSweep = direction === 'ACHAT'
+      ? prixPivot - prixExtreme
+      : prixExtreme - prixPivot;
+    const ratioSweep = profondeurSweep / tailleMoyenneBougie;
+
+    // Filtre sur la pénétration minimale et maximale
+    if (ratioSweep < penetrationMinRatio || ratioSweep > penetrationMaxRatio) {
+      continue;
+    }
+
+    // 3️⃣ Analyse du relief du swing (Importance du pivot)
+    const relief = calculerReliefPivot(
+      bougies,
+      k,
+      sensibilite,
+      direction === 'ACHAT' ? 'CREUX' : 'SOMMET'
+    );
+    const ratioRelief = relief / tailleMoyenneBougie;
+
+    // Filtre sur le relief minimal
+    if (ratioRelief < reliefMinRatio) {
+      continue;
+    }
+
+    // Classification en qualité
+    let qualiteNiveau: 'MAJEUR' | 'MOYEN' | 'MINEUR' = 'MINEUR';
+    if (ratioRelief >= 1.5) {
+      qualiteNiveau = 'MAJEUR';
+    } else if (ratioRelief >= 0.75) {
+      qualiteNiveau = 'MOYEN';
+    }
+
+    // 4️⃣ Distance temporelle
+    const distanceBougies = indexSetupActuel - k;
+
+    // 5️⃣ Calcul du Score d'Adéquation Global (0 à 100)
+    // - Relief / Importance (jusqu'à 45 points)
+    const pointsRelief = Math.min(45, (ratioRelief / 2.0) * 45);
+
+    // - Pénétration idéale / Sweet spot entre 0.15x et 0.8x (jusqu'à 35 points)
+    let pointsSweep = 35;
+    if (ratioSweep < 0.15) {
+      pointsSweep = Math.max(10, 35 - ((0.15 - ratioSweep) / 0.15) * 25);
+    } else if (ratioSweep > 0.80) {
+      pointsSweep = Math.max(10, 35 - ((ratioSweep - 0.80) / (penetrationMaxRatio - 0.80 || 1)) * 25);
+    }
+
+    // - Fraîcheur & Proximité équilibrée (jusqu'à 20 points)
+    // Idéal entre 5 et 35 bougies
+    let pointsProximite = 20;
+    if (distanceBougies > 35) {
+      const reculExcédentaire = Math.min(1, (distanceBougies - 35) / Math.max(1, lookback - 35));
+      pointsProximite = Math.max(5, 20 - reculExcédentaire * 15);
+    }
+
+    const scoreAdequation = Math.min(100, Math.round(pointsRelief + pointsSweep + pointsProximite));
+
+    candidats.push({
+      type: direction === 'ACHAT' ? 'SSL' : 'BSL',
+      prix: prixPivot,
+      indexOrigine: k,
+      tempsOrigine: bougies[k].time,
+      distanceBougies,
+      profondeurSweep,
+      ratioSweep,
+      reliefPivot: relief,
+      ratioRelief,
+      scoreAdequation,
+      qualiteNiveau,
+      estIntact,
+    });
   }
 
-  // Le compteur total de liquidations comprend le pivot initial + les autres balayages/tests antérieurs + le setup actuel
-  // Si aucun autre test n'a eu lieu : 1x (Simple Sweep)
-  // Si 1 test/sweep antérieur a eu lieu : 2x (Double Sweep)
-  // Si 2 tests/sweeps ou plus ont eu lieu : 3x+ (Triple Sweep)
-  const totalBalayages = 1 + balayagesPrecedents.length;
-  let typeMulti: 'SIMPLE' | 'DOUBLE' | 'TRIPLE' = 'SIMPLE';
-  if (totalBalayages === 2) {
-    typeMulti = 'DOUBLE';
-  } else if (totalBalayages >= 3) {
-    typeMulti = 'TRIPLE';
+  if (candidats.length === 0) return null;
+
+  // 6️⃣ Sélection selon le mode choisi par l'utilisateur
+  if (modeSelection === 'SWING_MAJEUR') {
+    // Choisir le pivot qui a le plus fort relief
+    return candidats.reduce((meilleur, cand) => cand.ratioRelief > meilleur.ratioRelief ? cand : meilleur, candidats[0]);
   }
 
-  const profondeur = direction === 'ACHAT'
-    ? prixNiveau - prixExtreme
-    : prixExtreme - prixNiveau;
+  if (modeSelection === 'RECENT_VALIDE') {
+    // Le plus récent (plus petite distance en bougies)
+    return candidats.reduce((meilleur, cand) => cand.distanceBougies < meilleur.distanceBougies ? cand : meilleur, candidats[0]);
+  }
 
-  const denominateur = direction === 'ACHAT'
-    ? Math.max(0.00001, prixReferenceHaut - prixExtreme)
-    : Math.max(0.00001, prixExtreme - prixReferenceBas);
-
-  return {
-    type: direction === 'ACHAT' ? 'SSL' : 'BSL',
-    prix: prixNiveau,
-    indexOrigine: pivotTrouve.index,
-    tempsOrigine: pivotTrouve.temps,
-    profondeurSweep: profondeur,
-    ratioSweep: profondeur / denominateur,
-    compteurLiquidations: totalBalayages,
-    typeMultiLiquidation: typeMulti,
-    balayagesPrecedents,
-  };
+  // Par défaut : 'SCORE_OPTIMAL' (meilleure note globale)
+  return candidats.reduce((meilleur, cand) => cand.scoreAdequation > meilleur.scoreAdequation ? cand : meilleur, candidats[0]);
 }
 
 /**
  * Indicateur combiné : Détecte le setup à 2 bougies (Liquidation & Réintégration)
- * ET identifie précisément la liquidité (BSL ou SSL) que cette manipulation a balayée,
- * avec analyse des Multi-Liquidations (Simple 1x, Double 2x, Triple 3x sur Support/Résistance).
+ * ET sélectionne précisément la liquidité la plus adaptée (BSL ou SSL)
+ * basée sur la proportionnalité, le relief du pivot et la proximité.
  * 
  * Exemple :
- * const res = calculerLiquidationSweepCombo(bougies, { seuilMinLiquidations: 2 });
- * console.log(`Doubles et Triples sweeps détectés : ${res.statistiques.totalDoublesLiquidations + res.statistiques.totalTriplesLiquidations}`);
+ * const res = calculerLiquidationSweepCombo(bougies, { modeSelectionLiquidite: 'SCORE_OPTIMAL' });
+ * console.log(`Nombre de signaux avec sweep adapté : ${res.statistiques.totalLiquiditesBalayees}`);
  */
 export function calculerLiquidationSweepCombo(
   bougies: Bougie[],
@@ -322,9 +396,10 @@ export function calculerLiquidationSweepCombo(
         totalLiquiditesBalayees: 0,
         totalAchatsAvecSweep: 0,
         totalVentesAvecSweep: 0,
-        totalSimplesLiquidations: 0,
-        totalDoublesLiquidations: 0,
-        totalTriplesLiquidations: 0,
+        totalNiveauxMajeurs: 0,
+        totalNiveauxMoyens: 0,
+        totalNiveauxMineurs: 0,
+        scoreMoyenAdequation: 0,
       },
     };
   }
@@ -337,18 +412,16 @@ export function calculerLiquidationSweepCombo(
   const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 0.25;
   const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;
 
-  const sensibiliteLiquidite = Math.max(2, Number(params.sensibilitePivotLiquidite ?? 4));
-  const lookbackLiquidite = Math.max(10, Number(params.lookbackLiquidite ?? 100));
+  const modeSelection = params.modeSelectionLiquidite || 'SCORE_OPTIMAL';
+  const sensibiliteLiquidite = Math.max(2, Number(params.sensibilitePivotLiquidite ?? 3));
+  const lookbackLiquidite = Math.max(10, Number(params.lookbackLiquidite ?? 80));
+  const distanceMinBougies = Math.max(1, Number(params.distanceMinBougies ?? 3));
   const exigerLiquidite = params.exigerLiquiditeBalayee !== false;
 
-  // Tolérance pour regrouper la zone S/R (0.15% par défaut)
-  const valZoneSR = params.toleranceZoneSR !== undefined ? params.toleranceZoneSR : 0.15;
-  const toleranceZoneSR = valZoneSR > 1 ? valZoneSR / 100 : (valZoneSR >= 0.05 ? valZoneSR / 100 : valZoneSR);
-
-  // Seuil minimal de liquidations (1 = tous, 2 = double/triple, 3 = triple)
-  const seuilMinLiquidations = Math.max(1, Math.min(3, Number(params.seuilMinLiquidations ?? 1)));
-  const afficherLignesMultiSweep = params.afficherLignesMultiSweep !== false;
-  const afficherZoneSR = params.afficherZoneSR !== false;
+  const reliefMinPivot = Math.max(0.1, Number(params.reliefMinPivot ?? 0.5));
+  const penetrationMaxRatio = Math.max(0.5, Number(params.penetrationMaxRatio ?? 1.5));
+  const penetrationMinRatio = Math.max(0.01, Number(params.penetrationMinRatio ?? 0.05));
+  const exigerNiveauIntact = params.exigerNiveauIntact !== false;
 
   const activerFiltreTaille = params.activerFiltreTaille !== false;
   const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));
@@ -362,6 +435,7 @@ export function calculerLiquidationSweepCombo(
 
   const afficherLignes = params.afficherLigneLiquidite !== false;
   const afficherZones = params.afficherZoneSweep !== false;
+  const afficherBadgeScore = params.afficherBadgeScore !== false;
   const bullColor = params.bullColor || '#00E676';
   const bearColor = params.bearColor || '#F23645';
   const texteLabel = params.texteLabel || 'Liq/Reint';
@@ -376,11 +450,12 @@ export function calculerLiquidationSweepCombo(
   let countVentes = 0;
   let countAchatsSweep = 0;
   let countVentesSweep = 0;
-  let countSimples = 0;
-  let countDoubles = 0;
-  let countTriples = 0;
+  let countMajeurs = 0;
+  let countMoyens = 0;
+  let countMineurs = 0;
+  let sommeScores = 0;
 
-  // 3️⃣ Parcours des bougies pour détecter le pattern à 2 bougies (i-1 et i)
+  // 3️⃣ Parcours des bougies pour détecter le setup de réintégration (i-1 et i)
   for (let i = 1; i < bougies.length; i++) {
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
@@ -397,7 +472,7 @@ export function calculerLiquidationSweepCombo(
     const tendanceHausse = !activerFiltreTendance || openTrend < b2.open;
     const tendanceBaisse = !activerFiltreTendance || openTrend > b2.open;
 
-    // Candidats
+    // Candidats achat/vente
     const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
     const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
     if (!estCandidatAchat && !estCandidatVente) continue;
@@ -427,8 +502,10 @@ export function calculerLiquidationSweepCombo(
     }
     if (!estValideProximite) continue;
 
-    // Filtre de momentum sur l'historique récent
+    // Moyenne de référence historique
+    let moyenneRangeRef = hauteurMoyenne;
     let respecteTaille = true;
+
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
@@ -443,6 +520,7 @@ export function calculerLiquidationSweepCombo(
         }
         const moyRange = sommeRanges / nbBougiesHist;
         const moyCorps = sommeCorps / nbBougiesHist;
+        moyenneRangeRef = moyRange;
 
         const b1AssezGrande = range1 >= (multiplicateurBougie1 * moyRange);
         const corps2AssezGrand = corps2 >= (multiplicateurCorps2 * moyCorps);
@@ -465,32 +543,35 @@ export function calculerLiquidationSweepCombo(
         bougieExtreme = 1;
       }
 
-      // 5️⃣ Recherche de la liquidité vendeuse (SSL) balayée + Analyse Multi-Sweep sur Support
-      const liquiditeTrouvee = trouverLiquiditeBalayee(
+      // 5️⃣ Recherche de la liquidité vendeuse (SSL) la plus adaptée
+      const liquiditeTrouvee = trouverLiquiditeLaPlusAdaptee(
         bougies,
         'ACHAT',
         prixExtreme,
         indexFinRecherche,
+        i,
         sensibiliteLiquidite,
         lookbackLiquidite,
+        distanceMinBougies,
+        reliefMinPivot,
+        penetrationMaxRatio,
+        penetrationMinRatio,
+        exigerNiveauIntact,
+        modeSelection,
         Math.max(b1.open, b1.high),
         b1.low,
-        toleranceZoneSR
+        moyenneRangeRef
       );
 
-      // Si l'utilisateur exige une vraie liquidité et qu'aucune n'a été balayée
+      // Si l'utilisateur exige une liquidité valide et qu'aucune n'a été retenue
       if (exigerLiquidite && !liquiditeTrouvee) continue;
-
-      // Filtre sur le seuil minimal de multi-liquidations (ex: 2 = doubles/triples uniquement)
-      if (liquiditeTrouvee && liquiditeTrouvee.compteurLiquidations < seuilMinLiquidations) {
-        continue;
-      }
 
       if (liquiditeTrouvee) {
         countAchatsSweep++;
-        if (liquiditeTrouvee.typeMultiLiquidation === 'SIMPLE') countSimples++;
-        else if (liquiditeTrouvee.typeMultiLiquidation === 'DOUBLE') countDoubles++;
-        else countTriples++;
+        sommeScores += liquiditeTrouvee.scoreAdequation;
+        if (liquiditeTrouvee.qualiteNiveau === 'MAJEUR') countMajeurs++;
+        else if (liquiditeTrouvee.qualiteNiveau === 'MOYEN') countMoyens++;
+        else countMineurs++;
       }
       countAchats++;
 
@@ -512,20 +593,15 @@ export function calculerLiquidationSweepCombo(
         liquidite: liquiditeTrouvee ?? undefined,
       });
 
-      // 6️⃣ Rendu Visuel : Label dynamique avec badge de multi-liquidation
-      let badgeMulti = '';
-      if (liquiditeTrouvee) {
-        if (liquiditeTrouvee.typeMultiLiquidation === 'DOUBLE') {
-          badgeMulti = ' 🔥 [Double Sweep 2x]';
-        } else if (liquiditeTrouvee.typeMultiLiquidation === 'TRIPLE') {
-          badgeMulti = ` 🚀 [Triple Sweep ${liquiditeTrouvee.compteurLiquidations}x]`;
-        } else {
-          badgeMulti = ' [1x]';
-        }
+      // 6️⃣ Rendu Visuel : Label avec badge de pertinence
+      let badgeQualite = '';
+      if (liquiditeTrouvee && afficherBadgeScore) {
+        const tagQualite = liquiditeTrouvee.qualiteNiveau === 'MAJEUR' ? ' ★' : '';
+        badgeQualite = ` [${liquiditeTrouvee.scoreAdequation}%${tagQualite}]`;
       }
 
       const texteAffiche = liquiditeTrouvee
-        ? `${texteLabel}${badgeMulti}\nSweep SSL (${liquiditeTrouvee.prix.toFixed(4)})`
+        ? `${texteLabel}${badgeQualite}\nSweep SSL (${liquiditeTrouvee.prix.toFixed(4)})`
         : texteLabel;
 
       labels.push({
@@ -555,23 +631,7 @@ export function calculerLiquidationSweepCombo(
           couleur: bullColor,
           epaisseur: 1.5,
           style: 'dashed',
-          label: `SSL Balayée (-${(liquiditeTrouvee.profondeurSweep * 10000).toFixed(1)} pips)`,
-        });
-      }
-
-      // Lignes connectant les autres balayages antérieurs dans la même zone de support
-      if (liquiditeTrouvee && afficherLignesMultiSweep && liquiditeTrouvee.balayagesPrecedents.length > 0) {
-        liquiditeTrouvee.balayagesPrecedents.forEach((bal, idxBal) => {
-          lignes.push({
-            id: `combo-multisweep-ssl-${i}-${idxBal}`,
-            prix: bal.prix,
-            dateDebut: bal.temps,
-            dateFin: b2.time,
-            couleur: 'rgba(0, 230, 118, 0.65)',
-            epaisseur: 1,
-            style: 'dotted',
-            label: `Sweep Support #${idxBal + 1}`,
-          });
+          label: `SSL Balayée (${liquiditeTrouvee.qualiteNiveau} -${(liquiditeTrouvee.profondeurSweep * 10000).toFixed(1)}p)`,
         });
       }
 
@@ -585,22 +645,7 @@ export function calculerLiquidationSweepCombo(
           dateFin: b2.time,
           couleurFond: 'rgba(0, 230, 118, 0.15)',
           couleurBordure: bullColor,
-          label: 'Zone de Sweep',
-        });
-      }
-
-      // Boîte de la zone S/R englobant les différents tests de support
-      if (liquiditeTrouvee && afficherZoneSR && liquiditeTrouvee.compteurLiquidations >= 2) {
-        const margeZone = liquiditeTrouvee.prix * toleranceZoneSR;
-        boites.push({
-          id: `combo-zone-sr-achat-${i}`,
-          prixHaut: liquiditeTrouvee.prix + margeZone,
-          prixBas: liquiditeTrouvee.prix - margeZone,
-          dateDebut: liquiditeTrouvee.tempsOrigine,
-          dateFin: b2.time,
-          couleurFond: 'rgba(0, 230, 118, 0.08)',
-          couleurBordure: 'rgba(0, 230, 118, 0.4)',
-          label: `Zone Support (${liquiditeTrouvee.compteurLiquidations}x Sweeps)`,
+          label: `Zone Sweep (${liquiditeTrouvee.scoreAdequation}%)`,
         });
       }
 
@@ -613,30 +658,34 @@ export function calculerLiquidationSweepCombo(
         bougieExtreme = 1;
       }
 
-      // Recherche de la liquidité acheteuse (BSL) balayée + Analyse Multi-Sweep sur Résistance
-      const liquiditeTrouvee = trouverLiquiditeBalayee(
+      // Recherche de la liquidité acheteuse (BSL) la plus adaptée
+      const liquiditeTrouvee = trouverLiquiditeLaPlusAdaptee(
         bougies,
         'VENTE',
         prixExtreme,
         indexFinRecherche,
+        i,
         sensibiliteLiquidite,
         lookbackLiquidite,
+        distanceMinBougies,
+        reliefMinPivot,
+        penetrationMaxRatio,
+        penetrationMinRatio,
+        exigerNiveauIntact,
+        modeSelection,
         b1.high,
         Math.min(b1.open, b1.low),
-        toleranceZoneSR
+        moyenneRangeRef
       );
 
       if (exigerLiquidite && !liquiditeTrouvee) continue;
 
-      if (liquiditeTrouvee && liquiditeTrouvee.compteurLiquidations < seuilMinLiquidations) {
-        continue;
-      }
-
       if (liquiditeTrouvee) {
         countVentesSweep++;
-        if (liquiditeTrouvee.typeMultiLiquidation === 'SIMPLE') countSimples++;
-        else if (liquiditeTrouvee.typeMultiLiquidation === 'DOUBLE') countDoubles++;
-        else countTriples++;
+        sommeScores += liquiditeTrouvee.scoreAdequation;
+        if (liquiditeTrouvee.qualiteNiveau === 'MAJEUR') countMajeurs++;
+        else if (liquiditeTrouvee.qualiteNiveau === 'MOYEN') countMoyens++;
+        else countMineurs++;
       }
       countVentes++;
 
@@ -657,19 +706,14 @@ export function calculerLiquidationSweepCombo(
         liquidite: liquiditeTrouvee ?? undefined,
       });
 
-      let badgeMulti = '';
-      if (liquiditeTrouvee) {
-        if (liquiditeTrouvee.typeMultiLiquidation === 'DOUBLE') {
-          badgeMulti = ' 🔥 [Double Sweep 2x]';
-        } else if (liquiditeTrouvee.typeMultiLiquidation === 'TRIPLE') {
-          badgeMulti = ` 🚀 [Triple Sweep ${liquiditeTrouvee.compteurLiquidations}x]`;
-        } else {
-          badgeMulti = ' [1x]';
-        }
+      let badgeQualite = '';
+      if (liquiditeTrouvee && afficherBadgeScore) {
+        const tagQualite = liquiditeTrouvee.qualiteNiveau === 'MAJEUR' ? ' ★' : '';
+        badgeQualite = ` [${liquiditeTrouvee.scoreAdequation}%${tagQualite}]`;
       }
 
       const texteAffiche = liquiditeTrouvee
-        ? `${texteLabel}${badgeMulti}\nSweep BSL (${liquiditeTrouvee.prix.toFixed(4)})`
+        ? `${texteLabel}${badgeQualite}\nSweep BSL (${liquiditeTrouvee.prix.toFixed(4)})`
         : texteLabel;
 
       labels.push({
@@ -697,22 +741,7 @@ export function calculerLiquidationSweepCombo(
           couleur: bearColor,
           epaisseur: 1.5,
           style: 'dashed',
-          label: `BSL Balayée (+${(liquiditeTrouvee.profondeurSweep * 10000).toFixed(1)} pips)`,
-        });
-      }
-
-      if (liquiditeTrouvee && afficherLignesMultiSweep && liquiditeTrouvee.balayagesPrecedents.length > 0) {
-        liquiditeTrouvee.balayagesPrecedents.forEach((bal, idxBal) => {
-          lignes.push({
-            id: `combo-multisweep-bsl-${i}-${idxBal}`,
-            prix: bal.prix,
-            dateDebut: bal.temps,
-            dateFin: b2.time,
-            couleur: 'rgba(242, 54, 69, 0.65)',
-            epaisseur: 1,
-            style: 'dotted',
-            label: `Sweep Résistance #${idxBal + 1}`,
-          });
+          label: `BSL Balayée (${liquiditeTrouvee.qualiteNiveau} +${(liquiditeTrouvee.profondeurSweep * 10000).toFixed(1)}p)`,
         });
       }
 
@@ -725,27 +754,15 @@ export function calculerLiquidationSweepCombo(
           dateFin: b2.time,
           couleurFond: 'rgba(242, 54, 69, 0.15)',
           couleurBordure: bearColor,
-          label: 'Zone de Sweep',
-        });
-      }
-
-      if (liquiditeTrouvee && afficherZoneSR && liquiditeTrouvee.compteurLiquidations >= 2) {
-        const margeZone = liquiditeTrouvee.prix * toleranceZoneSR;
-        boites.push({
-          id: `combo-zone-sr-vente-${i}`,
-          prixHaut: liquiditeTrouvee.prix + margeZone,
-          prixBas: liquiditeTrouvee.prix - margeZone,
-          dateDebut: liquiditeTrouvee.tempsOrigine,
-          dateFin: b2.time,
-          couleurFond: 'rgba(242, 54, 69, 0.08)',
-          couleurBordure: 'rgba(242, 54, 69, 0.4)',
-          label: `Zone Résistance (${liquiditeTrouvee.compteurLiquidations}x Sweeps)`,
+          label: `Zone Sweep (${liquiditeTrouvee.scoreAdequation}%)`,
         });
       }
     }
   }
 
-  // 7️⃣ Synthèse des résultats et statistiques
+  const totalAvecSweep = countAchatsSweep + countVentesSweep;
+  const scoreMoyen = totalAvecSweep > 0 ? Math.round(sommeScores / totalAvecSweep) : 0;
+
   return {
     signaux,
     primitives: {
@@ -758,12 +775,13 @@ export function calculerLiquidationSweepCombo(
       totalSignaux: signaux.length,
       totalAchats: countAchats,
       totalVentes: countVentes,
-      totalLiquiditesBalayees: countAchatsSweep + countVentesSweep,
+      totalLiquiditesBalayees: totalAvecSweep,
       totalAchatsAvecSweep: countAchatsSweep,
       totalVentesAvecSweep: countVentesSweep,
-      totalSimplesLiquidations: countSimples,
-      totalDoublesLiquidations: countDoubles,
-      totalTriplesLiquidations: countTriples,
+      totalNiveauxMajeurs: countMajeurs,
+      totalNiveauxMoyens: countMoyens,
+      totalNiveauxMineurs: countMineurs,
+      scoreMoyenAdequation: scoreMoyen,
     },
   };
 }
