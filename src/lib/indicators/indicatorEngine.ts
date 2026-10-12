@@ -24,12 +24,14 @@ import { calculerFractalZigZag } from './fractalZigZag';
 import { calculerCandlestickPatterns } from './candlestickPatterns';
 import { calculerLiquidationReintegration } from './liquidationReintegration';
 import { calculerLiquidationSweepCombo } from './liquidationSweepCombo';
+import { calculerLiquidationSweepPointFigure } from './liquidationSweepPointFigure';
+import { calculerLiquidationSweepShved } from './liquidationSweepShved';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.13.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.14.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -3545,6 +3547,451 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-liquidation-sweep-pf',
+    nom: 'Liq/Reint + Sweep Point & Figure (P&F)',
+    description: 'Combine le setup de chandelier Liquidation & Réintégration avec la détection du palier de Support ou Résistance Point & Figure (P&F) le plus testé (« le niveau carré »). Trace le niveau P&F, la boîte de la cause Wyckoff et la zone de sweep.',
+    auteur: 'TradeLog / Wyckoff P&F',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      exigerNiveauPFBalaye: true,
+      modeTailleBox: 'auto_atr',
+      periodeATR: 14,
+      ratioBoxATR: 0.5,
+      tailleBoxPips: 10,
+      reversalCount: 3,
+      minColonnesAlignees: 2,
+      lookbackBars: 300,
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      afficherLignePF: true,
+      afficherZoneSweep: true,
+      afficherBoiteCausePF: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+      activerFiltreTendance: false,
+      trendBars: 5,
+    },
+    definitionsVariables: [
+      {
+        cle: 'exigerNiveauPFBalaye',
+        label: 'Exiger Palier P&F Balayé',
+        description: 'Ne valide le setup QUE si la mèche extrême a percé un niveau carré de support ou résistance P&F',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Grille Point & Figure',
+      },
+      {
+        cle: 'modeTailleBox',
+        label: 'Mode Taille de Boîte P&F',
+        description: 'Calcul automatique selon l\'ATR ou pas fixe en pips',
+        type: 'select',
+        valeurParDefaut: 'auto_atr',
+        options: [
+          { label: 'Automatique (ATR Adaptatif)', value: 'auto_atr' },
+          { label: 'Fixe en Pips', value: 'fixe' },
+        ],
+        groupe: 'Grille Point & Figure',
+      },
+      {
+        cle: 'reversalCount',
+        label: 'Nombre de Boîtes Retournement (Reversal)',
+        description: 'Seuil de retournement pour changer de colonne (3 = standard Wyckoff)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 1,
+        max: 5,
+        step: 1,
+        groupe: 'Grille Point & Figure',
+      },
+      {
+        cle: 'minColonnesAlignees',
+        label: 'Min Colonnes Alignées (Palier Carré)',
+        description: 'Nombre minimum de colonnes P&F arrêtées sur le même niveau pour valider un support/résistance carré (défaut: 2)',
+        type: 'number',
+        valeurParDefaut: 2,
+        min: 2,
+        max: 6,
+        step: 1,
+        groupe: 'Grille Point & Figure',
+      },
+      {
+        cle: 'lookbackBars',
+        label: 'Historique Analyse P&F (Bougies)',
+        description: 'Nombre maximal de bougies analysées pour construire les colonnes',
+        type: 'number',
+        valeurParDefaut: 300,
+        min: 50,
+        max: 1000,
+        step: 50,
+        groupe: 'Grille Point & Figure',
+      },
+      {
+        cle: 'afficherLignePF',
+        label: 'Afficher Ligne Horizontale P&F',
+        description: 'Trace le niveau horizontal du palier P&F carré balayé',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherBoiteCausePF',
+        label: 'Afficher Boîte de Cause P&F',
+        description: 'Affiche la boîte de consolidation Wyckoff proportionnelle à la largeur des colonnes alignées',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherZoneSweep',
+        label: 'Afficher Zone de Sweep',
+        description: 'Affiche la boîte rectangulaire illustrant l\'espace percé sous/sur le palier',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'toleranceDeficit',
+        label: 'Tolérance en Retrait (En deçà d\'Open 1)',
+        description: 'Marge maximale admise si la réintégration reste un peu courte (0.05 = 5%)',
+        type: 'number',
+        valeurParDefaut: 0.05,
+        min: 0.01,
+        max: 0.20,
+        step: 0.01,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'toleranceDepassement',
+        label: 'Tolérance en Dépassement Favorable',
+        description: 'Marge élargie autorisée si la réintégration dépasse l\'ouverture (0.25 = 25%)',
+        type: 'number',
+        valeurParDefaut: 0.25,
+        min: 0.05,
+        max: 1.00,
+        step: 0.05,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'activerFiltreTaille',
+        label: 'Activer Filtre de Taille & Impulsion',
+        description: 'Exige que les bougies dépassent la moyenne récente',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurBougie1',
+        label: 'Multiplicateur Bougie 1 (Entière)',
+        description: 'Taille minimale par rapport à la moyenne récente (défaut: 1.75x)',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurCorps2',
+        label: 'Multiplicateur Bougie 2 (Corps Pur)',
+        description: 'Taille minimale du corps par rapport à la moyenne des corps (défaut: 1.75x)',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'activerAchat',
+        label: 'Activer Signaux d\'Achat (Long)',
+        description: 'Affiche les springs et balayages de supports P&F',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'activerVente',
+        label: 'Activer Signaux de Vente (Short)',
+        description: 'Affiche les UTAD et balayages de résistances P&F',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat',
+        description: 'Couleur de l\'étiquette et de la ligne de support P&F',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente',
+        description: 'Couleur de l\'étiquette et de la ligne de résistance P&F',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Visuels & Graphique',
+      },
+    ],
+    creeLe: '2026-10-12T00:00:00.000Z',
+    misAJourLe: '2026-10-12T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Liq/Reint + Sweep Point & Figure (P&F)
+ * Détecte le setup de réintégration et identifie le palier carré P&F balayé.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };
+
+    const res = calculerLiquidationSweepPointFigure(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liquidation-sweep-pf'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-liquidation-sweep-shved',
+    nom: 'Liq/Reint + Sweep Shved Supply & Demand',
+    description: 'Combine le setup de chandelier Liquidation & Réintégration avec les zones institutionnelles Shved Supply & Demand. Identifie quelle zone de Demande (Support) ou Offre (Résistance) a été balayée, en priorisant les zones les plus solides (PROVEN / grand nombre de retests) et en supportant l\'analyse multi-timeframe LTF.',
+    auteur: 'TradeLog / Shved Strategy',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      exigerZoneShvedBalayee: true,
+      forceMinimaleZone: 'TOUTES',
+      minRetests: 1,
+      timeframeSource: 'ACTUEL',
+      periodeATR: 7,
+      zoneFuzzFactor: 0.75,
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      afficherZoneShved: true,
+      afficherZoneSweep: true,
+      afficherLigneConnexion: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+      activerFiltreTendance: false,
+      trendBars: 5,
+    },
+    definitionsVariables: [
+      {
+        cle: 'exigerZoneShvedBalayee',
+        label: 'Exiger Zone Shved Balayée',
+        description: 'Ne valide le setup QUE si la mèche extrême a percé une vraie zone Shved Supply ou Demand',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Zones Shved Supply & Demand',
+      },
+      {
+        cle: 'forceMinimaleZone',
+        label: 'Force Minimale de Zone Requise',
+        description: 'Filtre de solidité institutionnelle (PROVEN_SEULEMENT = > 3 retests)',
+        type: 'select',
+        valeurParDefaut: 'TOUTES',
+        options: [
+          { label: 'Toutes les Zones (Untested, Verified, Proven)', value: 'TOUTES' },
+          { label: 'Au moins Vérifiée (Verified & Proven)', value: 'VERIFIED_MIN' },
+          { label: 'Prouvée / Majeure Uniquement (> 3 retests)', value: 'PROVEN_SEULEMENT' },
+        ],
+        groupe: 'Zones Shved Supply & Demand',
+      },
+      {
+        cle: 'minRetests',
+        label: 'Nombre Minimum de Retests',
+        description: 'Seuil minimum de rebonds constatés sur la zone Shved (défaut: 1)',
+        type: 'number',
+        valeurParDefaut: 1,
+        min: 0,
+        max: 10,
+        step: 1,
+        groupe: 'Zones Shved Supply & Demand',
+      },
+      {
+        cle: 'timeframeSource',
+        label: 'Unité de Temps Source (LTF / HTF)',
+        description: 'Timeframe d\'analyse des zones (ACTUEL, M15, M5, H1, etc.)',
+        type: 'string',
+        valeurParDefaut: 'ACTUEL',
+        groupe: 'Zones Shved Supply & Demand',
+      },
+      {
+        cle: 'periodeATR',
+        label: 'Période ATR Shved (Tolérance)',
+        description: 'Période pour dimensionner l\'épaisseur dynamique de chaque zone',
+        type: 'number',
+        valeurParDefaut: 7,
+        min: 3,
+        max: 20,
+        step: 1,
+        groupe: 'Dimensions Shved',
+      },
+      {
+        cle: 'zoneFuzzFactor',
+        label: 'Facteur d\'Épaisseur Zone (ATR)',
+        description: 'Multiplicateur de l\'ATR pour l\'épaisseur du rectangle de zone (défaut: 0.75)',
+        type: 'number',
+        valeurParDefaut: 0.75,
+        min: 0.1,
+        max: 2.0,
+        step: 0.05,
+        groupe: 'Dimensions Shved',
+      },
+      {
+        cle: 'afficherZoneShved',
+        label: 'Afficher Rectangle Zone Shved',
+        description: 'Affiche la boîte de la zone d\'offre ou de demande balayée',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherZoneSweep',
+        label: 'Afficher Boîte de Sweep',
+        description: 'Affiche le rectangle semi-transparent sous/sur la zone',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherLigneConnexion',
+        label: 'Afficher Ligne Médiane de Zone',
+        description: 'Trace la ligne pointillée horizontale au centre de la zone',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'toleranceDeficit',
+        label: 'Tolérance en Retrait (En deçà d\'Open 1)',
+        description: 'Marge maximale admise si la réintégration reste un peu courte (0.05 = 5%)',
+        type: 'number',
+        valeurParDefaut: 0.05,
+        min: 0.01,
+        max: 0.20,
+        step: 0.01,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'toleranceDepassement',
+        label: 'Tolérance en Dépassement Favorable',
+        description: 'Marge élargie autorisée si la réintégration dépasse l\'ouverture (0.25 = 25%)',
+        type: 'number',
+        valeurParDefaut: 0.25,
+        min: 0.05,
+        max: 1.00,
+        step: 0.05,
+        groupe: 'Règles de Proximité Asymétrique',
+      },
+      {
+        cle: 'activerFiltreTaille',
+        label: 'Activer Filtre de Taille & Impulsion',
+        description: 'Exige que les bougies dépassent la moyenne récente',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurBougie1',
+        label: 'Multiplicateur Bougie 1 (Entière)',
+        description: 'Taille minimale par rapport à la moyenne récente (défaut: 1.75x)',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'multiplicateurCorps2',
+        label: 'Multiplicateur Bougie 2 (Corps Pur)',
+        description: 'Taille minimale du corps par rapport à la moyenne des corps (défaut: 1.75x)',
+        type: 'number',
+        valeurParDefaut: 1.75,
+        min: 1.0,
+        max: 5.0,
+        step: 0.05,
+        groupe: 'Filtres de Momentum',
+      },
+      {
+        cle: 'activerAchat',
+        label: 'Activer Signaux d\'Achat (Long)',
+        description: 'Affiche les sweeps de zones Demand (Support)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'activerVente',
+        label: 'Activer Signaux de Vente (Short)',
+        description: 'Affiche les sweeps de zones Supply (Résistance)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions & Filtres',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat',
+        description: 'Couleur de l\'étiquette et de la zone Demand',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente',
+        description: 'Couleur de l\'étiquette et de la zone Supply',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Visuels & Graphique',
+      },
+    ],
+    creeLe: '2026-10-12T00:00:00.000Z',
+    misAJourLe: '2026-10-12T00:00:00.000Z',
+    code: `/**
+ * Indicateur Scriptable : Liq/Reint + Sweep Shved Supply & Demand
+ * Détecte le setup de réintégration et identifie la zone Shved balayée.
+ */
+return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };
+
+    const res = calculerLiquidationSweepShved(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liquidation-sweep-shved'
+    };
+  }
+};`
   }
 ];
 
@@ -3657,6 +4104,10 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerFractalZigZag(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerCandlestickPatterns')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerCandlestickPatterns(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerLiquidationSweepPointFigure')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepPointFigure(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerLiquidationSweepShved')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepShved(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepCombo')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepCombo(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationReintegration')) {
@@ -3922,6 +4373,8 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerCandlestickPatterns',
       'calculerLiquidationReintegration',
       'calculerLiquidationSweepCombo',
+      'calculerLiquidationSweepPointFigure',
+      'calculerLiquidationSweepShved',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -3968,7 +4421,9 @@ export function evaluerIndicateurScript(
       calculerFractalZigZag,
       calculerCandlestickPatterns,
       calculerLiquidationReintegration,
-      calculerLiquidationSweepCombo
+      calculerLiquidationSweepCombo,
+      calculerLiquidationSweepPointFigure,
+      calculerLiquidationSweepShved
     );
 
     // 2️⃣ Si le script expose une méthode calculer()

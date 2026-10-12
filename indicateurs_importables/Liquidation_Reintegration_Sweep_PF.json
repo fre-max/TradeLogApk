@@ -1,0 +1,197 @@
+{
+  "nom": "Liq/Reint + Sweep Point & Figure (P&F)",
+  "description": "Combine le setup de chandelier Liquidation & Réintégration avec la détection du palier de Support ou Résistance Point & Figure (P&F) le plus testé (« le niveau carré »). Trace le niveau P&F, la boîte de la cause Wyckoff et la zone de sweep.",
+  "auteur": "TradeLog / Wyckoff P&F",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "exigerNiveauPFBalaye": true,
+    "modeTailleBox": "auto_atr",
+    "periodeATR": 14,
+    "ratioBoxATR": 0.5,
+    "tailleBoxPips": 10,
+    "reversalCount": 3,
+    "minColonnesAlignees": 2,
+    "lookbackBars": 300,
+    "toleranceDeficit": 0.05,
+    "toleranceDepassement": 0.25,
+    "activerFiltreTaille": true,
+    "periodeHistorique": 10,
+    "multiplicateurBougie1": 1.75,
+    "multiplicateurCorps2": 1.75,
+    "activerAchat": true,
+    "activerVente": true,
+    "afficherLignePF": true,
+    "afficherZoneSweep": true,
+    "afficherBoiteCausePF": true,
+    "bullColor": "#00E676",
+    "bearColor": "#F23645",
+    "texteLabel": "Liq/Reint",
+    "activerFiltreTendance": false,
+    "trendBars": 5
+  },
+  "definitionsVariables": [
+    {
+      "cle": "exigerNiveauPFBalaye",
+      "label": "Exiger Palier P&F Balayé",
+      "description": "Ne valide le setup QUE si la mèche extrême a percé un niveau carré de support ou résistance P&F",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Grille Point & Figure"
+    },
+    {
+      "cle": "modeTailleBox",
+      "label": "Mode Taille de Boîte P&F",
+      "description": "Calcul automatique selon l'ATR ou pas fixe en pips",
+      "type": "select",
+      "valeurParDefaut": "auto_atr",
+      "options": [
+        { "label": "Automatique (ATR Adaptatif)", "value": "auto_atr" },
+        { "label": "Fixe en Pips", "value": "fixe" }
+      ],
+      "groupe": "Grille Point & Figure"
+    },
+    {
+      "cle": "reversalCount",
+      "label": "Nombre de Boîtes Retournement (Reversal)",
+      "description": "Seuil de retournement pour changer de colonne (3 = standard Wyckoff)",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "groupe": "Grille Point & Figure"
+    },
+    {
+      "cle": "minColonnesAlignees",
+      "label": "Min Colonnes Alignées (Palier Carré)",
+      "description": "Nombre minimum de colonnes P&F arrêtées sur le même niveau pour valider un support/résistance carré (défaut: 2)",
+      "type": "number",
+      "valeurParDefaut": 2,
+      "min": 2,
+      "max": 6,
+      "step": 1,
+      "groupe": "Grille Point & Figure"
+    },
+    {
+      "cle": "lookbackBars",
+      "label": "Historique Analyse P&F (Bougies)",
+      "description": "Nombre maximal de bougies analysées pour construire les colonnes",
+      "type": "number",
+      "valeurParDefaut": 300,
+      "min": 50,
+      "max": 1000,
+      "step": 50,
+      "groupe": "Grille Point & Figure"
+    },
+    {
+      "cle": "afficherLignePF",
+      "label": "Afficher Ligne Horizontale P&F",
+      "description": "Trace le niveau horizontal du palier P&F carré balayé",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "afficherBoiteCausePF",
+      "label": "Afficher Boîte de Cause P&F",
+      "description": "Affiche la boîte de consolidation Wyckoff proportionnelle à la largeur des colonnes alignées",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "afficherZoneSweep",
+      "label": "Afficher Zone de Sweep",
+      "description": "Affiche la boîte rectangulaire illustrant l'espace percé sous/sur le palier",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "toleranceDeficit",
+      "label": "Tolérance en Retrait (En deçà d'Open 1)",
+      "description": "Marge maximale admise si la réintégration reste un peu courte (0.05 = 5%)",
+      "type": "number",
+      "valeurParDefaut": 0.05,
+      "min": 0.01,
+      "max": 0.20,
+      "step": 0.01,
+      "groupe": "Règles de Proximité Asymétrique"
+    },
+    {
+      "cle": "toleranceDepassement",
+      "label": "Tolérance en Dépassement Favorable",
+      "description": "Marge élargie autorisée si la réintégration dépasse l'ouverture (0.25 = 25%)",
+      "type": "number",
+      "valeurParDefaut": 0.25,
+      "min": 0.05,
+      "max": 1.00,
+      "step": 0.05,
+      "groupe": "Règles de Proximité Asymétrique"
+    },
+    {
+      "cle": "activerFiltreTaille",
+      "label": "Activer Filtre de Taille & Impulsion",
+      "description": "Exige que les bougies dépassent la moyenne récente",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "multiplicateurBougie1",
+      "label": "Multiplicateur Bougie 1 (Entière)",
+      "description": "Taille minimale par rapport à la moyenne récente (défaut: 1.75x)",
+      "type": "number",
+      "valeurParDefaut": 1.75,
+      "min": 1.0,
+      "max": 5.0,
+      "step": 0.05,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "multiplicateurCorps2",
+      "label": "Multiplicateur Bougie 2 (Corps Pur)",
+      "description": "Taille minimale du corps par rapport à la moyenne des corps (défaut: 1.75x)",
+      "type": "number",
+      "valeurParDefaut": 1.75,
+      "min": 1.0,
+      "max": 5.0,
+      "step": 0.05,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "activerAchat",
+      "label": "Activer Signaux d'Achat (Long)",
+      "description": "Affiche les springs et balayages de supports P&F",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "activerVente",
+      "label": "Activer Signaux de Vente (Short)",
+      "description": "Affiche les UTAD et balayages de résistances P&F",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "bullColor",
+      "label": "Couleur Signal Achat",
+      "description": "Couleur de l'étiquette et de la ligne de support P&F",
+      "type": "string",
+      "valeurParDefaut": "#00E676",
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bearColor",
+      "label": "Couleur Signal Vente",
+      "description": "Couleur de l'étiquette et de la ligne de résistance P&F",
+      "type": "string",
+      "valeurParDefaut": "#F23645",
+      "groupe": "Visuels & Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };\n\n    const res = calculerLiquidationSweepPointFigure(bougies, parametres);\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'liquidation-sweep-pf'\n    };\n  }\n};"
+}

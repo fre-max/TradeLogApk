@@ -1,0 +1,204 @@
+{
+  "nom": "Liq/Reint + Sweep Shved Supply & Demand",
+  "description": "Combine le setup de chandelier Liquidation & Réintégration avec les zones institutionnelles Shved Supply & Demand. Identifie quelle zone de Demande (Support) ou Offre (Résistance) a été balayée, en priorisant les zones les plus solides (PROVEN / grand nombre de retests) et en supportant l'analyse multi-timeframe LTF.",
+  "auteur": "TradeLog / Shved Strategy",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "exigerZoneShvedBalayee": true,
+    "forceMinimaleZone": "TOUTES",
+    "minRetests": 1,
+    "timeframeSource": "ACTUEL",
+    "periodeATR": 7,
+    "zoneFuzzFactor": 0.75,
+    "toleranceDeficit": 0.05,
+    "toleranceDepassement": 0.25,
+    "activerFiltreTaille": true,
+    "periodeHistorique": 10,
+    "multiplicateurBougie1": 1.75,
+    "multiplicateurCorps2": 1.75,
+    "activerAchat": true,
+    "activerVente": true,
+    "afficherZoneShved": true,
+    "afficherZoneSweep": true,
+    "afficherLigneConnexion": true,
+    "bullColor": "#00E676",
+    "bearColor": "#F23645",
+    "texteLabel": "Liq/Reint",
+    "activerFiltreTendance": false,
+    "trendBars": 5
+  },
+  "definitionsVariables": [
+    {
+      "cle": "exigerZoneShvedBalayee",
+      "label": "Exiger Zone Shved Balayée",
+      "description": "Ne valide le setup QUE si la mèche extrême a percé une vraie zone Shved Supply ou Demand",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Zones Shved Supply & Demand"
+    },
+    {
+      "cle": "forceMinimaleZone",
+      "label": "Force Minimale de Zone Requise",
+      "description": "Filtre de solidité institutionnelle (PROVEN_SEULEMENT = > 3 retests)",
+      "type": "select",
+      "valeurParDefaut": "TOUTES",
+      "options": [
+        { "label": "Toutes les Zones (Untested, Verified, Proven)", "value": "TOUTES" },
+        { "label": "Au moins Vérifiée (Verified & Proven)", "value": "VERIFIED_MIN" },
+        { "label": "Prouvée / Majeure Uniquement (> 3 retests)", "value": "PROVEN_SEULEMENT" }
+      ],
+      "groupe": "Zones Shved Supply & Demand"
+    },
+    {
+      "cle": "minRetests",
+      "label": "Nombre Minimum de Retests",
+      "description": "Seuil minimum de rebonds constatés sur la zone Shved (défaut: 1)",
+      "type": "number",
+      "valeurParDefaut": 1,
+      "min": 0,
+      "max": 10,
+      "step": 1,
+      "groupe": "Zones Shved Supply & Demand"
+    },
+    {
+      "cle": "timeframeSource",
+      "label": "Unité de Temps Source (LTF / HTF)",
+      "description": "Timeframe d'analyse des zones (ACTUEL, M15, M5, H1, etc.)",
+      "type": "string",
+      "valeurParDefaut": "ACTUEL",
+      "groupe": "Zones Shved Supply & Demand"
+    },
+    {
+      "cle": "periodeATR",
+      "label": "Période ATR Shved (Tolérance)",
+      "description": "Période pour dimensionner l'épaisseur dynamique de chaque zone",
+      "type": "number",
+      "valeurParDefaut": 7,
+      "min": 3,
+      "max": 20,
+      "step": 1,
+      "groupe": "Dimensions Shved"
+    },
+    {
+      "cle": "zoneFuzzFactor",
+      "label": "Facteur d'Épaisseur Zone (ATR)",
+      "description": "Multiplicateur de l'ATR pour l'épaisseur du rectangle de zone (défaut: 0.75)",
+      "type": "number",
+      "valeurParDefaut": 0.75,
+      "min": 0.1,
+      "max": 2.0,
+      "step": 0.05,
+      "groupe": "Dimensions Shved"
+    },
+    {
+      "cle": "afficherZoneShved",
+      "label": "Afficher Rectangle Zone Shved",
+      "description": "Affiche la boîte de la zone d'offre ou de demande balayée",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "afficherZoneSweep",
+      "label": "Afficher Boîte de Sweep",
+      "description": "Affiche le rectangle semi-transparent sous/sur la zone",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "afficherLigneConnexion",
+      "label": "Afficher Ligne Médiane de Zone",
+      "description": "Trace la ligne pointillée horizontale au centre de la zone",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "toleranceDeficit",
+      "label": "Tolérance en Retrait (En deçà d'Open 1)",
+      "description": "Marge maximale admise si la réintégration reste un peu courte (0.05 = 5%)",
+      "type": "number",
+      "valeurParDefaut": 0.05,
+      "min": 0.01,
+      "max": 0.20,
+      "step": 0.01,
+      "groupe": "Règles de Proximité Asymétrique"
+    },
+    {
+      "cle": "toleranceDepassement",
+      "label": "Tolérance en Dépassement Favorable",
+      "description": "Marge élargie autorisée si la réintégration dépasse l'ouverture (0.25 = 25%)",
+      "type": "number",
+      "valeurParDefaut": 0.25,
+      "min": 0.05,
+      "max": 1.00,
+      "step": 0.05,
+      "groupe": "Règles de Proximité Asymétrique"
+    },
+    {
+      "cle": "activerFiltreTaille",
+      "label": "Activer Filtre de Taille & Impulsion",
+      "description": "Exige que les bougies dépassent la moyenne récente",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "multiplicateurBougie1",
+      "label": "Multiplicateur Bougie 1 (Entière)",
+      "description": "Taille minimale par rapport à la moyenne récente (défaut: 1.75x)",
+      "type": "number",
+      "valeurParDefaut": 1.75,
+      "min": 1.0,
+      "max": 5.0,
+      "step": 0.05,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "multiplicateurCorps2",
+      "label": "Multiplicateur Bougie 2 (Corps Pur)",
+      "description": "Taille minimale du corps par rapport à la moyenne des corps (défaut: 1.75x)",
+      "type": "number",
+      "valeurParDefaut": 1.75,
+      "min": 1.0,
+      "max": 5.0,
+      "step": 0.05,
+      "groupe": "Filtres de Momentum"
+    },
+    {
+      "cle": "activerAchat",
+      "label": "Activer Signaux d'Achat (Long)",
+      "description": "Affiche les sweeps de zones Demand (Support)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "activerVente",
+      "label": "Activer Signaux de Vente (Short)",
+      "description": "Affiche les sweeps de zones Supply (Résistance)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Directions & Filtres"
+    },
+    {
+      "cle": "bullColor",
+      "label": "Couleur Signal Achat",
+      "description": "Couleur de l'étiquette et de la zone Demand",
+      "type": "string",
+      "valeurParDefaut": "#00E676",
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bearColor",
+      "label": "Couleur Signal Vente",
+      "description": "Couleur de l'étiquette et de la zone Supply",
+      "type": "string",
+      "valeurParDefaut": "#F23645",
+      "groupe": "Visuels & Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };\n\n    const res = calculerLiquidationSweepShved(bougies, parametres);\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'liquidation-sweep-shved'\n    };\n  }\n};"
+}
