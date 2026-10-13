@@ -1,0 +1,57 @@
+{
+  "nom": "SMC Unmitigated Volume Profile",
+  "description": "Profil de volume basé sur les ticks/volumes réels calculé sur les vagues ZigZag. Identifie les POC (Point of Control) et met en évidence les niveaux de volume non encore mitigés (retestés).",
+  "auteur": "TradeLog SMC",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "zigzagDepth": 8,
+    "maxVagues": 5,
+    "lookbackBars": 500,
+    "prolongerNiveaux": true
+  },
+  "definitionsVariables": [
+    {
+      "cle": "zigzagDepth",
+      "label": "Profondeur de Vague ZigZag",
+      "description": "Sensibilité du découpage des vagues de volume (nombre de bougies de confirmation)",
+      "type": "number",
+      "valeurParDefaut": 8,
+      "min": 3,
+      "max": 40,
+      "step": 1,
+      "groupe": "Paramètres du Profil"
+    },
+    {
+      "cle": "maxVagues",
+      "label": "Nombre de Vagues Analysées",
+      "description": "Nombre de segments ZigZag récents pris en compte pour agréger les volumes",
+      "type": "number",
+      "valeurParDefaut": 5,
+      "min": 1,
+      "max": 15,
+      "step": 1,
+      "groupe": "Paramètres du Profil"
+    },
+    {
+      "cle": "lookbackBars",
+      "label": "Historique Analysé (Bougies)",
+      "description": "Nombre de bougies récentes analysées pour construire les profils",
+      "type": "number",
+      "valeurParDefaut": 500,
+      "min": 50,
+      "max": 1000,
+      "step": 50,
+      "groupe": "Paramètres du Profil"
+    },
+    {
+      "cle": "prolongerNiveaux",
+      "label": "Prolonger Niveaux Non Mitigués",
+      "description": "Étend les lignes des POC et niveaux vierges vers le présent",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Affichage Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };\n\n    const uvp = calculerUnmitigatedVolumeProfile(bougies, {\n      zigzagDepth: Number(parametres.zigzagDepth || 8),\n      maxVagues: Number(parametres.maxVagues || 5),\n      lookbackBars: Number(parametres.lookbackBars || 500),\n      prolongerNiveaux: parametres.prolongerNiveaux !== false,\n    });\n\n    const lignes = [];\n    const boites = [];\n\n    if (uvp && uvp.niveauxOuverts) {\n      const tDebut = bougies[Math.max(0, bougies.length - 80)].time;\n      const tFin = bougies[bougies.length - 1].time;\n      for (const n of uvp.niveauxOuverts) {\n        lignes.push({\n          prix: n.price,\n          dateDebut: n.tempsDebut || tDebut,\n          dateFin: tFin,\n          couleur: n.estHaussiere ? '#26a69a' : '#ef5350',\n          style: 'solid',\n          label: `POC ${n.volume.toFixed(0)}`,\n        });\n      }\n    }\n\n    return {\n      donnees: uvp,\n      primitives: { lignes, boites },\n      typeSpecial: 'unmitigated-profile'\n    };\n  }\n};"
+}

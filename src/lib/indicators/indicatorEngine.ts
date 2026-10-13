@@ -4136,7 +4136,11 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
   // ou `calculerDetectionLiquidite` mais sans bloc `return { calculer: ... }`,
   // l'envelopper automatiquement pour créer un indicateur immédiatement exécutable :
   if (!js.includes('return {') && !js.includes('return{')) {
-    if (js.includes('calculerCompleteSetupVisualizer')) {
+    if (js.includes('calculerUnmitigatedVolumeProfile')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerUnmitigatedVolumeProfile(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerUnmitigatedOverlapProfile')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerUnmitigatedOverlapProfile(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerCompleteSetupVisualizer')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerCompleteSetupVisualizer(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerMtfConductor')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerMtfConductor(contexte.bougies, contexte.parametres);\n  }\n};\n`;
