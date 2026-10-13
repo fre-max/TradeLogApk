@@ -1,8 +1,8 @@
 {
   "nom": "Liq/Reint + Sweep Point & Figure (P&F)",
-  "description": "Combine le setup de chandelier Liquidation & Réintégration avec la détection du palier de Support ou Résistance Point & Figure (P&F) le plus testé (« le niveau carré »). Trace le niveau P&F, la boîte de la cause Wyckoff et la zone de sweep.",
+  "description": "Combine le setup de chandelier Liquidation & Réintégration avec la Cause Wyckoff Point & Figure (P&F). Cible la consolidation récente non consommée (Unmitigated) et détecte les doubles liquidations (Re-Sweep de confirmation).",
   "auteur": "TradeLog / Wyckoff P&F",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "overlay",
   "parametres": {
     "exigerNiveauPFBalaye": true,
@@ -12,7 +12,9 @@
     "tailleBoxPips": 10,
     "reversalCount": 3,
     "minColonnesAlignees": 2,
-    "lookbackBars": 300,
+    "lookbackBars": 60,
+    "exigerPalierIntact": true,
+    "detecterDoubleLiquidation": true,
     "toleranceDeficit": 0.05,
     "toleranceDepassement": 0.25,
     "activerFiltreTaille": true,
@@ -76,13 +78,29 @@
     {
       "cle": "lookbackBars",
       "label": "Historique Analyse P&F (Bougies)",
-      "description": "Nombre maximal de bougies analysées pour construire les colonnes",
+      "description": "Nombre de bougies récentes analysées pour construire la consolidation P&F (défaut: 60)",
       "type": "number",
-      "valeurParDefaut": 300,
-      "min": 50,
-      "max": 1000,
-      "step": 50,
+      "valeurParDefaut": 60,
+      "min": 20,
+      "max": 200,
+      "step: 10,
       "groupe": "Grille Point & Figure"
+    },
+    {
+      "cle": "exigerPalierIntact",
+      "label": "Palier Intact Uniquement (Non Consommé)",
+      "description": "Exige qu'aucune bougie antérieure n'ait clôturé au-delà du palier avant le setup (Unmitigated)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Fraîcheur & Précision de Liquidité"
+    },
+    {
+      "cle": "detecterDoubleLiquidation",
+      "label": "Détecter Doubles Liquidations (Re-Sweep)",
+      "description": "Identifie si une 1ère incursion a eu lieu récemment et que le setup fait une 2ème liquidation de confirmation",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Fraîcheur & Précision de Liquidité"
     },
     {
       "cle": "afficherLignePF",
@@ -115,7 +133,7 @@
       "type": "number",
       "valeurParDefaut": 0.05,
       "min": 0.01,
-      "max": 0.20,
+      "max": 0.2,
       "step": 0.01,
       "groupe": "Règles de Proximité Asymétrique"
     },
@@ -126,7 +144,7 @@
       "type": "number",
       "valeurParDefaut": 0.25,
       "min": 0.05,
-      "max": 1.00,
+      "max": 1,
       "step": 0.05,
       "groupe": "Règles de Proximité Asymétrique"
     },
@@ -144,8 +162,8 @@
       "description": "Taille minimale par rapport à la moyenne récente (défaut: 1.75x)",
       "type": "number",
       "valeurParDefaut": 1.75,
-      "min": 1.0,
-      "max": 5.0,
+      "min": 1,
+      "max": 5,
       "step": 0.05,
       "groupe": "Filtres de Momentum"
     },
@@ -155,8 +173,8 @@
       "description": "Taille minimale du corps par rapport à la moyenne des corps (défaut: 1.75x)",
       "type": "number",
       "valeurParDefaut": 1.75,
-      "min": 1.0,
-      "max": 5.0,
+      "min": 1,
+      "max": 5,
       "step": 0.05,
       "groupe": "Filtres de Momentum"
     },

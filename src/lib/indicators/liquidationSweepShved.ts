@@ -10,7 +10,10 @@ import {
 /**
  * Options de configuration pour l'indicateur combiné :
  * Liquidation & Réintégration avec Détection de la Liquidité Balayée sur Shved Supply & Demand.
- * Identifie quelle zone institutionnelle de Support (Demand) ou Résistance (Supply) a été balayée.
+ * 
+ * Vise spécifiquement la liquidité la plus PROCHE, RÉCENTE et NON CONSOMMÉE (Unmitigated),
+ * correspondant au comportement institutionnel réel d'un Spring ou UTAD (Wyckoff),
+ * avec détection des doubles liquidations (Re-Sweep de confirmation).
  */
 export interface ParametresLiquidationSweepShved {
   // ── 🛡️ Paramètres Shved Supply & Demand ──
@@ -18,19 +21,28 @@ export interface ParametresLiquidationSweepShved {
   periodeATR?: number;
   // Facteur d'épaisseur de zone ATR (défaut: 0.75)
   zoneFuzzFactor?: number;
-  // Nombre minimum de retests requis pour qu'une zone soit prise en compte (défaut: 1)
+  // Nombre minimum de retests requis pour qu'une zone soit prise en compte (défaut: 0 = inclut les zones fraîches)
   minRetests?: number;
   // Force minimale exigée pour la zone :
   // 'TOUTES' : inclut UNTESTED, VERIFIED et PROVEN
   // 'VERIFIED_MIN' : exige au moins 1 retest (VERIFIED ou PROVEN)
   // 'PROVEN_SEULEMENT' : exige une zone majeure ultra-testée (> 3 retests)
   forceMinimaleZone?: 'TOUTES' | 'VERIFIED_MIN' | 'PROVEN_SEULEMENT';
-  // Timeframe source pour l'analyse multi-timeframe / Lower Timeframe (défaut: 'ACTUEL')
+  // Timeframe source pour l'analyse multi-timeframe / Lower Timeframe (défaut: 'M15' ou 'ACTUEL')
   timeframeSource?: string;
   // Données brutes M1 éventuelles pour reconstruire le LTF
   donneesM1?: Bougie[];
   // Si true, le signal n'est validé QUE si une vraie zone Shved a été balayée (défaut: true)
   exigerZoneShvedBalayee?: boolean;
+
+  // ── 🎯 Fraîcheur & Précision de la Liquidité (Wyckoff Spring/UTAD) ──
+  // Nombre maximum de bougies dans le passé pour chercher la zone balayée (défaut: 40)
+  // Évite d'aller chercher trop loin des zones déjà obsolètes ou hors-sujet
+  lookbackMaxBars?: number;
+  // Exiger que la zone n'ait JAMAIS été clôturée au-delà avant notre setup (Unmitigated) (défaut: true)
+  exigerZoneIntacte?: boolean;
+  // Détecter et signaler les doubles liquidations (Re-Sweep / Confirmation de purge) (défaut: true)
+  detecterDoubleLiquidation?: boolean;
 
   // ── 🕯️ Paramètres du Chandelier Liq/Reint ──
   // Tolérance si la réintégration reste en deçà d'Open1 (défaut: 0.05 = 5%)
@@ -83,6 +95,8 @@ export interface SignalLiquidationSweepShved {
   corpsBougie2: number;
   zoneShved?: ZoneShved;
   profondeurSweep?: number;
+  estDoubleLiquidation?: boolean;
+  prixPremiereLiquidation?: number;
 }
 
 /**
@@ -100,6 +114,7 @@ export interface ResultatLiquidationSweepShved {
     totalAchats: number;
     totalVentes: number;
     totalSweepsShved: number;
+    totalDoubleLiquidations: number;
     totalProven: number;
     totalVerified: number;
     maxRetestsZone: number;
@@ -120,72 +135,209 @@ function respecteForceMinimale(force: ForceZoneShved, forceMin: string): boolean
 }
 
 /**
- * Recherche parmi les zones Shved celle qui a été balayée par le point extrême
- * et qui est la plus solide (PROVEN en priorité, puis max de retests).
+ * Information sur la zone Shved la plus adaptée balayée par le setup
  */
-function identifierZoneShvedLaPlusSolide(
+interface InfoZoneShvedCandidate {
+  zone: ZoneShved;
+  profondeur: number;
+  estDoubleLiquidation: boolean;
+  prixPremiereLiquidation?: number;
+  scorePertinence: number;
+}
+
+/**
+ * Recherche parmi les zones Shved la zone la plus pertinente balayée par le point extrême :
+ * 1. Proximité temporelle (récente dans les N dernières bougies)
+ * 2. Non-consommée (Unmitigated) : aucune clôture antérieure n'a traversé la zone
+ * 3. Détection de la double liquidation : si une mèche récente a déjà effleuré la zone
+ * 
+ * Exemple :
+ * const res = identifierZoneShvedLaPlusAdaptee(supports, 'ACHAT', prixExtreme, indexSetup, bougies, options);
+ */
+function identifierZoneShvedLaPlusAdaptee(
   zones: ZoneShved[],
   direction: 'ACHAT' | 'VENTE',
   prixExtreme: number,
   indexSetup: number,
-  forceMin: string,
-  minRetests: number,
-  prixReferenceHaut: number,
-  prixReferenceBas: number
-): { zone: ZoneShved; profondeur: number } | null {
-  const candidates: Array<{ zone: ZoneShved; profondeur: number }> = [];
+  bougies: Bougie[],
+  options: {
+    forceMin: string;
+    minRetests: number;
+    prixReferenceHaut: number;
+    prixReferenceBas: number;
+    lookbackMaxBars: number;
+    exigerZoneIntacte: boolean;
+    detecterDoubleLiquidation: boolean;
+  }
+): InfoZoneShvedCandidate | null {
+  const candidates: InfoZoneShvedCandidate[] = [];
+  const {
+    forceMin,
+    minRetests,
+    prixReferenceHaut,
+    prixReferenceBas,
+    lookbackMaxBars,
+    exigerZoneIntacte,
+    detecterDoubleLiquidation,
+  } = options;
 
   for (const zone of zones) {
-    // La zone doit être née avant le setup
+    // 1️⃣ La zone doit être née avant les 2 bougies du setup
     if (zone.indexOrigine >= indexSetup - 1) continue;
-    // Filtre sur le nombre de retests
+
+    // 2️⃣ Éviter de chercher trop loin dans le passé : respecter la fenêtre récente
+    const ecartBougies = indexSetup - zone.indexOrigine;
+    if (ecartBougies > lookbackMaxBars) continue;
+
+    // 3️⃣ Filtres de retests et de force
     if (zone.retests < minRetests) continue;
-    // Filtre sur la force de la zone
     if (!respecteForceMinimale(zone.force, forceMin)) continue;
 
     if (direction === 'ACHAT' && zone.type === 'SUPPORT') {
-      // 🟢 En Achat : Le creux extrême a percé sous la zone (ou sous son prix médian)
-      // mais le prix de référence haut reste au-dessus
-      if (prixExtreme <= zone.prixHaut && zone.prixBas <= prixReferenceHaut) {
-        // La mèche extrême a fait un sweep sous la borne basse ou médiane
-        const profondeur = Math.max(0, zone.prixBas - prixExtreme);
-        candidates.push({ zone, profondeur });
+      // 🟢 En Achat : Le creux extrême a percé sous la zone (ou sous son prix haut/médian)
+      // et le haut de référence reste au-dessus
+      const estBalayee = prixExtreme <= zone.prixHaut && zone.prixBas <= prixReferenceHaut;
+      if (!estBalayee) continue;
+
+      // 4️⃣ Vérification de Non-Consommation (Unmitigated / Zone Intacte) :
+      // Aucune bougie entre la naissance de la zone et l'avant-dernière bougie ne doit avoir clôturé SOUS la zone
+      if (exigerZoneIntacte) {
+        let estConsommee = false;
+        const indexFinControle = Math.max(zone.indexOrigine + 1, indexSetup - 2);
+        for (let k = zone.indexOrigine + 1; k < indexFinControle; k++) {
+          if (bougies[k] && bougies[k].close < zone.prixBas) {
+            estConsommee = true;
+            break;
+          }
+        }
+        if (estConsommee) continue; // Zone déjà morte / liquidée depuis longtemps
       }
+
+      // 5️⃣ Détection de la Double Liquidation (Re-Sweep de Confirmation) :
+      // On regarde si dans les 1 à 6 bougies précédant le setup, une bougie a déjà touché la zone,
+      // et que notre setup actuel fait un creux encore plus bas (purge finale des derniers stops)
+      let estDoubleLiq = false;
+      let prixPremLiq: number | undefined = undefined;
+
+      if (detecterDoubleLiquidation) {
+        // Cas 1 : La bougie 1 du setup a percé la zone et la bougie 2 (doji) perfore encore plus bas
+        const b1 = bougies[indexSetup - 1];
+        const b2 = bougies[indexSetup];
+        if (b1 && b2 && b2.low < b1.low && b1.low <= zone.prixHaut) {
+          estDoubleLiq = true;
+          prixPremLiq = b1.low;
+        } else {
+          // Cas 2 : Une bougie récente (1 à 6 bougies avant) a déjà fait une 1ère liquidation
+          const indexDebutRecent = Math.max(0, indexSetup - 6);
+          let minRecent = Infinity;
+          for (let m = indexDebutRecent; m <= indexSetup - 2; m++) {
+            if (bougies[m] && bougies[m].low <= zone.prixHaut) {
+              if (bougies[m].low < minRecent) {
+                minRecent = bougies[m].low;
+              }
+            }
+          }
+          if (minRecent < Infinity && prixExtreme < minRecent) {
+            estDoubleLiq = true;
+            prixPremLiq = minRecent;
+          }
+        }
+      }
+
+      // 6️⃣ Calcul du score de pertinence :
+      // Plus la zone est récente et proche, plus son score est élevé (Spring Wyckoff immédiat)
+      const scoreRecence = Math.max(0, 100 - ecartBougies * 2);
+      const bonusRetests = Math.min(zone.retests, 5) * 8;
+      const bonusDoubleLiq = estDoubleLiq ? 35 : 0;
+      const scorePertinence = scoreRecence + bonusRetests + bonusDoubleLiq;
+
+      const profondeur = Math.max(0, zone.prixBas - prixExtreme);
+      candidates.push({
+        zone,
+        profondeur,
+        estDoubleLiquidation: estDoubleLiq,
+        prixPremiereLiquidation: prixPremLiq,
+        scorePertinence,
+      });
+
     } else if (direction === 'VENTE' && zone.type === 'RESISTANCE') {
-      // 🔴 En Vente : Le sommet extrême a percé au-dessus de la zone (ou de son prix médian)
-      if (prixExtreme >= zone.prixBas && zone.prixHaut >= prixReferenceBas) {
-        const profondeur = Math.max(0, prixExtreme - zone.prixHaut);
-        candidates.push({ zone, profondeur });
+      // 🔴 En Vente : Le sommet extrême a percé au-dessus de la zone
+      const estBalayee = prixExtreme >= zone.prixBas && zone.prixHaut >= prixReferenceBas;
+      if (!estBalayee) continue;
+
+      // 4️⃣ Vérification de Non-Consommation (Unmitigated) :
+      if (exigerZoneIntacte) {
+        let estConsommee = false;
+        const indexFinControle = Math.max(zone.indexOrigine + 1, indexSetup - 2);
+        for (let k = zone.indexOrigine + 1; k < indexFinControle; k++) {
+          if (bougies[k] && bougies[k].close > zone.prixHaut) {
+            estConsommee = true;
+            break;
+          }
+        }
+        if (estConsommee) continue;
       }
+
+      // 5️⃣ Détection de la Double Liquidation (Re-Sweep de Confirmation) :
+      let estDoubleLiq = false;
+      let prixPremLiq: number | undefined = undefined;
+
+      if (detecterDoubleLiquidation) {
+        // Cas 1 : La bougie 1 a percé la zone et la bougie 2 monte encore plus haut
+        const b1 = bougies[indexSetup - 1];
+        const b2 = bougies[indexSetup];
+        if (b1 && b2 && b2.high > b1.high && b1.high >= zone.prixBas) {
+          estDoubleLiq = true;
+          prixPremLiq = b1.high;
+        } else {
+          // Cas 2 : Une bougie dans les bougies récentes
+          const indexDebutRecent = Math.max(0, indexSetup - 6);
+          let maxRecent = -Infinity;
+          for (let m = indexDebutRecent; m <= indexSetup - 2; m++) {
+            if (bougies[m] && bougies[m].high >= zone.prixBas) {
+              if (bougies[m].high > maxRecent) {
+                maxRecent = bougies[m].high;
+              }
+            }
+          }
+          if (maxRecent > -Infinity && prixExtreme > maxRecent) {
+            estDoubleLiq = true;
+            prixPremLiq = maxRecent;
+          }
+        }
+      }
+
+      const scoreRecence = Math.max(0, 100 - ecartBougies * 2);
+      const bonusRetests = Math.min(zone.retests, 5) * 8;
+      const bonusDoubleLiq = estDoubleLiq ? 35 : 0;
+      const scorePertinence = scoreRecence + bonusRetests + bonusDoubleLiq;
+
+      const profondeur = Math.max(0, prixExtreme - zone.prixHaut);
+      candidates.push({
+        zone,
+        profondeur,
+        estDoubleLiquidation: estDoubleLiq,
+        prixPremiereLiquidation: prixPremLiq,
+        scorePertinence,
+      });
     }
   }
 
   if (candidates.length === 0) return null;
 
-  // Sélection de la zone la plus solide :
-  // 1. Force PROVEN d'abord
-  // 2. Nombre de retests le plus élevé
-  // 3. Zone la plus récente
+  // 7️⃣ Sélection de la zone ayant le meilleur score (la plus fraîche et adaptée)
   return candidates.reduce((meilleur, c) => {
-    const poidsForce = (f: ForceZoneShved) => f === 'PROVEN' ? 3 : (f === 'VERIFIED' ? 2 : 1);
-    const pActuel = poidsForce(c.zone.force);
-    const pMeilleur = poidsForce(meilleur.zone.force);
-
-    if (pActuel > pMeilleur) return c;
-    if (pActuel === pMeilleur) {
-      if (c.zone.retests > meilleur.zone.retests) return c;
-      if (c.zone.retests === meilleur.zone.retests && c.zone.indexOrigine > meilleur.zone.indexOrigine) {
-        return c;
-      }
-    }
-    return meilleur;
+    return c.scorePertinence > meilleur.scorePertinence ? c : meilleur;
   }, candidates[0]);
 }
 
 /**
  * Indicateur combiné : Détecte le setup de réintégration (Liq/Reint)
  * et identifie précisément quelle zone Shved Supply & Demand
- * a été balayée (avec force PROVEN/VERIFIED et retests).
+ * a été balayée (avec force PROVEN/VERIFIED, récence et détection double sweep).
+ * 
+ * Exemple :
+ * const res = calculerLiquidationSweepShved(bougies, { lookbackMaxBars: 40 });
  */
 export function calculerLiquidationSweepShved(
   bougies: Bougie[],
@@ -201,6 +353,7 @@ export function calculerLiquidationSweepShved(
         totalAchats: 0,
         totalVentes: 0,
         totalSweepsShved: 0,
+        totalDoubleLiquidations: 0,
         totalProven: 0,
         totalVerified: 0,
         maxRetestsZone: 0,
@@ -217,9 +370,14 @@ export function calculerLiquidationSweepShved(
 
   const periodeATR = Math.max(3, Number(params.periodeATR ?? 7));
   const zoneFuzzFactor = Math.max(0.1, Number(params.zoneFuzzFactor ?? 0.75));
-  const minRetests = Math.max(0, Number(params.minRetests ?? 1));
+  const minRetests = Math.max(0, Number(params.minRetests ?? 0)); // 0 par défaut pour ne pas bloquer les zones fraîches
   const forceMin = params.forceMinimaleZone || 'TOUTES';
   const exigerZoneShved = params.exigerZoneShvedBalayee !== false;
+
+  // Précision et récence (anti-recherche trop loin)
+  const lookbackMaxBars = Math.max(10, Math.min(200, Number(params.lookbackMaxBars ?? 40)));
+  const exigerZoneIntacte = params.exigerZoneIntacte !== false;
+  const detecterDoubleLiquidation = params.detecterDoubleLiquidation !== false;
 
   const activerFiltreTaille = params.activerFiltreTaille !== false;
   const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));
@@ -243,7 +401,7 @@ export function calculerLiquidationSweepShved(
     periodeATR,
     zoneFuzzFactor,
     minRetests,
-    supprimerZonesCassees: false, // On garde les zones pour détecter le moment exact du sweep
+    supprimerZonesCassees: false, // On conserve l'historique complet pour vérifier nous-mêmes la non-consommation exacte
     timeframeSource: params.timeframeSource || 'ACTUEL',
     donneesM1: params.donneesM1,
   };
@@ -261,11 +419,12 @@ export function calculerLiquidationSweepShved(
   let countAchats = 0;
   let countVentes = 0;
   let countSweepsShved = 0;
+  let countDoubleLiq = 0;
   let countProven = 0;
   let countVerified = 0;
   let maxRetests = 0;
 
-  // 3️⃣ Parcours des bougies pour détecter le setup Liq/Reint
+  // 3️⃣ Parcours linéaire des bougies pour détecter le setup Liq/Reint (Spring/UTAD)
   for (let i = 1; i < bougies.length; i++) {
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
@@ -309,7 +468,7 @@ export function calculerLiquidationSweepShved(
     }
     if (!estValideProximite) continue;
 
-    // Filtre de taille / momentum
+    // Filtre de taille / momentum sur les bougies récentes
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
@@ -334,6 +493,7 @@ export function calculerLiquidationSweepShved(
     let bougieExtreme: 1 | 2 = 1;
 
     if (estCandidatAchat) {
+      // 🟢 En Achat : identification du point bas extrême balayeur
       if (b2.low <= b1.low) {
         prixExtreme = b2.low;
         bougieExtreme = 2;
@@ -343,24 +503,31 @@ export function calculerLiquidationSweepShved(
       }
 
       // Recherche de la zone Demand (Support Shved) balayée
-      const zoneTrouvee = identifierZoneShvedLaPlusSolide(
+      const candidateInfo = identifierZoneShvedLaPlusAdaptee(
         supports,
         'ACHAT',
         prixExtreme,
         i,
-        forceMin,
-        minRetests,
-        Math.max(b1.open, b1.high),
-        b1.low
+        bougies,
+        {
+          forceMin,
+          minRetests,
+          prixReferenceHaut: Math.max(b1.open, b1.high),
+          prixReferenceBas: b1.low,
+          lookbackMaxBars,
+          exigerZoneIntacte,
+          detecterDoubleLiquidation,
+        }
       );
 
-      if (exigerZoneShved && !zoneTrouvee) continue;
+      if (exigerZoneShved && !candidateInfo) continue;
 
-      if (zoneTrouvee) {
+      if (candidateInfo) {
         countSweepsShved++;
-        if (zoneTrouvee.zone.force === 'PROVEN') countProven++;
-        else if (zoneTrouvee.zone.force === 'VERIFIED') countVerified++;
-        if (zoneTrouvee.zone.retests > maxRetests) maxRetests = zoneTrouvee.zone.retests;
+        if (candidateInfo.estDoubleLiquidation) countDoubleLiq++;
+        if (candidateInfo.zone.force === 'PROVEN') countProven++;
+        else if (candidateInfo.zone.force === 'VERIFIED') countVerified++;
+        if (candidateInfo.zone.retests > maxRetests) maxRetests = candidateInfo.zone.retests;
       }
       countAchats++;
 
@@ -378,19 +545,29 @@ export function calculerLiquidationSweepShved(
         situationCloture,
         rangeBougie1: range1,
         corpsBougie2: corps2,
-        zoneShved: zoneTrouvee?.zone,
-        profondeurSweep: zoneTrouvee?.profondeur,
+        zoneShved: candidateInfo?.zone,
+        profondeurSweep: candidateInfo?.profondeur,
+        estDoubleLiquidation: candidateInfo?.estDoubleLiquidation,
+        prixPremiereLiquidation: candidateInfo?.prixPremiereLiquidation,
       });
 
-      const badgeShved = zoneTrouvee
-        ? ` [Demand ${zoneTrouvee.zone.force} (${zoneTrouvee.zone.retests}t)]\nSweep Demand (${zoneTrouvee.zone.prixMedian.toFixed(4)})`
+      // Construction du badge textuel
+      let titreSignal = texteLabel;
+      if (candidateInfo?.estDoubleLiquidation) {
+        titreSignal = `2x Liq (Re-Sweep)`;
+      } else if (candidateInfo) {
+        titreSignal = `Spring Sweep`;
+      }
+
+      const badgeDetails = candidateInfo
+        ? `\nDemand (${candidateInfo.zone.prixMedian.toFixed(4)}) [${candidateInfo.zone.force}]`
         : '';
 
       labels.push({
         id: `shved-achat-lbl-${i}`,
         prix: b2.low,
         date: b2.time,
-        texte: zoneTrouvee ? `${texteLabel}${badgeShved}` : texteLabel,
+        texte: `${titreSignal}${badgeDetails}`,
         couleur: bullColor,
         position: 'below',
       });
@@ -402,45 +579,47 @@ export function calculerLiquidationSweepShved(
         couleur: bullColor,
       });
 
-      if (zoneTrouvee && afficherZone) {
+      if (candidateInfo && afficherZone) {
         boites.push({
           id: `shved-zone-demand-${i}`,
-          prixHaut: zoneTrouvee.zone.prixHaut,
-          prixBas: zoneTrouvee.zone.prixBas,
-          dateDebut: zoneTrouvee.zone.dateDebut,
+          prixHaut: candidateInfo.zone.prixHaut,
+          prixBas: candidateInfo.zone.prixBas,
+          dateDebut: candidateInfo.zone.dateDebut,
           dateFin: b2.time,
           couleurFond: 'rgba(0, 230, 118, 0.12)',
           couleurBordure: bullColor,
-          label: `Zone Demand (${zoneTrouvee.zone.force} - ${zoneTrouvee.zone.retests} retests)`,
+          label: `Zone Demand (${candidateInfo.zone.force} - ${candidateInfo.zone.retests}t)`,
         });
       }
 
-      if (zoneTrouvee && afficherSweep) {
+      if (candidateInfo && afficherSweep) {
         boites.push({
           id: `shved-sweep-demand-${i}`,
-          prixHaut: zoneTrouvee.zone.prixBas,
+          prixHaut: candidateInfo.zone.prixBas,
           prixBas: prixExtreme,
           dateDebut: b1.time,
           dateFin: b2.time,
-          couleurFond: 'rgba(0, 230, 118, 0.22)',
+          couleurFond: 'rgba(0, 230, 118, 0.28)',
           couleurBordure: bullColor,
-          label: `Sweep Demand (-${(zoneTrouvee.profondeur * 10000).toFixed(1)}p)`,
+          label: candidateInfo.estDoubleLiquidation ? `2x Sweep (-${candidateInfo.profondeur.toFixed(4)})` : `Sweep (-${candidateInfo.profondeur.toFixed(4)})`,
         });
       }
 
-      if (zoneTrouvee && afficherLigne) {
+      if (candidateInfo && afficherLigne) {
         lignes.push({
           id: `shved-ligne-demand-${i}`,
-          prix: zoneTrouvee.zone.prixMedian,
-          dateDebut: zoneTrouvee.zone.dateDebut,
+          prix: candidateInfo.zone.prixMedian,
+          dateDebut: candidateInfo.zone.dateDebut,
           dateFin: b2.time,
           couleur: bullColor,
           epaisseur: 1.5,
           style: 'dashed',
-          label: `Demand Médian (${zoneTrouvee.zone.prixMedian.toFixed(4)})`,
+          label: `Demand Médian (${candidateInfo.zone.prixMedian.toFixed(4)})`,
         });
       }
+
     } else if (estCandidatVente) {
+      // 🔴 En Vente : identification du point haut extrême balayeur
       if (b2.high >= b1.high) {
         prixExtreme = b2.high;
         bougieExtreme = 2;
@@ -449,24 +628,32 @@ export function calculerLiquidationSweepShved(
         bougieExtreme = 1;
       }
 
-      const zoneTrouvee = identifierZoneShvedLaPlusSolide(
+      // Recherche de la zone Supply (Résistance Shved) balayée
+      const candidateInfo = identifierZoneShvedLaPlusAdaptee(
         resistances,
         'VENTE',
         prixExtreme,
         i,
-        forceMin,
-        minRetests,
-        b1.high,
-        Math.min(b1.open, b1.low)
+        bougies,
+        {
+          forceMin,
+          minRetests,
+          prixReferenceHaut: b1.high,
+          prixReferenceBas: Math.min(b1.open, b1.low),
+          lookbackMaxBars,
+          exigerZoneIntacte,
+          detecterDoubleLiquidation,
+        }
       );
 
-      if (exigerZoneShved && !zoneTrouvee) continue;
+      if (exigerZoneShved && !candidateInfo) continue;
 
-      if (zoneTrouvee) {
+      if (candidateInfo) {
         countSweepsShved++;
-        if (zoneTrouvee.zone.force === 'PROVEN') countProven++;
-        else if (zoneTrouvee.zone.force === 'VERIFIED') countVerified++;
-        if (zoneTrouvee.zone.retests > maxRetests) maxRetests = zoneTrouvee.zone.retests;
+        if (candidateInfo.estDoubleLiquidation) countDoubleLiq++;
+        if (candidateInfo.zone.force === 'PROVEN') countProven++;
+        else if (candidateInfo.zone.force === 'VERIFIED') countVerified++;
+        if (candidateInfo.zone.retests > maxRetests) maxRetests = candidateInfo.zone.retests;
       }
       countVentes++;
 
@@ -484,19 +671,28 @@ export function calculerLiquidationSweepShved(
         situationCloture,
         rangeBougie1: range1,
         corpsBougie2: corps2,
-        zoneShved: zoneTrouvee?.zone,
-        profondeurSweep: zoneTrouvee?.profondeur,
+        zoneShved: candidateInfo?.zone,
+        profondeurSweep: candidateInfo?.profondeur,
+        estDoubleLiquidation: candidateInfo?.estDoubleLiquidation,
+        prixPremiereLiquidation: candidateInfo?.prixPremiereLiquidation,
       });
 
-      const badgeShved = zoneTrouvee
-        ? ` [Supply ${zoneTrouvee.zone.force} (${zoneTrouvee.zone.retests}t)]\nSweep Supply (${zoneTrouvee.zone.prixMedian.toFixed(4)})`
+      let titreSignal = texteLabel;
+      if (candidateInfo?.estDoubleLiquidation) {
+        titreSignal = `2x Liq (Re-Sweep)`;
+      } else if (candidateInfo) {
+        titreSignal = `UTAD Sweep`;
+      }
+
+      const badgeDetails = candidateInfo
+        ? `\nSupply (${candidateInfo.zone.prixMedian.toFixed(4)}) [${candidateInfo.zone.force}]`
         : '';
 
       labels.push({
         id: `shved-vente-lbl-${i}`,
         prix: b2.high,
         date: b2.time,
-        texte: zoneTrouvee ? `${texteLabel}${badgeShved}` : texteLabel,
+        texte: `${titreSignal}${badgeDetails}`,
         couleur: bearColor,
         position: 'above',
       });
@@ -508,42 +704,42 @@ export function calculerLiquidationSweepShved(
         couleur: bearColor,
       });
 
-      if (zoneTrouvee && afficherZone) {
+      if (candidateInfo && afficherZone) {
         boites.push({
           id: `shved-zone-supply-${i}`,
-          prixHaut: zoneTrouvee.zone.prixHaut,
-          prixBas: zoneTrouvee.zone.prixBas,
-          dateDebut: zoneTrouvee.zone.dateDebut,
+          prixHaut: candidateInfo.zone.prixHaut,
+          prixBas: candidateInfo.zone.prixBas,
+          dateDebut: candidateInfo.zone.dateDebut,
           dateFin: b2.time,
           couleurFond: 'rgba(242, 54, 69, 0.12)',
           couleurBordure: bearColor,
-          label: `Zone Supply (${zoneTrouvee.zone.force} - ${zoneTrouvee.zone.retests} retests)`,
+          label: `Zone Supply (${candidateInfo.zone.force} - ${candidateInfo.zone.retests}t)`,
         });
       }
 
-      if (zoneTrouvee && afficherSweep) {
+      if (candidateInfo && afficherSweep) {
         boites.push({
           id: `shved-sweep-supply-${i}`,
           prixHaut: prixExtreme,
-          prixBas: zoneTrouvee.zone.prixHaut,
+          prixBas: candidateInfo.zone.prixHaut,
           dateDebut: b1.time,
           dateFin: b2.time,
-          couleurFond: 'rgba(242, 54, 69, 0.22)',
+          couleurFond: 'rgba(242, 54, 69, 0.28)',
           couleurBordure: bearColor,
-          label: `Sweep Supply (+${(zoneTrouvee.profondeur * 10000).toFixed(1)}p)`,
+          label: candidateInfo.estDoubleLiquidation ? `2x Sweep (+${candidateInfo.profondeur.toFixed(4)})` : `Sweep (+${candidateInfo.profondeur.toFixed(4)})`,
         });
       }
 
-      if (zoneTrouvee && afficherLigne) {
+      if (candidateInfo && afficherLigne) {
         lignes.push({
           id: `shved-ligne-supply-${i}`,
-          prix: zoneTrouvee.zone.prixMedian,
-          dateDebut: zoneTrouvee.zone.dateDebut,
+          prix: candidateInfo.zone.prixMedian,
+          dateDebut: candidateInfo.zone.dateDebut,
           dateFin: b2.time,
           couleur: bearColor,
           epaisseur: 1.5,
           style: 'dashed',
-          label: `Supply Médian (${zoneTrouvee.zone.prixMedian.toFixed(4)})`,
+          label: `Supply Médian (${candidateInfo.zone.prixMedian.toFixed(4)})`,
         });
       }
     }
@@ -551,12 +747,7 @@ export function calculerLiquidationSweepShved(
 
   return {
     signaux,
-    primitives: {
-      labels,
-      lignes,
-      boites,
-      points,
-    },
+    primitives: { labels, lignes, boites, points },
     zonesDetectees: {
       totalSupports: supports.length,
       totalResistances: resistances.length,
@@ -566,6 +757,7 @@ export function calculerLiquidationSweepShved(
       totalAchats: countAchats,
       totalVentes: countVentes,
       totalSweepsShved: countSweepsShved,
+      totalDoubleLiquidations: countDoubleLiq,
       totalProven: countProven,
       totalVerified: countVerified,
       maxRetestsZone: maxRetests,

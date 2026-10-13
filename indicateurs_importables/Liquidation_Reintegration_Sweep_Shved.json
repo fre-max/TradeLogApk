@@ -1,14 +1,17 @@
 {
   "nom": "Liq/Reint + Sweep Shved Supply & Demand",
-  "description": "Combine le setup de chandelier Liquidation & Réintégration avec les zones institutionnelles Shved Supply & Demand. Identifie quelle zone de Demande (Support) ou Offre (Résistance) a été balayée, en priorisant les zones les plus solides (PROVEN / grand nombre de retests) et en supportant l'analyse multi-timeframe LTF.",
+  "description": "Combine le setup de chandelier Liquidation & Réintégration avec les zones Shved Supply & Demand. Cible la zone immédiate non consommée (Unmitigated) et détecte les doubles liquidations (Re-Sweep de confirmation).",
   "auteur": "TradeLog / Shved Strategy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "overlay",
   "parametres": {
     "exigerZoneShvedBalayee": true,
     "forceMinimaleZone": "TOUTES",
-    "minRetests": 1,
+    "minRetests": 0,
     "timeframeSource": "ACTUEL",
+    "lookbackMaxBars": 40,
+    "exigerZoneIntacte": true,
+    "detecterDoubleLiquidation": true,
     "periodeATR": 7,
     "zoneFuzzFactor": 0.75,
     "toleranceDeficit": 0.05,
@@ -53,13 +56,40 @@
     {
       "cle": "minRetests",
       "label": "Nombre Minimum de Retests",
-      "description": "Seuil minimum de rebonds constatés sur la zone Shved (défaut: 1)",
+      "description": "Seuil minimum de rebonds constatés (0 = inclut les zones fraîches immédiates)",
       "type": "number",
-      "valeurParDefaut": 1,
+      "valeurParDefaut": 0,
       "min": 0,
       "max": 10,
       "step": 1,
       "groupe": "Zones Shved Supply & Demand"
+    },
+    {
+      "cle": "lookbackMaxBars",
+      "label": "Fenêtre Récente (Lookback Bougies)",
+      "description": "Nombre de bougies récentes analysées pour trouver la zone balayée (défaut: 40)",
+      "type": "number",
+      "valeurParDefaut": 40,
+      "min": 10,
+      "max": 200,
+      "step": 5,
+      "groupe": "Fraîcheur & Précision de Liquidité"
+    },
+    {
+      "cle": "exigerZoneIntacte",
+      "label": "Zone Intacte Uniquement (Non Consommée)",
+      "description": "Exige qu'aucune bougie antérieure n'ait clôturé au-delà de la zone avant le setup (Unmitigated)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Fraîcheur & Précision de Liquidité"
+    },
+    {
+      "cle": "detecterDoubleLiquidation",
+      "label": "Détecter Doubles Liquidations (Re-Sweep)",
+      "description": "Identifie si une 1ère incursion a eu lieu récemment et que le setup fait une 2ème liquidation de confirmation",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Fraîcheur & Précision de Liquidité"
     },
     {
       "cle": "timeframeSource",
@@ -87,7 +117,7 @@
       "type": "number",
       "valeurParDefaut": 0.75,
       "min": 0.1,
-      "max": 2.0,
+      "max": 2,
       "step": 0.05,
       "groupe": "Dimensions Shved"
     },
@@ -122,7 +152,7 @@
       "type": "number",
       "valeurParDefaut": 0.05,
       "min": 0.01,
-      "max": 0.20,
+      "max": 0.2,
       "step": 0.01,
       "groupe": "Règles de Proximité Asymétrique"
     },
@@ -133,7 +163,7 @@
       "type": "number",
       "valeurParDefaut": 0.25,
       "min": 0.05,
-      "max": 1.00,
+      "max": 1,
       "step": 0.05,
       "groupe": "Règles de Proximité Asymétrique"
     },
@@ -151,8 +181,8 @@
       "description": "Taille minimale par rapport à la moyenne récente (défaut: 1.75x)",
       "type": "number",
       "valeurParDefaut": 1.75,
-      "min": 1.0,
-      "max": 5.0,
+      "min": 1,
+      "max": 5,
       "step": 0.05,
       "groupe": "Filtres de Momentum"
     },
@@ -162,8 +192,8 @@
       "description": "Taille minimale du corps par rapport à la moyenne des corps (défaut: 1.75x)",
       "type": "number",
       "valeurParDefaut": 1.75,
-      "min": 1.0,
-      "max": 5.0,
+      "min": 1,
+      "max": 5,
       "step": 0.05,
       "groupe": "Filtres de Momentum"
     },

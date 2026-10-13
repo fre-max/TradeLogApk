@@ -78,4 +78,35 @@ describe('Indicateur Combiné : Liq/Reint + Sweep Point & Figure (P&F)', () => {
     expect(dernierLabel.texte).toContain('Support P&F');
     expect(resultat.primitives.lignes?.length).toBeGreaterThan(0);
   });
+
+  it('détecte correctement une Double Liquidation P&F (Re-Sweep)', () => {
+    const bougies: Bougie[] = [
+      creerBougie(500, 102, 106, 101, 105),
+      creerBougie(800, 105, 107, 103, 104),
+      creerBougie(1000, 100, 108, 100, 107),
+      creerBougie(2000, 107, 107, 100, 101),
+      creerBougie(3000, 101, 109, 101, 108),
+      creerBougie(4000, 108, 108, 100, 101),
+      creerBougie(5000, 101, 108, 101, 107),
+      // 1ère liquidation récente qui effleure le support (low = 99.5)
+      creerBougie(6000, 105, 106, 99.5, 103),
+      // Setup 2ème liquidation qui purge sous la 1ère liquidation (low = 95 < 99.5)
+      creerBougie(7000, 103, 104, 95, 97),
+      creerBougie(8000, 97, 105, 96, 102.8),
+    ];
+
+    const resultat = calculerLiquidationSweepPointFigure(bougies, {
+      modeTailleBox: 'fixe',
+      tailleBoxPips: 150,
+      reversalCount: 2,
+      minColonnesAlignees: 2,
+      detecterDoubleLiquidation: true,
+      activerFiltreTaille: false,
+    });
+
+    expect(resultat.signaux.length).toBeGreaterThanOrEqual(1);
+    const dernierSignal = resultat.signaux[resultat.signaux.length - 1];
+    expect(dernierSignal.estDoubleLiquidation).toBe(true);
+    expect(dernierSignal.prixPremiereLiquidation).toBe(99.5);
+  });
 });

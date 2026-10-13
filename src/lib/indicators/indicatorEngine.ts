@@ -31,7 +31,7 @@ import { calculerLiquidationSweepShved } from './liquidationSweepShved';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.14.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.15.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -3566,7 +3566,9 @@ return {
       tailleBoxPips: 10,
       reversalCount: 3,
       minColonnesAlignees: 2,
-      lookbackBars: 300,
+      lookbackBars: 60,
+      exigerPalierIntact: true,
+      detecterDoubleLiquidation: true,
       toleranceDeficit: 0.05,
       toleranceDepassement: 0.25,
       activerFiltreTaille: true,
@@ -3630,13 +3632,29 @@ return {
       {
         cle: 'lookbackBars',
         label: 'Historique Analyse P&F (Bougies)',
-        description: 'Nombre maximal de bougies analysées pour construire les colonnes',
+        description: 'Nombre de bougies récentes analysées pour construire la consolidation P&F (défaut: 60)',
         type: 'number',
-        valeurParDefaut: 300,
-        min: 50,
-        max: 1000,
-        step: 50,
+        valeurParDefaut: 60,
+        min: 20,
+        max: 200,
+        step: 10,
         groupe: 'Grille Point & Figure',
+      },
+      {
+        cle: 'exigerPalierIntact',
+        label: 'Palier Intact Uniquement (Non Consommé)',
+        description: 'Exige qu\'aucune bougie antérieure n\'ait clôturé au-delà du palier avant le setup (Unmitigated)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Fraîcheur & Précision de Liquidité',
+      },
+      {
+        cle: 'detecterDoubleLiquidation',
+        label: 'Détecter Doubles Liquidations (Re-Sweep)',
+        description: 'Identifie si une 1ère incursion a eu lieu récemment et que le setup fait une 2ème liquidation de confirmation',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Fraîcheur & Précision de Liquidité',
       },
       {
         cle: 'afficherLignePF',
@@ -3780,8 +3798,11 @@ return {
     parametres: {
       exigerZoneShvedBalayee: true,
       forceMinimaleZone: 'TOUTES',
-      minRetests: 1,
+      minRetests: 0,
       timeframeSource: 'ACTUEL',
+      lookbackMaxBars: 40,
+      exigerZoneIntacte: true,
+      detecterDoubleLiquidation: true,
       periodeATR: 7,
       zoneFuzzFactor: 0.75,
       toleranceDeficit: 0.05,
@@ -3826,13 +3847,40 @@ return {
       {
         cle: 'minRetests',
         label: 'Nombre Minimum de Retests',
-        description: 'Seuil minimum de rebonds constatés sur la zone Shved (défaut: 1)',
+        description: 'Seuil minimum de rebonds constatés (0 = inclut les zones fraîches immédiates)',
         type: 'number',
-        valeurParDefaut: 1,
+        valeurParDefaut: 0,
         min: 0,
         max: 10,
         step: 1,
         groupe: 'Zones Shved Supply & Demand',
+      },
+      {
+        cle: 'lookbackMaxBars',
+        label: 'Fenêtre Récente (Lookback Bougies)',
+        description: 'Nombre de bougies récentes analysées pour trouver la zone balayée (défaut: 40)',
+        type: 'number',
+        valeurParDefaut: 40,
+        min: 10,
+        max: 200,
+        step: 5,
+        groupe: 'Fraîcheur & Précision de Liquidité',
+      },
+      {
+        cle: 'exigerZoneIntacte',
+        label: 'Zone Intacte Uniquement (Non Consommée)',
+        description: 'Exige qu\'aucune bougie antérieure n\'ait clôturé au-delà de la zone avant le setup (Unmitigated)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Fraîcheur & Précision de Liquidité',
+      },
+      {
+        cle: 'detecterDoubleLiquidation',
+        label: 'Détecter Doubles Liquidations (Re-Sweep)',
+        description: 'Identifie si une 1ère incursion a eu lieu récemment et que le setup fait une 2ème liquidation de confirmation',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Fraîcheur & Précision de Liquidité',
       },
       {
         cle: 'timeframeSource',

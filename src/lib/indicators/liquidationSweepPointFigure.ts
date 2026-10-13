@@ -4,7 +4,10 @@ import type { VisualPrimitives, VisualLabel, VisualLine, VisualBox, VisualPoint 
 /**
  * Options de configuration pour l'indicateur combiné :
  * Liquidation & Réintégration avec Détection de la Liquidité Balayée par Point & Figure (P&F).
- * Permet d'identifier la liquidité la plus solide (« le palier carré le plus testé » en colonnes X/O).
+ * 
+ * Vise spécifiquement la Cause Wyckoff la plus PROCHE, RÉCENTE et NON CONSOMMÉE (Unmitigated),
+ * correspondant au comportement institutionnel réel d'un Spring ou UTAD,
+ * avec détection des doubles liquidations (Re-Sweep de confirmation).
  */
 export interface ParametresLiquidationSweepPF {
   // ── 🎯 Paramètres de la Grille Point & Figure ──
@@ -20,10 +23,17 @@ export interface ParametresLiquidationSweepPF {
   reversalCount?: number;
   // Nombre minimum de colonnes P&F alignées pour valider un niveau horizontal carré (défaut: 2)
   minColonnesAlignees?: number;
-  // Nombre maximal de bougies antérieures pour construire la grille P&F (défaut: 300)
+  // Nombre maximal de bougies antérieures pour construire la grille P&F (défaut: 60)
+  // Évite d'aller chercher des vieux paliers d'il y a 300 bougies déjà morts
   lookbackBars?: number;
   // Si true, exige qu'un vrai niveau P&F horizontal ait été balayé (défaut: true)
   exigerNiveauPFBalaye?: boolean;
+
+  // ── 🎯 Fraîcheur & Précision de la Liquidité (Wyckoff Spring/UTAD) ──
+  // Exiger que le palier P&F n'ait JAMAIS été clôturé au-delà avant notre setup (Unmitigated) (défaut: true)
+  exigerPalierIntact?: boolean;
+  // Détecter et signaler les doubles liquidations (Re-Sweep / Confirmation de purge) (défaut: true)
+  detecterDoubleLiquidation?: boolean;
 
   // ── 🕯️ Paramètres du Chandelier Liq/Reint ──
   // Tolérance si la réintégration reste en deçà d'Open1 (défaut: 0.05 = 5%)
@@ -83,6 +93,8 @@ export interface PalierHorizontalPF {
   indexDebut: number;
   indexFin: number;
   profondeurSweep: number;
+  estDoubleLiquidation?: boolean;
+  prixPremiereLiquidation?: number;
 }
 
 /**
@@ -103,6 +115,8 @@ export interface SignalLiquidationSweepPF {
   rangeBougie1: number;
   corpsBougie2: number;
   niveauPF?: PalierHorizontalPF;
+  estDoubleLiquidation?: boolean;
+  prixPremiereLiquidation?: number;
 }
 
 /**
@@ -117,6 +131,7 @@ export interface ResultatLiquidationSweepPF {
     totalAchats: number;
     totalVentes: number;
     totalSweepsPF: number;
+    totalDoubleLiquidations: number;
     totalCarresMajeurs: number;
     totalSolides: number;
     maxColonnesAlignees: number;
@@ -227,23 +242,29 @@ export function construireColonnesPF(
 }
 
 /**
- * Recherche le palier horizontal P&F (support ou résistance le plus carré / testé)
- * qui a été balayé par la mèche extrême du setup de bougies.
+ * Recherche le palier horizontal P&F (support ou résistance le plus adapté)
+ * qui a été balayé par la manipulation immédiate :
+ * 1. Palier intact (Unmitigated) : aucune clôture antérieure n'est passée à travers
+ * 2. Récence et proximité : c'est la consolidation immédiate que le Spring/UTAD liquide
+ * 3. Détection de la double liquidation P&F
  */
-function identifierPalierPFLePlusTeste(
+function identifierPalierPFLePlusAdapte(
   colonnes: ColonnePFLocale[],
   direction: 'ACHAT' | 'VENTE',
   prixExtreme: number,
   tailleBox: number,
   minColonnesAlignees: number,
   prixReferenceHaut: number,
-  prixReferenceBas: number
+  prixReferenceBas: number,
+  indexSetup: number,
+  bougies: Bougie[],
+  exigerPalierIntact: boolean,
+  detecterDoubleLiquidation: boolean
 ): PalierHorizontalPF | null {
   if (colonnes.length < 2) return null;
 
-  // Tolérance pour regrouper des colonnes sur le même palier horizontal (±1 boîte)
   const margeBox = tailleBox * 1.25;
-  const paliersCandidats: PalierHorizontalPF[] = [];
+  const paliersCandidats: Array<PalierHorizontalPF & { scorePertinence: number }> = [];
 
   if (direction === 'ACHAT') {
     // 🟢 Recherche de supports formés par les bas de colonnes 'O'
@@ -253,13 +274,26 @@ function identifierPalierPFLePlusTeste(
       const colBase = colonnesO[i];
       const prixSupport = colBase.bas;
 
-      // Le support doit être au-dessus du creux extrême balayé (donc la mèche l'a transpercé)
-      // et rester sous le haut de référence
+      // Le support doit être au-dessus du creux extrême balayé et rester sous la référence haute
       if (prixExtreme >= prixSupport || prixSupport > prixReferenceHaut) {
         continue;
       }
 
-      // Comptage des colonnes 'O' dont le bas s'arrête sur ce même palier horizontal (±margeBox)
+      // 1️⃣ Vérification de Non-Consommation (Unmitigated / Palier Intact) :
+      // Aucune bougie entre la fin de cette colonne et l'avant-dernière bougie ne doit avoir clôturé SOUS le palier
+      if (exigerPalierIntact) {
+        let estConsomme = false;
+        const indexFinControle = Math.max(colBase.indexFin + 1, indexSetup - 2);
+        for (let k = colBase.indexFin + 1; k < indexFinControle; k++) {
+          if (bougies[k] && bougies[k].close < prixSupport) {
+            estConsomme = true;
+            break;
+          }
+        }
+        if (estConsomme) continue;
+      }
+
+      // 2️⃣ Comptage des colonnes 'O' alignées
       let countAlignes = 0;
       let minIdx = colBase.indexDebut;
       let maxIdx = colBase.indexFin;
@@ -285,6 +319,42 @@ function identifierPalierPFLePlusTeste(
         if (countAlignes >= 4) solidite = 'CARRE_MAJEUR';
         else if (countAlignes >= 3) solidite = 'SOLIDE';
 
+        // 3️⃣ Détection de la Double Liquidation (Re-Sweep) :
+        let estDoubleLiq = false;
+        let prixPremLiq: number | undefined = undefined;
+
+        if (detecterDoubleLiquidation) {
+          // Cas 1 : La bougie 1 du setup a percé le niveau et la bougie 2 va encore plus bas
+          const b1 = bougies[indexSetup - 1];
+          const b2 = bougies[indexSetup];
+          if (b1 && b2 && b2.low < b1.low && b1.low <= prixSupport + margeBox) {
+            estDoubleLiq = true;
+            prixPremLiq = b1.low;
+          } else {
+            // Cas 2 : Une bougie dans les 6 bougies récentes précédant le setup
+            const indexDebutRecent = Math.max(0, indexSetup - 6);
+            let minRecent = Infinity;
+            for (let m = indexDebutRecent; m <= indexSetup - 2; m++) {
+              if (bougies[m] && bougies[m].low <= prixSupport + margeBox) {
+                if (bougies[m].low < minRecent) {
+                  minRecent = bougies[m].low;
+                }
+              }
+            }
+            if (minRecent < Infinity && prixExtreme < minRecent) {
+              estDoubleLiq = true;
+              prixPremLiq = minRecent;
+            }
+          }
+        }
+
+        // 4️⃣ Score de pertinence : récence de la consolidation + alignement + double liq
+        const ecartBougies = indexSetup - maxIdx;
+        const scoreRecence = Math.max(0, 100 - ecartBougies * 2);
+        const scoreColonnes = countAlignes * 15;
+        const bonusDoubleLiq = estDoubleLiq ? 35 : 0;
+        const scorePertinence = scoreRecence + scoreColonnes + bonusDoubleLiq;
+
         paliersCandidats.push({
           type: 'SUPPORT_O',
           prixNiveau: prixSupport,
@@ -295,6 +365,9 @@ function identifierPalierPFLePlusTeste(
           indexDebut: minIdx,
           indexFin: maxIdx,
           profondeurSweep: prixSupport - prixExtreme,
+          estDoubleLiquidation: estDoubleLiq,
+          prixPremiereLiquidation: prixPremLiq,
+          scorePertinence,
         });
       }
     }
@@ -306,10 +379,21 @@ function identifierPalierPFLePlusTeste(
       const colBase = colonnesX[i];
       const prixResistance = colBase.haut;
 
-      // La résistance doit être sous le sommet extrême balayé
-      // et rester au-dessus du bas de référence
       if (prixExtreme <= prixResistance || prixResistance < prixReferenceBas) {
         continue;
+      }
+
+      // 1️⃣ Non-Consommation :
+      if (exigerPalierIntact) {
+        let estConsomme = false;
+        const indexFinControle = Math.max(colBase.indexFin + 1, indexSetup - 2);
+        for (let k = colBase.indexFin + 1; k < indexFinControle; k++) {
+          if (bougies[k] && bougies[k].close > prixResistance) {
+            estConsomme = true;
+            break;
+          }
+        }
+        if (estConsomme) continue;
       }
 
       let countAlignes = 0;
@@ -337,6 +421,41 @@ function identifierPalierPFLePlusTeste(
         if (countAlignes >= 4) solidite = 'CARRE_MAJEUR';
         else if (countAlignes >= 3) solidite = 'SOLIDE';
 
+        // 3️⃣ Détection Double Liquidation :
+        let estDoubleLiq = false;
+        let prixPremLiq: number | undefined = undefined;
+
+        if (detecterDoubleLiquidation) {
+          // Cas 1 : La bougie 1 du setup a percé le niveau et la bougie 2 va encore plus haut
+          const b1 = bougies[indexSetup - 1];
+          const b2 = bougies[indexSetup];
+          if (b1 && b2 && b2.high > b1.high && b1.high >= prixResistance - margeBox) {
+            estDoubleLiq = true;
+            prixPremLiq = b1.high;
+          } else {
+            // Cas 2 : Une bougie dans les 6 bougies récentes précédant le setup
+            const indexDebutRecent = Math.max(0, indexSetup - 6);
+            let maxRecent = -Infinity;
+            for (let m = indexDebutRecent; m <= indexSetup - 2; m++) {
+              if (bougies[m] && bougies[m].high >= prixResistance - margeBox) {
+                if (bougies[m].high > maxRecent) {
+                  maxRecent = bougies[m].high;
+                }
+              }
+            }
+            if (maxRecent > -Infinity && prixExtreme > maxRecent) {
+              estDoubleLiq = true;
+              prixPremLiq = maxRecent;
+            }
+          }
+        }
+
+        const ecartBougies = indexSetup - maxIdx;
+        const scoreRecence = Math.max(0, 100 - ecartBougies * 2);
+        const scoreColonnes = countAlignes * 15;
+        const bonusDoubleLiq = estDoubleLiq ? 35 : 0;
+        const scorePertinence = scoreRecence + scoreColonnes + bonusDoubleLiq;
+
         paliersCandidats.push({
           type: 'RESISTANCE_X',
           prixNiveau: prixResistance,
@@ -347,6 +466,9 @@ function identifierPalierPFLePlusTeste(
           indexDebut: minIdx,
           indexFin: maxIdx,
           profondeurSweep: prixExtreme - prixResistance,
+          estDoubleLiquidation: estDoubleLiq,
+          prixPremiereLiquidation: prixPremLiq,
+          scorePertinence,
         });
       }
     }
@@ -354,21 +476,19 @@ function identifierPalierPFLePlusTeste(
 
   if (paliersCandidats.length === 0) return null;
 
-  // Sélection du palier « le plus carré » : le plus grand nombre de colonnes alignées
+  // Sélection du palier ayant le meilleur score de pertinence
   return paliersCandidats.reduce((meilleur, p) => {
-    if (p.nbColonnesAlignees > meilleur.nbColonnesAlignees) return p;
-    // En cas d'égalité, prendre celui avec le sweep le plus net
-    if (p.nbColonnesAlignees === meilleur.nbColonnesAlignees && p.profondeurSweep > meilleur.profondeurSweep) {
-      return p;
-    }
-    return meilleur;
+    return p.scorePertinence > meilleur.scorePertinence ? p : meilleur;
   }, paliersCandidats[0]);
 }
 
 /**
  * Indicateur combiné : Détecte le setup de réintégration (Liq/Reint)
- * et identifie précisément quel palier Point & Figure (le plus carré et testé)
- * a été balayé par la manipulation.
+ * et identifie précisément quel palier Point & Figure (Cause Wyckoff fraîche et intacte)
+ * a été balayé par la manipulation (avec détection de double liquidation).
+ * 
+ * Exemple :
+ * const res = calculerLiquidationSweepPointFigure(bougies, { lookbackBars: 60 });
  */
 export function calculerLiquidationSweepPointFigure(
   bougies: Bougie[],
@@ -384,6 +504,7 @@ export function calculerLiquidationSweepPointFigure(
         totalAchats: 0,
         totalVentes: 0,
         totalSweepsPF: 0,
+        totalDoubleLiquidations: 0,
         totalCarresMajeurs: 0,
         totalSolides: 0,
         maxColonnesAlignees: 0,
@@ -391,7 +512,7 @@ export function calculerLiquidationSweepPointFigure(
     };
   }
 
-  // 1️⃣ Paramètres
+  // 1️⃣ Extraction des paramètres
   const params = options || {};
   const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : 0.05;
   const toleranceDeficit = valDeficit > 1 ? valDeficit / 100 : valDeficit;
@@ -404,8 +525,11 @@ export function calculerLiquidationSweepPointFigure(
   const tailleBoxPips = Math.max(1, Number(params.tailleBoxPips ?? 10));
   const reversalCount = Math.max(1, Number(params.reversalCount ?? 3));
   const minColonnes = Math.max(2, Number(params.minColonnesAlignees ?? 2));
-  const lookbackBars = Math.max(50, Number(params.lookbackBars ?? 300));
+  // Lookback plus court par défaut (60 bougies au lieu de 300) pour cibler la consolidation immédiate
+  const lookbackBars = Math.max(20, Math.min(200, Number(params.lookbackBars ?? 60)));
   const exigerNiveauPF = params.exigerNiveauPFBalaye !== false;
+  const exigerPalierIntact = params.exigerPalierIntact !== false;
+  const detecterDoubleLiquidation = params.detecterDoubleLiquidation !== false;
 
   const activerFiltreTaille = params.activerFiltreTaille !== false;
   const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));
@@ -455,11 +579,12 @@ export function calculerLiquidationSweepPointFigure(
   let countAchats = 0;
   let countVentes = 0;
   let countSweepsPF = 0;
+  let countDoubleLiq = 0;
   let countMajeurs = 0;
   let countSolides = 0;
   let maxColsAlignees = 0;
 
-  // 3️⃣ Parcours des bougies pour détecter le setup Liq/Reint
+  // 3️⃣ Parcours linéaire des bougies pour détecter le setup Liq/Reint (Spring/UTAD)
   for (let i = 1; i < bougies.length; i++) {
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
@@ -538,22 +663,27 @@ export function calculerLiquidationSweepPointFigure(
         bougieExtreme = 1;
       }
 
-      // Construction P&F sur l'historique antérieur au setup
+      // Construction P&F sur la fenêtre récente précédant le setup
       const colonnes = construireColonnesPF(bougies, indexFinScanPF, tailleBox, reversalCount, lookbackBars);
-      const palierTrouve = identifierPalierPFLePlusTeste(
+      const palierTrouve = identifierPalierPFLePlusAdapte(
         colonnes,
         'ACHAT',
         prixExtreme,
         tailleBox,
         minColonnes,
         Math.max(b1.open, b1.high),
-        b1.low
+        b1.low,
+        i,
+        bougies,
+        exigerPalierIntact,
+        detecterDoubleLiquidation
       );
 
       if (exigerNiveauPF && !palierTrouve) continue;
 
       if (palierTrouve) {
         countSweepsPF++;
+        if (palierTrouve.estDoubleLiquidation) countDoubleLiq++;
         if (palierTrouve.solidite === 'CARRE_MAJEUR') countMajeurs++;
         else if (palierTrouve.solidite === 'SOLIDE') countSolides++;
         if (palierTrouve.nbColonnesAlignees > maxColsAlignees) {
@@ -577,17 +707,27 @@ export function calculerLiquidationSweepPointFigure(
         rangeBougie1: range1,
         corpsBougie2: corps2,
         niveauPF: palierTrouve || undefined,
+        estDoubleLiquidation: palierTrouve?.estDoubleLiquidation,
+        prixPremiereLiquidation: palierTrouve?.prixPremiereLiquidation,
       });
 
-      // Visuels
+      // Construction du badge
+      let titreSignal = texteLabel;
+      if (palierTrouve?.estDoubleLiquidation) {
+        titreSignal = `2x Liq (Re-Sweep)`;
+      } else if (palierTrouve) {
+        titreSignal = `Spring P&F`;
+      }
+
       const badgePF = palierTrouve
-        ? ` [P&F ${palierTrouve.nbColonnesAlignees} cols ★]\nSupport P&F (${palierTrouve.prixNiveau.toFixed(4)})`
+        ? `\nSupport P&F (${palierTrouve.prixNiveau.toFixed(4)}) [${palierTrouve.nbColonnesAlignees} cols]`
         : '';
+
       labels.push({
         id: `pf-achat-lbl-${i}`,
         prix: b2.low,
         date: b2.time,
-        texte: palierTrouve ? `${texteLabel}${badgePF}` : texteLabel,
+        texte: `${titreSignal}${badgePF}`,
         couleur: bullColor,
         position: 'below',
       });
@@ -601,42 +741,43 @@ export function calculerLiquidationSweepPointFigure(
 
       if (palierTrouve && afficherLigne) {
         lignes.push({
-          id: `pf-ligne-sup-${i}`,
+          id: `pf-ligne-support-${i}`,
           prix: palierTrouve.prixNiveau,
           dateDebut: palierTrouve.tempsDebut,
           dateFin: b2.time,
           couleur: bullColor,
-          epaisseur: 2,
+          epaisseur: palierTrouve.solidite === 'CARRE_MAJEUR' ? 2 : 1.5,
           style: 'solid',
-          label: `Support P&F (${palierTrouve.nbColonnesAlignees} Colonnes | ${palierTrouve.solidite})`,
+          label: `Support P&F (${palierTrouve.nbColonnesAlignees} colonnes)`,
         });
       }
 
       if (palierTrouve && afficherZone) {
         boites.push({
-          id: `pf-zone-sweep-achat-${i}`,
+          id: `pf-sweep-support-${i}`,
           prixHaut: palierTrouve.prixNiveau,
           prixBas: prixExtreme,
           dateDebut: b1.time,
           dateFin: b2.time,
-          couleurFond: 'rgba(0, 230, 118, 0.18)',
+          couleurFond: 'rgba(0, 230, 118, 0.28)',
           couleurBordure: bullColor,
-          label: `Sweep P&F (-${(palierTrouve.profondeurSweep * 10000).toFixed(1)}p)`,
+          label: palierTrouve.estDoubleLiquidation ? `2x Sweep (-${palierTrouve.profondeurSweep.toFixed(4)})` : `Sweep (-${palierTrouve.profondeurSweep.toFixed(4)})`,
         });
       }
 
       if (palierTrouve && afficherBoiteCause) {
         boites.push({
-          id: `pf-cause-achat-${i}`,
+          id: `pf-cause-support-${i}`,
           prixHaut: palierTrouve.prixNiveau + (tailleBox * reversalCount),
           prixBas: palierTrouve.prixNiveau,
           dateDebut: palierTrouve.tempsDebut,
           dateFin: palierTrouve.tempsFin,
-          couleurFond: 'rgba(33, 150, 243, 0.08)',
-          couleurBordure: 'rgba(33, 150, 243, 0.35)',
-          label: `Cause P&F (${palierTrouve.nbColonnesAlignees} Cols)`,
+          couleurFond: 'rgba(0, 230, 118, 0.08)',
+          couleurBordure: bullColor,
+          label: `Cause P&F (${palierTrouve.nbColonnesAlignees} colonnes)`,
         });
       }
+
     } else if (estCandidatVente) {
       if (b2.high >= b1.high) {
         prixExtreme = b2.high;
@@ -647,20 +788,25 @@ export function calculerLiquidationSweepPointFigure(
       }
 
       const colonnes = construireColonnesPF(bougies, indexFinScanPF, tailleBox, reversalCount, lookbackBars);
-      const palierTrouve = identifierPalierPFLePlusTeste(
+      const palierTrouve = identifierPalierPFLePlusAdapte(
         colonnes,
         'VENTE',
         prixExtreme,
         tailleBox,
         minColonnes,
         b1.high,
-        Math.min(b1.open, b1.low)
+        Math.min(b1.open, b1.low),
+        i,
+        bougies,
+        exigerPalierIntact,
+        detecterDoubleLiquidation
       );
 
       if (exigerNiveauPF && !palierTrouve) continue;
 
       if (palierTrouve) {
         countSweepsPF++;
+        if (palierTrouve.estDoubleLiquidation) countDoubleLiq++;
         if (palierTrouve.solidite === 'CARRE_MAJEUR') countMajeurs++;
         else if (palierTrouve.solidite === 'SOLIDE') countSolides++;
         if (palierTrouve.nbColonnesAlignees > maxColsAlignees) {
@@ -684,16 +830,26 @@ export function calculerLiquidationSweepPointFigure(
         rangeBougie1: range1,
         corpsBougie2: corps2,
         niveauPF: palierTrouve || undefined,
+        estDoubleLiquidation: palierTrouve?.estDoubleLiquidation,
+        prixPremiereLiquidation: palierTrouve?.prixPremiereLiquidation,
       });
 
+      let titreSignal = texteLabel;
+      if (palierTrouve?.estDoubleLiquidation) {
+        titreSignal = `2x Liq (Re-Sweep)`;
+      } else if (palierTrouve) {
+        titreSignal = `UTAD P&F`;
+      }
+
       const badgePF = palierTrouve
-        ? ` [P&F ${palierTrouve.nbColonnesAlignees} cols ★]\nRésistance P&F (${palierTrouve.prixNiveau.toFixed(4)})`
+        ? `\nRésistance P&F (${palierTrouve.prixNiveau.toFixed(4)}) [${palierTrouve.nbColonnesAlignees} cols]`
         : '';
+
       labels.push({
         id: `pf-vente-lbl-${i}`,
         prix: b2.high,
         date: b2.time,
-        texte: palierTrouve ? `${texteLabel}${badgePF}` : texteLabel,
+        texte: `${titreSignal}${badgePF}`,
         couleur: bearColor,
         position: 'above',
       });
@@ -707,40 +863,40 @@ export function calculerLiquidationSweepPointFigure(
 
       if (palierTrouve && afficherLigne) {
         lignes.push({
-          id: `pf-ligne-res-${i}`,
+          id: `pf-ligne-resistance-${i}`,
           prix: palierTrouve.prixNiveau,
           dateDebut: palierTrouve.tempsDebut,
           dateFin: b2.time,
           couleur: bearColor,
-          epaisseur: 2,
+          epaisseur: palierTrouve.solidite === 'CARRE_MAJEUR' ? 2 : 1.5,
           style: 'solid',
-          label: `Résistance P&F (${palierTrouve.nbColonnesAlignees} Colonnes | ${palierTrouve.solidite})`,
+          label: `Résistance P&F (${palierTrouve.nbColonnesAlignees} colonnes)`,
         });
       }
 
       if (palierTrouve && afficherZone) {
         boites.push({
-          id: `pf-zone-sweep-vente-${i}`,
+          id: `pf-sweep-resistance-${i}`,
           prixHaut: prixExtreme,
           prixBas: palierTrouve.prixNiveau,
           dateDebut: b1.time,
           dateFin: b2.time,
-          couleurFond: 'rgba(242, 54, 69, 0.18)',
+          couleurFond: 'rgba(242, 54, 69, 0.28)',
           couleurBordure: bearColor,
-          label: `Sweep P&F (+${(palierTrouve.profondeurSweep * 10000).toFixed(1)}p)`,
+          label: palierTrouve.estDoubleLiquidation ? `2x Sweep (+${palierTrouve.profondeurSweep.toFixed(4)})` : `Sweep (+${palierTrouve.profondeurSweep.toFixed(4)})`,
         });
       }
 
       if (palierTrouve && afficherBoiteCause) {
         boites.push({
-          id: `pf-cause-vente-${i}`,
+          id: `pf-cause-resistance-${i}`,
           prixHaut: palierTrouve.prixNiveau,
           prixBas: palierTrouve.prixNiveau - (tailleBox * reversalCount),
           dateDebut: palierTrouve.tempsDebut,
           dateFin: palierTrouve.tempsFin,
           couleurFond: 'rgba(242, 54, 69, 0.08)',
-          couleurBordure: 'rgba(242, 54, 69, 0.35)',
-          label: `Cause P&F (${palierTrouve.nbColonnesAlignees} Cols)`,
+          couleurBordure: bearColor,
+          label: `Cause P&F (${palierTrouve.nbColonnesAlignees} colonnes)`,
         });
       }
     }
@@ -748,18 +904,14 @@ export function calculerLiquidationSweepPointFigure(
 
   return {
     signaux,
-    primitives: {
-      labels,
-      lignes,
-      boites,
-      points,
-    },
+    primitives: { labels, lignes, boites, points },
     tailleBoxCalculee: tailleBox,
     statistiques: {
       totalSignaux: signaux.length,
       totalAchats: countAchats,
       totalVentes: countVentes,
       totalSweepsPF: countSweepsPF,
+      totalDoubleLiquidations: countDoubleLiq,
       totalCarresMajeurs: countMajeurs,
       totalSolides: countSolides,
       maxColonnesAlignees: maxColsAlignees,

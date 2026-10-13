@@ -63,4 +63,42 @@ describe('Indicateur Combiné : Liq/Reint + Sweep Shved Supply & Demand', () => 
     expect(resultat.primitives.labels?.[0]?.texte).toContain('Demand');
     expect(resultat.primitives.boites?.length).toBeGreaterThan(0);
   });
+
+  it('détecte correctement une Double Liquidation Shved (Re-Sweep)', () => {
+    const bougiesInit: Bougie[] = [];
+    for (let k = 0; k < 15; k++) {
+      bougiesInit.push(creerBougie(k * 1000, 100, 104, 99, 101));
+    }
+
+    const bougiesSetup: Bougie[] = [
+      creerBougie(16000, 101, 104, 96, 97),  // Creux fractal Shved à 96
+      creerBougie(17000, 97, 104, 97, 103),
+      creerBougie(18000, 103, 104, 101, 102),
+      creerBougie(19000, 102, 103, 96.5, 98),// Retest
+      creerBougie(20000, 98, 104, 98, 103),
+      creerBougie(21000, 103, 104, 101, 102),
+      creerBougie(22000, 102, 103, 96.2, 98),// Retest
+      creerBougie(23000, 98, 104, 98, 103),
+      creerBougie(24000, 103, 105, 101, 104),
+      // Bougie 1 du setup fait une 1ère liquidation (low = 95.5 < 96)
+      creerBougie(25000, 105, 105, 95.5, 96),
+      // Bougie 2 (le doji) fait la 2ème liquidation / purge finale (low = 93 < 95.5) et réintègre
+      creerBougie(26000, 96, 105, 93, 104.8),
+    ];
+
+    const bougies = [...bougiesInit, ...bougiesSetup];
+    const resultat = calculerLiquidationSweepShved(bougies, {
+      periodeATR: 5,
+      zoneFuzzFactor: 0.8,
+      minRetests: 0,
+      detecterDoubleLiquidation: true,
+      activerFiltreTaille: false,
+    });
+
+    expect(resultat.signaux.length).toBeGreaterThanOrEqual(1);
+    const dernierSignal = resultat.signaux[resultat.signaux.length - 1];
+    expect(dernierSignal.estDoubleLiquidation).toBe(true);
+    expect(dernierSignal.prixPremiereLiquidation).toBe(95.5);
+    expect(dernierSignal.prixExtreme).toBe(93);
+  });
 });
