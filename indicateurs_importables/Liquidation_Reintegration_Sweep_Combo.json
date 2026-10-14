@@ -23,7 +23,7 @@
     "activerAchat": true,
     "activerVente": true,
     "afficherLigneLiquidite": true,
-    "afficherZoneSweep": true,
+    "afficherZoneSweep": false,
     "afficherBadgeScore": true,
     "bullColor": "#00E676",
     "bearColor": "#F23645",
@@ -148,7 +148,7 @@
       "label": "Afficher la Boîte de Zone de Sweep",
       "description": "Affiche le rectangle semi-transparent illustrant l'espace balayé sous ou sur la liquidité",
       "type": "boolean",
-      "valeurParDefaut": true,
+      "valeurParDefaut": false,
       "groupe": "Visuels & Graphique"
     },
     {

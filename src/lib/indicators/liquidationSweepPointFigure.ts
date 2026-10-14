@@ -542,8 +542,9 @@ export function calculerLiquidationSweepPointFigure(
   const trendBars = Math.max(1, Number(params.trendBars ?? 5));
 
   const afficherLigne = params.afficherLignePF !== false;
-  const afficherZone = params.afficherZoneSweep !== false;
-  const afficherBoiteCause = params.afficherBoiteCausePF !== false;
+  // Par défaut false : l'utilisateur préfère un segment en ligne discontinue plutôt qu'une zone en rectangle
+  const afficherZone = Boolean(params.afficherZoneSweep);
+  const afficherBoiteCause = Boolean(params.afficherBoiteCausePF);
   const bullColor = params.bullColor || '#00E676';
   const bearColor = params.bearColor || '#F23645';
   const texteLabel = params.texteLabel || 'Liq/Reint';
@@ -747,7 +748,7 @@ export function calculerLiquidationSweepPointFigure(
           dateFin: b2.time,
           couleur: bullColor,
           epaisseur: palierTrouve.solidite === 'CARRE_MAJEUR' ? 2 : 1.5,
-          style: 'solid',
+          style: 'dashed',
           label: `Support P&F (${palierTrouve.nbColonnesAlignees} colonnes)`,
         });
       }
@@ -869,7 +870,7 @@ export function calculerLiquidationSweepPointFigure(
           dateFin: b2.time,
           couleur: bearColor,
           epaisseur: palierTrouve.solidite === 'CARRE_MAJEUR' ? 2 : 1.5,
-          style: 'solid',
+          style: 'dashed',
           label: `Résistance P&F (${palierTrouve.nbColonnesAlignees} colonnes)`,
         });
       }

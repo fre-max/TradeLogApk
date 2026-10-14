@@ -389,8 +389,9 @@ export function calculerLiquidationSweepShved(
   const activerFiltreTendance = Boolean(params.activerFiltreTendance);
   const trendBars = Math.max(1, Number(params.trendBars ?? 5));
 
-  const afficherZone = params.afficherZoneShved !== false;
-  const afficherSweep = params.afficherZoneSweep !== false;
+  // Par défaut false : l'utilisateur préfère un segment en ligne discontinue plutôt qu'une zone en rectangle
+  const afficherZone = Boolean(params.afficherZoneShved);
+  const afficherSweep = Boolean(params.afficherZoneSweep);
   const afficherLigne = params.afficherLigneConnexion !== false;
   const bullColor = params.bullColor || '#00E676';
   const bearColor = params.bearColor || '#F23645';

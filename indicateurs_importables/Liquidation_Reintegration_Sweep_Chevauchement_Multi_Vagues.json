@@ -1,0 +1,92 @@
+{
+  "id": "script-liq-sweep-chevauchement-multi-vagues",
+  "nom": "Liq/Reint + Sweep Chevauchement Multi-Vagues (UOP)",
+  "description": "Superpose les vagues ZigZag récentes et identifie la zone dense de chevauchement (bleu foncé) balayée par le pattern. Trace un segment en ligne discontinue.",
+  "auteur": "TradeLog Institutional",
+  "version": "1.0.0",
+  "estOfficiel": true,
+  "estActif": false,
+  "categorie": "Price Action & Liquidité",
+  "parametres": {
+    "nbVaguesSuperposees": 4,
+    "zigzagDepth": 4,
+    "zigzagDeviation": 0,
+    "zigzagBackstep": 2,
+    "seuilBougiesBleuFonce": 3,
+    "lookbackBars": 150,
+    "exigerNiveauBalaye": true,
+    "toleranceDeficit": 0.05,
+    "toleranceDepassement": 0.25,
+    "activerFiltreTaille": true,
+    "periodeHistorique": 10,
+    "multiplicateurBougie1": 1.75,
+    "multiplicateurCorps2": 1.75,
+    "activerAchat": true,
+    "activerVente": true,
+    "afficherSegmentDiscontinue": true,
+    "bullColor": "#00E676",
+    "bearColor": "#F23645",
+    "texteLabel": "Liq/Reint",
+    "activerFiltreTendance": false,
+    "trendBars": 5
+  },
+  "definitionsVariables": [
+    {
+      "cle": "nbVaguesSuperposees",
+      "label": "Nombre de Vagues Superposées",
+      "description": "Nombre de vagues ZigZag récentes superposées pour mesurer la concentration de liquidité",
+      "type": "number",
+      "valeurParDefaut": 4,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "groupe": "Superposition Multi-Vagues UOP"
+    },
+    {
+      "cle": "seuilBougiesBleuFonce",
+      "label": "Seuil Zone Forte (Bougies)",
+      "description": "Nombre minimum de bougies cumulées pour qualifier une zone dense de liquidité",
+      "type": "number",
+      "valeurParDefaut": 3,
+      "min": 2,
+      "max": 10,
+      "step": 1,
+      "groupe": "Superposition Multi-Vagues UOP"
+    },
+    {
+      "cle": "exigerNiveauBalaye",
+      "label": "Exiger Niveau Balayé",
+      "description": "Exige qu'une zone forte UOP ait été balayée par la mèche extrême",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Superposition Multi-Vagues UOP"
+    },
+    {
+      "cle": "afficherSegmentDiscontinue",
+      "label": "Afficher Segment Discontinu",
+      "description": "Trace la zone UOP balayée sous forme de segment en ligne discontinue (dashed)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bullColor",
+      "label": "Couleur Signal Achat",
+      "description": "Couleur du Spring et du segment UOP",
+      "type": "string",
+      "valeurParDefaut": "#00E676",
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bearColor",
+      "label": "Couleur Signal Vente",
+      "description": "Couleur de l'UTAD et du segment UOP",
+      "type": "string",
+      "valeurParDefaut": "#F23645",
+      "groupe": "Visuels & Graphique"
+    }
+  ],
+  "creeLe": "2026-10-14T00:00:00.000Z",
+  "misAJourLe": "2026-10-14T00:00:00.000Z",
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };\n\n    const res = calculerLiquidationSweepChevauchementMultiVagues(bougies, parametres);\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'liquidation-sweep-chevauchement-multi-vagues'\n    };\n  }\n};"
+}

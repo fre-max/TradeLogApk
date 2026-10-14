@@ -77,6 +77,7 @@ describe('Indicateur Combiné : Liq/Reint + Sweep Point & Figure (P&F)', () => {
     const dernierLabel = resultat.primitives.labels![resultat.primitives.labels!.length - 1];
     expect(dernierLabel.texte).toContain('Support P&F');
     expect(resultat.primitives.lignes?.length).toBeGreaterThan(0);
+    expect(resultat.primitives.lignes?.[0]?.style).toBe('dashed');
   });
 
   it('détecte correctement une Double Liquidation P&F (Re-Sweep)', () => {

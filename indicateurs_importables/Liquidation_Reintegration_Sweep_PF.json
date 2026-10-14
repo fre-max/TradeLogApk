@@ -24,8 +24,8 @@
     "activerAchat": true,
     "activerVente": true,
     "afficherLignePF": true,
-    "afficherZoneSweep": true,
-    "afficherBoiteCausePF": true,
+    "afficherZoneSweep": false,
+    "afficherBoiteCausePF": false,
     "bullColor": "#00E676",
     "bearColor": "#F23645",
     "texteLabel": "Liq/Reint",
@@ -115,7 +115,7 @@
       "label": "Afficher Boîte de Cause P&F",
       "description": "Affiche la boîte de consolidation Wyckoff proportionnelle à la largeur des colonnes alignées",
       "type": "boolean",
-      "valeurParDefaut": true,
+      "valeurParDefaut": false,
       "groupe": "Visuels & Graphique"
     },
     {
@@ -123,7 +123,7 @@
       "label": "Afficher Zone de Sweep",
       "description": "Affiche la boîte rectangulaire illustrant l'espace percé sous/sur le palier",
       "type": "boolean",
-      "valeurParDefaut": true,
+      "valeurParDefaut": false,
       "groupe": "Visuels & Graphique"
     },
     {

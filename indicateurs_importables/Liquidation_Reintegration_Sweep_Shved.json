@@ -22,8 +22,8 @@
     "multiplicateurCorps2": 1.75,
     "activerAchat": true,
     "activerVente": true,
-    "afficherZoneShved": true,
-    "afficherZoneSweep": true,
+    "afficherZoneShved": false,
+    "afficherZoneSweep": false,
     "afficherLigneConnexion": true,
     "bullColor": "#00E676",
     "bearColor": "#F23645",
@@ -126,7 +126,7 @@
       "label": "Afficher Rectangle Zone Shved",
       "description": "Affiche la boîte de la zone d'offre ou de demande balayée",
       "type": "boolean",
-      "valeurParDefaut": true,
+      "valeurParDefaut": false,
       "groupe": "Visuels & Graphique"
     },
     {
@@ -134,7 +134,7 @@
       "label": "Afficher Boîte de Sweep",
       "description": "Affiche le rectangle semi-transparent sous/sur la zone",
       "type": "boolean",
-      "valeurParDefaut": true,
+      "valeurParDefaut": false,
       "groupe": "Visuels & Graphique"
     },
     {

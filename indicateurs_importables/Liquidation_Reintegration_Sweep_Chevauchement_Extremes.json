@@ -1,0 +1,97 @@
+{
+  "id": "script-liq-sweep-chevauchement-extremes",
+  "nom": "Liq/Reint + Sweep Chevauchement Extrêmes (Mèches)",
+  "description": "Combine le setup Liquidation & Réintégration avec le chevauchement concentré sur les mèches extrêmes (Face Basse pour Spring, Face Haute pour UTAD). Trace un segment horizontal discontinu.",
+  "auteur": "TradeLog Institutional",
+  "version": "1.0.0",
+  "estOfficiel": true,
+  "estActif": false,
+  "categorie": "Price Action & Liquidité",
+  "parametres": {
+    "lookbackBars": 50,
+    "minBougiesChevauchement": 2,
+    "exigerPalierIntact": true,
+    "exigerNiveauBalaye": true,
+    "toleranceDeficit": 0.05,
+    "toleranceDepassement": 0.25,
+    "activerFiltreTaille": true,
+    "periodeHistorique": 10,
+    "multiplicateurBougie1": 1.75,
+    "multiplicateurCorps2": 1.75,
+    "activerAchat": true,
+    "activerVente": true,
+    "afficherSegmentDiscontinue": true,
+    "bullColor": "#00E676",
+    "bearColor": "#F23645",
+    "texteLabel": "Liq/Reint",
+    "activerFiltreTendance": false,
+    "trendBars": 5
+  },
+  "definitionsVariables": [
+    {
+      "cle": "lookbackBars",
+      "label": "Historique des Mèches (Bougies)",
+      "description": "Nombre de bougies antérieures scannées pour accumuler les mèches extrêmes",
+      "type": "number",
+      "valeurParDefaut": 50,
+      "min": 10,
+      "max": 200,
+      "step": 5,
+      "groupe": "Chevauchement des Extrêmes"
+    },
+    {
+      "cle": "minBougiesChevauchement",
+      "label": "Min Bougies de Chevauchement",
+      "description": "Nombre minimum de mèches superposées sur le palier pour qualifier la liquidité",
+      "type": "number",
+      "valeurParDefaut": 2,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "groupe": "Chevauchement des Extrêmes"
+    },
+    {
+      "cle": "exigerPalierIntact",
+      "label": "Exiger Palier Non Consommé (Unmitigated)",
+      "description": "Exige qu'aucune clôture antérieure ne soit passée au-delà du palier",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Chevauchement des Extrêmes"
+    },
+    {
+      "cle": "exigerNiveauBalaye",
+      "label": "Exiger Niveau Balayé",
+      "description": "Filtre les signaux pour n'afficher que ceux qui purgent une vraie zone extrême",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Chevauchement des Extrêmes"
+    },
+    {
+      "cle": "afficherSegmentDiscontinue",
+      "label": "Afficher Segment Discontinu",
+      "description": "Trace le niveau de liquidité balayé sous forme de segment en ligne discontinue (dashed)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bullColor",
+      "label": "Couleur Signal Achat",
+      "description": "Couleur du Spring et du segment face basse",
+      "type": "string",
+      "valeurParDefaut": "#00E676",
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bearColor",
+      "label": "Couleur Signal Vente",
+      "description": "Couleur de l'UTAD et du segment face haute",
+      "type": "string",
+      "valeurParDefaut": "#F23645",
+      "groupe": "Visuels & Graphique"
+    }
+  ],
+  "creeLe": "2026-10-14T00:00:00.000Z",
+  "misAJourLe": "2026-10-14T00:00:00.000Z",
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };\n\n    const res = calculerLiquidationSweepChevauchementExtremes(bougies, parametres);\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'liquidation-sweep-chevauchement-extremes'\n    };\n  }\n};"
+}

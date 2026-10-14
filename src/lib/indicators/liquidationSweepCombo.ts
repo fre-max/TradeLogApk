@@ -434,7 +434,8 @@ export function calculerLiquidationSweepCombo(
   const trendBars = Math.max(1, Number(params.trendBars ?? 5));
 
   const afficherLignes = params.afficherLigneLiquidite !== false;
-  const afficherZones = params.afficherZoneSweep !== false;
+  // Par défaut false : l'utilisateur préfère un segment en ligne discontinue plutôt qu'une zone en rectangle
+  const afficherZones = Boolean(params.afficherZoneSweep);
   const afficherBadgeScore = params.afficherBadgeScore !== false;
   const bullColor = params.bullColor || '#00E676';
   const bearColor = params.bearColor || '#F23645';

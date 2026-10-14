@@ -26,12 +26,15 @@ import { calculerLiquidationReintegration } from './liquidationReintegration';
 import { calculerLiquidationSweepCombo } from './liquidationSweepCombo';
 import { calculerLiquidationSweepPointFigure } from './liquidationSweepPointFigure';
 import { calculerLiquidationSweepShved } from './liquidationSweepShved';
+import { calculerLiquidationSweepChevauchementExtremes } from './liquidationSweepChevauchementExtremes';
+import { calculerLiquidationSweepChevauchementVagueOpposee } from './liquidationSweepChevauchementVagueOpposee';
+import { calculerLiquidationSweepChevauchementMultiVagues } from './liquidationSweepChevauchementMultiVagues';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.15.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.16.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -3293,7 +3296,7 @@ return {
       activerAchat: true,
       activerVente: true,
       afficherLigneLiquidite: true,
-      afficherZoneSweep: true,
+      afficherZoneSweep: false,
       afficherBadgeScore: true,
       bullColor: '#00E676',
       bearColor: '#F23645',
@@ -3578,8 +3581,8 @@ return {
       activerAchat: true,
       activerVente: true,
       afficherLignePF: true,
-      afficherZoneSweep: true,
-      afficherBoiteCausePF: true,
+      afficherZoneSweep: false,
+      afficherBoiteCausePF: false,
       bullColor: '#00E676',
       bearColor: '#F23645',
       texteLabel: 'Liq/Reint',
@@ -3813,8 +3816,8 @@ return {
       multiplicateurCorps2: 1.75,
       activerAchat: true,
       activerVente: true,
-      afficherZoneShved: true,
-      afficherZoneSweep: true,
+      afficherZoneShved: false,
+      afficherZoneSweep: false,
       afficherLigneConnexion: true,
       bullColor: '#00E676',
       bearColor: '#F23645',
@@ -4040,6 +4043,325 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-liq-sweep-chevauchement-extremes',
+    nom: 'Liq/Reint + Sweep Chevauchement Extrêmes (Mèches)',
+    description: 'Combine le setup Liquidation & Réintégration avec le chevauchement concentré sur les mèches extrêmes (Face Basse pour Spring, Face Haute pour UTAD). Trace un segment horizontal discontinu.',
+    auteur: 'TradeLog Institutional',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      lookbackBars: 50,
+      minBougiesChevauchement: 2,
+      exigerPalierIntact: true,
+      exigerNiveauBalaye: true,
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      afficherSegmentDiscontinue: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+      activerFiltreTendance: false,
+      trendBars: 5,
+    },
+    definitionsVariables: [
+      {
+        cle: 'lookbackBars',
+        label: 'Historique des Mèches (Bougies)',
+        description: 'Nombre de bougies antérieures scannées pour accumuler les mèches extrêmes',
+        type: 'number',
+        valeurParDefaut: 50,
+        min: 10,
+        max: 200,
+        step: 5,
+        groupe: 'Chevauchement des Extrêmes',
+      },
+      {
+        cle: 'minBougiesChevauchement',
+        label: 'Min Bougies de Chevauchement',
+        description: 'Nombre minimum de mèches superposées sur le palier pour qualifier la liquidité',
+        type: 'number',
+        valeurParDefaut: 2,
+        min: 1,
+        max: 10,
+        step: 1,
+        groupe: 'Chevauchement des Extrêmes',
+      },
+      {
+        cle: 'exigerPalierIntact',
+        label: 'Exiger Palier Non Consommé (Unmitigated)',
+        description: 'Exige qu\'aucune clôture antérieure ne soit passée au-delà du palier',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Chevauchement des Extrêmes',
+      },
+      {
+        cle: 'exigerNiveauBalaye',
+        label: 'Exiger Niveau Balayé',
+        description: 'Filtre les signaux pour n\'afficher que ceux qui purgent une vraie zone extrême',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Chevauchement des Extrêmes',
+      },
+      {
+        cle: 'afficherSegmentDiscontinue',
+        label: 'Afficher Segment Discontinu',
+        description: 'Trace le niveau de liquidité balayé sous forme de segment en ligne discontinue (dashed)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat',
+        description: 'Couleur du Spring et du segment face basse',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente',
+        description: 'Couleur de l\'UTAD et du segment face haute',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Visuels & Graphique',
+      },
+    ],
+    creeLe: '2026-10-14T00:00:00.000Z',
+    misAJourLe: '2026-10-14T00:00:00.000Z',
+    code: `return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };
+
+    const res = calculerLiquidationSweepChevauchementExtremes(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liquidation-sweep-chevauchement-extremes'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-liq-sweep-chevauchement-vague-opposee',
+    nom: 'Liq/Reint + Sweep Chevauchement Vague Opposée (ZigZag)',
+    description: 'Analyse le profil de chevauchement de la vague ZigZag opposée antérieure (descente pour Spring, montée pour UTAD) et trace un segment en ligne discontinue sur le palier balayé.',
+    auteur: 'TradeLog Institutional',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      zigzagDepth: 4,
+      zigzagDeviation: 0,
+      zigzagBackstep: 2,
+      lookbackBars: 100,
+      minBougiesChevauchement: 2,
+      exigerNiveauBalaye: true,
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      afficherSegmentDiscontinue: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+      activerFiltreTendance: false,
+      trendBars: 5,
+    },
+    definitionsVariables: [
+      {
+        cle: 'zigzagDepth',
+        label: 'Sensibilité Pivots ZigZag (Depth)',
+        description: 'Nombre de barres d\'isolation pour valider les vagues',
+        type: 'number',
+        valeurParDefaut: 4,
+        min: 2,
+        max: 20,
+        step: 1,
+        groupe: 'Structure ZigZag Vague Opposée',
+      },
+      {
+        cle: 'minBougiesChevauchement',
+        label: 'Min Bougies de Chevauchement',
+        description: 'Seuil minimal de trafic dans la vague opposée',
+        type: 'number',
+        valeurParDefaut: 2,
+        min: 1,
+        max: 10,
+        step: 1,
+        groupe: 'Structure ZigZag Vague Opposée',
+      },
+      {
+        cle: 'exigerNiveauBalaye',
+        label: 'Exiger Niveau Balayé',
+        description: 'Exige que le palier de la vague opposée ait été balayé par la mèche extrême',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Structure ZigZag Vague Opposée',
+      },
+      {
+        cle: 'afficherSegmentDiscontinue',
+        label: 'Afficher Segment Discontinu',
+        description: 'Trace le niveau de la vague balayé en ligne discontinue (dashed)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat',
+        description: 'Couleur du Spring et du segment vague opposée',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente',
+        description: 'Couleur de l\'UTAD et du segment vague opposée',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Visuels & Graphique',
+      },
+    ],
+    creeLe: '2026-10-14T00:00:00.000Z',
+    misAJourLe: '2026-10-14T00:00:00.000Z',
+    code: `return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };
+
+    const res = calculerLiquidationSweepChevauchementVagueOpposee(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liquidation-sweep-chevauchement-vague-opposee'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-liq-sweep-chevauchement-multi-vagues',
+    nom: 'Liq/Reint + Sweep Chevauchement Multi-Vagues (UOP)',
+    description: 'Superpose les vagues ZigZag récentes et identifie la zone dense de chevauchement (bleu foncé) balayée par le pattern. Trace un segment en ligne discontinue.',
+    auteur: 'TradeLog Institutional',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      nbVaguesSuperposees: 4,
+      zigzagDepth: 4,
+      zigzagDeviation: 0,
+      zigzagBackstep: 2,
+      seuilBougiesBleuFonce: 3,
+      lookbackBars: 150,
+      exigerNiveauBalaye: true,
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      afficherSegmentDiscontinue: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+      activerFiltreTendance: false,
+      trendBars: 5,
+    },
+    definitionsVariables: [
+      {
+        cle: 'nbVaguesSuperposees',
+        label: 'Nombre de Vagues Superposées',
+        description: 'Nombre de vagues ZigZag récentes superposées pour mesurer la concentration de liquidité',
+        type: 'number',
+        valeurParDefaut: 4,
+        min: 1,
+        max: 8,
+        step: 1,
+        groupe: 'Superposition Multi-Vagues UOP',
+      },
+      {
+        cle: 'seuilBougiesBleuFonce',
+        label: 'Seuil Zone Forte (Bougies)',
+        description: 'Nombre minimum de bougies cumulées pour qualifier une zone dense de liquidité',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 2,
+        max: 10,
+        step: 1,
+        groupe: 'Superposition Multi-Vagues UOP',
+      },
+      {
+        cle: 'exigerNiveauBalaye',
+        label: 'Exiger Niveau Balayé',
+        description: 'Exige qu\'une zone forte UOP ait été balayée par la mèche extrême',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Superposition Multi-Vagues UOP',
+      },
+      {
+        cle: 'afficherSegmentDiscontinue',
+        label: 'Afficher Segment Discontinu',
+        description: 'Trace la zone UOP balayée sous forme de segment en ligne discontinue (dashed)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat',
+        description: 'Couleur du Spring et du segment UOP',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente',
+        description: 'Couleur de l\'UTAD et du segment UOP',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Visuels & Graphique',
+      },
+    ],
+    creeLe: '2026-10-14T00:00:00.000Z',
+    misAJourLe: '2026-10-14T00:00:00.000Z',
+    code: `return {
+  calculer: function(contexte) {
+    const { bougies, parametres } = contexte;
+    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };
+
+    const res = calculerLiquidationSweepChevauchementMultiVagues(bougies, parametres);
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liquidation-sweep-chevauchement-multi-vagues'
+    };
+  }
+};`
   }
 ];
 
@@ -4160,6 +4482,12 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepPointFigure(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepShved')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepShved(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerLiquidationSweepChevauchementExtremes')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementExtremes(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerLiquidationSweepChevauchementVagueOpposee')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementVagueOpposee(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerLiquidationSweepChevauchementMultiVagues')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementMultiVagues(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepCombo')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepCombo(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationReintegration')) {
@@ -4427,6 +4755,9 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerLiquidationSweepCombo',
       'calculerLiquidationSweepPointFigure',
       'calculerLiquidationSweepShved',
+      'calculerLiquidationSweepChevauchementExtremes',
+      'calculerLiquidationSweepChevauchementVagueOpposee',
+      'calculerLiquidationSweepChevauchementMultiVagues',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -4475,7 +4806,10 @@ export function evaluerIndicateurScript(
       calculerLiquidationReintegration,
       calculerLiquidationSweepCombo,
       calculerLiquidationSweepPointFigure,
-      calculerLiquidationSweepShved
+      calculerLiquidationSweepShved,
+      calculerLiquidationSweepChevauchementExtremes,
+      calculerLiquidationSweepChevauchementVagueOpposee,
+      calculerLiquidationSweepChevauchementMultiVagues
     );
 
     // 2️⃣ Si le script expose une méthode calculer()

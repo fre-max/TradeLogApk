@@ -58,10 +58,11 @@ describe('Indicateur Combiné : Liq/Reint + Sweep Shved Supply & Demand', () => 
     expect(sig.zoneShved).toBeDefined();
     expect(sig.zoneShved?.type).toBe('SUPPORT');
 
-    // Primitives
+    // Primitives : segment en ligne discontinue (dashed) représentant le niveau de liquidité
     expect(resultat.primitives.labels?.length).toBeGreaterThan(0);
     expect(resultat.primitives.labels?.[0]?.texte).toContain('Demand');
-    expect(resultat.primitives.boites?.length).toBeGreaterThan(0);
+    expect(resultat.primitives.lignes?.length).toBeGreaterThan(0);
+    expect(resultat.primitives.lignes?.[0]?.style).toBe('dashed');
   });
 
   it('détecte correctement une Double Liquidation Shved (Re-Sweep)', () => {

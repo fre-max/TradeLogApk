@@ -64,7 +64,8 @@ return {
     const bearColor = params.bearColor || '#F23645';
     const texteLabel = params.texteLabel || 'Liq/Reint';
     const afficherLignes = params.afficherLigneLiquidite !== false;
-    const afficherZones = params.afficherZoneSweep !== false;
+    // Par défaut false : segment en ligne discontinue privilégié
+    const afficherZones = Boolean(params.afficherZoneSweep);
     const afficherBadgeScore = params.afficherBadgeScore !== false;
 
     const signaux = [];

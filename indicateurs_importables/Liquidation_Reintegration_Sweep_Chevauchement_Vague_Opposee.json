@@ -1,0 +1,91 @@
+{
+  "id": "script-liq-sweep-chevauchement-vague-opposee",
+  "nom": "Liq/Reint + Sweep Chevauchement Vague Opposée (ZigZag)",
+  "description": "Analyse le profil de chevauchement de la vague ZigZag opposée antérieure (descente pour Spring, montée pour UTAD) et trace un segment en ligne discontinue sur le palier balayé.",
+  "auteur": "TradeLog Institutional",
+  "version": "1.0.0",
+  "estOfficiel": true,
+  "estActif": false,
+  "categorie": "Price Action & Liquidité",
+  "parametres": {
+    "zigzagDepth": 4,
+    "zigzagDeviation": 0,
+    "zigzagBackstep": 2,
+    "lookbackBars": 100,
+    "minBougiesChevauchement": 2,
+    "exigerNiveauBalaye": true,
+    "toleranceDeficit": 0.05,
+    "toleranceDepassement": 0.25,
+    "activerFiltreTaille": true,
+    "periodeHistorique": 10,
+    "multiplicateurBougie1": 1.75,
+    "multiplicateurCorps2": 1.75,
+    "activerAchat": true,
+    "activerVente": true,
+    "afficherSegmentDiscontinue": true,
+    "bullColor": "#00E676",
+    "bearColor": "#F23645",
+    "texteLabel": "Liq/Reint",
+    "activerFiltreTendance": false,
+    "trendBars": 5
+  },
+  "definitionsVariables": [
+    {
+      "cle": "zigzagDepth",
+      "label": "Sensibilité Pivots ZigZag (Depth)",
+      "description": "Nombre de barres d'isolation pour valider les vagues",
+      "type": "number",
+      "valeurParDefaut": 4,
+      "min": 2,
+      "max": 20,
+      "step": 1,
+      "groupe": "Structure ZigZag Vague Opposée"
+    },
+    {
+      "cle": "minBougiesChevauchement",
+      "label": "Min Bougies de Chevauchement",
+      "description": "Seuil minimal de trafic dans la vague opposée",
+      "type": "number",
+      "valeurParDefaut": 2,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "groupe": "Structure ZigZag Vague Opposée"
+    },
+    {
+      "cle": "exigerNiveauBalaye",
+      "label": "Exiger Niveau Balayé",
+      "description": "Exige que le palier de la vague opposée ait été balayé par la mèche extrême",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Structure ZigZag Vague Opposée"
+    },
+    {
+      "cle": "afficherSegmentDiscontinue",
+      "label": "Afficher Segment Discontinu",
+      "description": "Trace le niveau de la vague balayé en ligne discontinue (dashed)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bullColor",
+      "label": "Couleur Signal Achat",
+      "description": "Couleur du Spring et du segment vague opposée",
+      "type": "string",
+      "valeurParDefaut": "#00E676",
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bearColor",
+      "label": "Couleur Signal Vente",
+      "description": "Couleur de l'UTAD et du segment vague opposée",
+      "type": "string",
+      "valeurParDefaut": "#F23645",
+      "groupe": "Visuels & Graphique"
+    }
+  ],
+  "creeLe": "2026-10-14T00:00:00.000Z",
+  "misAJourLe": "2026-10-14T00:00:00.000Z",
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres } = contexte;\n    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };\n\n    const res = calculerLiquidationSweepChevauchementVagueOpposee(bougies, parametres);\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'liquidation-sweep-chevauchement-vague-opposee'\n    };\n  }\n};"
+}
