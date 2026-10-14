@@ -29,12 +29,13 @@ import { calculerLiquidationSweepShved } from './liquidationSweepShved';
 import { calculerLiquidationSweepChevauchementExtremes } from './liquidationSweepChevauchementExtremes';
 import { calculerLiquidationSweepChevauchementVagueOpposee } from './liquidationSweepChevauchementVagueOpposee';
 import { calculerLiquidationSweepChevauchementMultiVagues } from './liquidationSweepChevauchementMultiVagues';
+import { calculerShvedBrokenSRMTF } from './shvedBrokenSRMTF';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.16.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.17.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4362,6 +4363,121 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-shved-mtf-broken-sr',
+    nom: 'Détection de Liquidité : Shved S/R Cassés (MTF)',
+    description: 'Détecte les Supports et Résistances Shved cassés ayant subi au moins un retest préalable (non vierges). Calculé sur unité de temps inférieure (ex: M15) et projeté sur le graphique actuel (ex: H4) sous forme de segments horizontaux en trait discontinu.',
+    auteur: 'Shved / TradeLog Institutional',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      timeframeSource: 'M15',
+      minRetests: 1,
+      prolongerVersLePresent: true,
+      afficherFaibles: false,
+      afficherEtiquettes: true,
+      periodeATR: 7,
+      zoneFuzzFactor: 0.75,
+      maxLookbackBars: 800,
+      bullColor: '#10b981',
+      bearColor: '#ef4444',
+    },
+    definitionsVariables: [
+      {
+        cle: 'timeframeSource',
+        label: 'Unité de Temps Source (MTF)',
+        description: 'Unité de temps analysée pour détecter les S/R Shved (ex: M15, M30, H1) projetée sur le graphique actuel',
+        type: 'select',
+        valeurParDefaut: 'M15',
+        options: [
+          { label: 'Graphique Actuel', value: 'ACTUEL' },
+          { label: 'M1 (1 minute)', value: 'M1' },
+          { label: 'M5 (5 minutes)', value: 'M5' },
+          { label: 'M15 (15 minutes)', value: 'M15' },
+          { label: 'M30 (30 minutes)', value: 'M30' },
+          { label: 'H1 (1 heure)', value: 'H1' },
+          { label: 'H4 (4 heures)', value: 'H4' },
+          { label: 'D1 (Journalier)', value: 'D1' },
+        ],
+        groupe: 'Multi-Timeframe (MTF)',
+      },
+      {
+        cle: 'minRetests',
+        label: 'Nombre Minimum de Retests',
+        description: 'Exige au moins ce nombre de retests avant cassure (ignore strictement les niveaux vierges sans retest)',
+        type: 'number',
+        valeurParDefaut: 1,
+        min: 1,
+        max: 10,
+        step: 1,
+        groupe: 'Filtrage des Niveaux Cassés',
+      },
+      {
+        cle: 'prolongerVersLePresent',
+        label: 'Prolonger jusqu\'à la bougie courante',
+        description: 'Prolonge le segment discontinu du niveau cassé jusqu\'à la dernière bougie du graphique',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Segments',
+      },
+      {
+        cle: 'afficherFaibles',
+        label: 'Afficher les Zones Faibles',
+        description: 'Inclut les niveaux issus de fractals secondaires / faibles',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Filtrage des Niveaux Cassés',
+      },
+      {
+        cle: 'afficherEtiquettes',
+        label: 'Afficher les Étiquettes Textuelles',
+        description: 'Affiche le texte informatif avec le timeframe et le nombre de retests',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Segments',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Support Cassé',
+        description: 'Couleur du segment horizontal discontinu pour un support cassé',
+        type: 'string',
+        valeurParDefaut: '#10b981',
+        groupe: 'Visuels & Segments',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Résistance Cassée',
+        description: 'Couleur du segment horizontal discontinu pour une résistance cassée',
+        type: 'string',
+        valeurParDefaut: '#ef4444',
+        groupe: 'Visuels & Segments',
+      },
+    ],
+    creeLe: '2026-10-14T00:00:00.000Z',
+    misAJourLe: '2026-10-14T00:00:00.000Z',
+    code: `return {
+  calculer: function(contexte) {
+    const { bougies, parametres, donneesM1, timeframe } = contexte;
+    if (!bougies || bougies.length < 5) return { donnees: {}, primitives: {} };
+
+    // Appel du module Shved Broken S/R MTF avec projection en segments discontinus
+    const res = calculerShvedBrokenSRMTF(bougies, {
+      ...parametres,
+      donneesM1: donneesM1,
+      chartTimeframe: timeframe
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'shved-broken-sr-mtf'
+    };
+  }
+};`
   }
 ];
 
@@ -4488,6 +4604,8 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementVagueOpposee(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepChevauchementMultiVagues')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementMultiVagues(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerShvedBrokenSRMTF')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerShvedBrokenSRMTF(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepCombo')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepCombo(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationReintegration')) {
@@ -4758,6 +4876,7 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerLiquidationSweepChevauchementExtremes',
       'calculerLiquidationSweepChevauchementVagueOpposee',
       'calculerLiquidationSweepChevauchementMultiVagues',
+      'calculerShvedBrokenSRMTF',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -4809,7 +4928,8 @@ export function evaluerIndicateurScript(
       calculerLiquidationSweepShved,
       calculerLiquidationSweepChevauchementExtremes,
       calculerLiquidationSweepChevauchementVagueOpposee,
-      calculerLiquidationSweepChevauchementMultiVagues
+      calculerLiquidationSweepChevauchementMultiVagues,
+      calculerShvedBrokenSRMTF
     );
 
     // 2️⃣ Si le script expose une méthode calculer()
