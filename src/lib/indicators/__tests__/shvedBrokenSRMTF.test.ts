@@ -74,7 +74,8 @@ describe('Indicateur Shved Broken S/R MTF', () => {
     expect(resultat.primitives.lignes?.length).toBeGreaterThanOrEqual(1);
     const ligne = resultat.primitives.lignes![0];
     expect(ligne.style).toBe('dashed'); // Trait discontinu
-    expect(ligne.label).toContain('Support Cassé');
+    expect(ligne.label).toBeUndefined(); // Aucun texte comme 'Support Cassé M15' pour un affichage épuré
+    expect(resultat.primitives.labels).toHaveLength(0); // Pas d'étiquette textuelle encombrante par défaut
 
     // Vérification stricte : AUCUNE boîte rectangulaire
     expect(resultat.primitives.boites).toHaveLength(0);
@@ -152,7 +153,8 @@ describe('Indicateur Shved Broken S/R MTF', () => {
 
     expect(resultat.primitives.lignes?.length).toBeGreaterThanOrEqual(1);
     expect(resultat.primitives.lignes![0].style).toBe('dashed');
-    expect(resultat.primitives.lignes![0].label).toContain('Résistance Cassée');
+    expect(resultat.primitives.lignes![0].label).toBeUndefined(); // Aucun texte comme 'Résistance Cassée M15'
+    expect(resultat.primitives.labels).toHaveLength(0); // Pas d'étiquette textuelle encombrante
     expect(resultat.primitives.boites).toHaveLength(0);
   });
 

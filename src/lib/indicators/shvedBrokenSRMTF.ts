@@ -35,7 +35,7 @@ export interface OptionsShvedBrokenSRMTF {
   maxLookbackBars?: number;       // Historique scanné (défaut: 800)
 
   // ─── 🎨 Affichage Visuel ───
-  // Afficher les étiquettes textuelles au-dessus/en-dessous du niveau (défaut: true)
+  // Afficher les étiquettes de prix discrètes (défaut: false pour un graphique épuré)
   afficherEtiquettes?: boolean;
   bullColor?: string;             // Couleur pour Support cassé (défaut: #10b981)
   bearColor?: string;             // Couleur pour Résistance cassée (défaut: #ef4444)
@@ -107,7 +107,7 @@ export function calculerShvedBrokenSRMTF(
   const minRetests = Math.max(1, Number(options.minRetests ?? 1));
   const afficherFaibles = Boolean(options.afficherFaibles);
   const prolongerVersLePresent = options.prolongerVersLePresent !== false;
-  const afficherEtiquettes = options.afficherEtiquettes !== false;
+  const afficherEtiquettes = Boolean(options.afficherEtiquettes); // Désactivé par défaut pour un graphique épuré sans texte
   const bullColor = options.bullColor || '#10b981';
   const bearColor = options.bearColor || '#ef4444';
 
@@ -175,12 +175,10 @@ export function calculerShvedBrokenSRMTF(
       resistancesCassees.push(brokenItem);
     }
 
-    // 4️⃣ Génération du Segment en Ligne Discontinue (Dashed)
+    // 4️⃣ Génération du Segment en Ligne Discontinue (Dashed) épuré
+    // Conformément à la demande utilisateur, suppression des textes encombrants comme "résistance cassée M15"
     const couleur = estSupport ? bullColor : bearColor;
     const dateFinSegment = prolongerVersLePresent ? dateDerniereBougie : zone.dateFin;
-    const labelSegment = estSupport
-      ? `💔 Support Cassé [${tfSource}] (${zone.retests}t)`
-      : `💔 Résistance Cassée [${tfSource}] (${zone.retests}t)`;
 
     lignes.push({
       id: `broken-line-${zone.id}`,
@@ -189,17 +187,16 @@ export function calculerShvedBrokenSRMTF(
       dateFin: dateFinSegment,
       couleur,
       epaisseur: 1.8,
-      style: 'dashed', // Segment en trait discontinu conformément à la demande
-      label: labelSegment,
+      style: 'dashed', // Segment en trait discontinu épuré
     });
 
-    // 5️⃣ Étiquette textuelle informative (optionnelle)
+    // 5️⃣ Étiquette textuelle facultative (désactivée par défaut) : affiche uniquement le prix numérique
     if (afficherEtiquettes) {
       labels.push({
         id: `broken-lbl-${zone.id}`,
         prix: zone.prixMedian,
         date: zone.dateFin,
-        texte: `${labelSegment}\n${zone.prixMedian.toFixed(5)}`,
+        texte: zone.prixMedian.toFixed(5),
         couleur,
         position: estSupport ? 'below' : 'above',
       });

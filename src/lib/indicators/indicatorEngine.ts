@@ -4379,7 +4379,7 @@ return {
       minRetests: 1,
       prolongerVersLePresent: true,
       afficherFaibles: false,
-      afficherEtiquettes: true,
+      afficherEtiquettes: false,
       periodeATR: 7,
       zoneFuzzFactor: 0.75,
       maxLookbackBars: 800,
@@ -4434,10 +4434,10 @@ return {
       },
       {
         cle: 'afficherEtiquettes',
-        label: 'Afficher les Étiquettes Textuelles',
-        description: 'Affiche le texte informatif avec le timeframe et le nombre de retests',
+        label: 'Afficher le Prix en Étiquette',
+        description: 'Affiche uniquement le niveau de prix en étiquette discrète (sans texte encombrant)',
         type: 'boolean',
-        valeurParDefaut: true,
+        valeurParDefaut: false,
         groupe: 'Visuels & Segments',
       },
       {
