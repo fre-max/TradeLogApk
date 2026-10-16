@@ -25,7 +25,9 @@ export interface ParametresSweepNiveauShvedLePlusFort {
   // ─── 📐 Paramètres Shved ───
   periodeATR?: number;             // défaut: 15
   zoneFuzzFactor?: number;         // défaut: 0.1
-  maxLookbackBars?: number;        // défaut: 800
+  maxLookbackBars?: number;        // Historique scanné en bougies (défaut: 200)
+  // Nombre maximum de bougies entre la création du niveau et le pattern (défaut: 100, 0 = sans limite)
+  lookbackMaxBarsAvantPattern?: number;
   afficherFaibles?: boolean;       // Inclure les fractals faibles (défaut: false)
 
   // ─── 🎯 Règles de liquidité ───
@@ -188,7 +190,7 @@ export function calculerSweepNiveauShvedLePlusFort(
     minRetests: 0,
     periodeATR: options.periodeATR ?? 15,
     zoneFuzzFactor: options.zoneFuzzFactor ?? 0.1,
-    maxLookbackBars: options.maxLookbackBars ?? 800,
+    maxLookbackBars: options.maxLookbackBars ?? 200,
     afficherZones: false,
     afficherLignes: false,
     afficherEtiquettes: false,
@@ -196,6 +198,12 @@ export function calculerSweepNiveauShvedLePlusFort(
 
   const supports = resultatShved.supports.filter((z) => afficherFaibles || !z.estFaible);
   const resistances = resultatShved.resistances.filter((z) => afficherFaibles || !z.estFaible);
+
+  // Estimation du pas moyen par bougie pour mesurer l'âge des niveaux
+  const pasTempsSec = bougies.length >= 2
+    ? Math.max(60, (convertirEnSecondes(bougies[bougies.length - 1].time) - convertirEnSecondes(bougies[0].time)) / (bougies.length - 1))
+    : 3600;
+  const maxBarsAge = Number(options.lookbackMaxBarsAvantPattern ?? 100);
 
   // 4️⃣ Détection du Doji personnalisé (Liq/Reint) avec ses propres réglages
   const resultatPattern = calculerLiquidationReintegration(bougies, {
@@ -247,6 +255,13 @@ export function calculerSweepNiveauShvedLePlusFort(
 
       // B. Le niveau doit encore contenir de la liquidité (pas cassé avant le pattern)
       if (!estNiveauEncoreDisponible(zone, tempsBougie1)) continue;
+
+      // B bis. Le niveau doit être récent : pas créé il y a une éternité avant le pattern
+      if (maxBarsAge > 0) {
+        const ageSec = tempsBougie1 - convertirEnSecondes(zone.dateDebut);
+        const ageBougies = ageSec / pasTempsSec;
+        if (ageBougies > maxBarsAge) continue;
+      }
 
       // C. Retests comptés uniquement AVANT le pattern (aucun regard vers le futur)
       const retestsAvantPattern = compterRetestsAvant(zone, tempsBougie1);

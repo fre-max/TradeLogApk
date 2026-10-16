@@ -36,7 +36,7 @@ import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.18.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.19.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -1603,12 +1603,23 @@ return {
       fractalFastFactor: 3.0,
       fractalSlowFactor: 6.0,
       zoneMerge: true,
-      maxLookbackBars: 800,
+      maxLookbackBars: 200,
       afficherZones: true,
       afficherLignes: true,
       afficherEtiquettes: true,
     },
     definitionsVariables: [
+      {
+        cle: 'maxLookbackBars',
+        label: 'Historique Récent (Bougies)',
+        description: 'Nombre de bougies récentes analysées pour détecter les zones de liquidité (défaut: 200 au lieu de tout l\'historique ancien)',
+        type: 'number',
+        valeurParDefaut: 200,
+        min: 30,
+        max: 1000,
+        step: 10,
+        groupe: 'Fraîcheur & Historique Récent',
+      },
       {
         cle: 'timeframeSource',
         label: 'Unité de Temps de la Liquidité (Option B / MTF)',
@@ -4370,7 +4381,7 @@ return {
     nom: 'Détection de Liquidité : Shved S/R Actifs & Cassés (MTF)',
     description: 'Affiche les Supports et Résistances Shved retestés au moins une fois (jamais de niveau vierge) : niveaux ACTIFS en trait continu, niveaux CASSÉS en trait discontinu. Calculé sur une unité de temps inférieure (ex: M15) et projeté sur le graphique actuel (ex: H4). Sans texte ni rectangle.',
     auteur: 'Shved / TradeLog Institutional',
-    version: '2.0.0',
+    version: '2.1.0',
     type: 'overlay',
     actif: true,
     visibleSurGraphique: true,
@@ -4385,11 +4396,22 @@ return {
       afficherEtiquettes: false,
       periodeATR: 15,
       zoneFuzzFactor: 0.1,
-      maxLookbackBars: 800,
+      maxLookbackBars: 200,
       bullColor: '#10b981',
       bearColor: '#ef4444',
     },
     definitionsVariables: [
+      {
+        cle: 'maxLookbackBars',
+        label: 'Historique Récent (Bougies)',
+        description: 'Nombre de bougies récentes analysées pour détecter les niveaux de liquidité (ex: 150-200 bougies pour se concentrer sur les niveaux récents)',
+        type: 'number',
+        valeurParDefaut: 200,
+        min: 30,
+        max: 1000,
+        step: 10,
+        groupe: 'Fraîcheur & Historique Récent',
+      },
       {
         cle: 'timeframeSource',
         label: 'Unité de Temps Source (MTF)',
@@ -4525,7 +4547,7 @@ return {
     nom: 'Liq/Reint + Liquidité Shved la Plus Forte (MTF)',
     description: 'Quand le Doji personnalisé (Liq/Reint = Spring / UTAD) se forme, identifie tous les supports / résistances Shved balayés par sa mèche et retient le PLUS FORT (le plus retesté avant le pattern). Affiche la force du niveau et la liquidité totale récupérée. Segment en ligne discontinue.',
     auteur: 'TradeLog Institutional',
-    version: '1.0.0',
+    version: '1.1.0',
     type: 'overlay',
     actif: true,
     visibleSurGraphique: true,
@@ -4534,7 +4556,8 @@ return {
       timeframeSource: 'M15',
       periodeATR: 15,
       zoneFuzzFactor: 0.1,
-      maxLookbackBars: 800,
+      maxLookbackBars: 200,
+      lookbackMaxBarsAvantPattern: 100,
       minRetests: 1,
       afficherFaibles: false,
       exigerNiveauBalaye: true,
@@ -4555,6 +4578,28 @@ return {
       texteLabel: 'Liq/Reint',
     },
     definitionsVariables: [
+      {
+        cle: 'maxLookbackBars',
+        label: 'Historique Récent (Bougies)',
+        description: 'Nombre de bougies récentes analysées pour calculer les niveaux Shved (ex: 150-200 pour cibler la liquidité récente)',
+        type: 'number',
+        valeurParDefaut: 200,
+        min: 30,
+        max: 1000,
+        step: 10,
+        groupe: 'Fraîcheur & Historique Récent',
+      },
+      {
+        cle: 'lookbackMaxBarsAvantPattern',
+        label: 'Âge Max du Niveau avant le Pattern',
+        description: 'Nombre maximum de bougies entre la création du niveau et le Doji (ex: 100 bougies pour ne balayer que des niveaux récents, 0 = sans limite)',
+        type: 'number',
+        valeurParDefaut: 100,
+        min: 0,
+        max: 500,
+        step: 5,
+        groupe: 'Fraîcheur & Historique Récent',
+      },
       {
         cle: 'timeframeSource',
         label: 'Unité de Temps des Niveaux (MTF)',

@@ -2,7 +2,7 @@
   "nom": "Détection de Liquidité : Shved S/R Actifs & Cassés (MTF)",
   "description": "Affiche les Supports et Résistances Shved retestés au moins une fois (jamais de niveau vierge) : niveaux ACTIFS en trait continu, niveaux CASSÉS en trait discontinu. Calculé sur une unité de temps inférieure (ex: M15) et projeté sur le graphique actuel (ex: H4). Sans texte ni rectangle.",
   "auteur": "Shved / TradeLog Institutional",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "overlay",
   "parametres": {
     "timeframeSource": "M15",
@@ -14,11 +14,22 @@
     "afficherEtiquettes": false,
     "periodeATR": 15,
     "zoneFuzzFactor": 0.1,
-    "maxLookbackBars": 800,
+    "maxLookbackBars": 200,
     "bullColor": "#10b981",
     "bearColor": "#ef4444"
   },
   "definitionsVariables": [
+    {
+      "cle": "maxLookbackBars",
+      "label": "Historique Récent (Bougies)",
+      "description": "Nombre de bougies récentes analysées pour détecter les niveaux de liquidité (ex: 150-200 bougies pour se concentrer sur les niveaux récents)",
+      "type": "number",
+      "valeurParDefaut": 200,
+      "min": 30,
+      "max": 1000,
+      "step": 10,
+      "groupe": "Fraîcheur & Historique Récent"
+    },
     {
       "cle": "timeframeSource",
       "label": "Unité de Temps Source (MTF)",

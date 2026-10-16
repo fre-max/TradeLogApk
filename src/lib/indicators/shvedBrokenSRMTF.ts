@@ -39,7 +39,7 @@ export interface OptionsShvedBrokenSRMTF {
   // ─── 📐 Paramètres Shved ───
   periodeATR?: number;            // Période de l'ATR (défaut: 15)
   zoneFuzzFactor?: number;        // Épaisseur de zone (défaut: 0.1 → niveaux très fins)
-  maxLookbackBars?: number;       // Historique scanné (défaut: 800)
+  maxLookbackBars?: number;       // Historique scanné en bougies récentes (défaut: 200)
 
   // ─── 🎨 Affichage Visuel ───
   // Afficher les étiquettes de prix discrètes (défaut: false pour un graphique épuré)
@@ -144,7 +144,7 @@ export function calculerShvedBrokenSRMTF(
     minRetests: 0,
     periodeATR: options.periodeATR ?? 15,
     zoneFuzzFactor: options.zoneFuzzFactor ?? 0.1,
-    maxLookbackBars: options.maxLookbackBars ?? 800,
+    maxLookbackBars: options.maxLookbackBars ?? 200,
     afficherZones: false,
     afficherLignes: false,
     afficherEtiquettes: false,

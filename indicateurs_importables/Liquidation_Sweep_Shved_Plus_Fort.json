@@ -2,13 +2,14 @@
   "nom": "Liq/Reint + Liquidité Shved la Plus Forte (MTF)",
   "description": "Quand le Doji personnalisé (Liq/Reint = Spring / UTAD) se forme, identifie tous les supports / résistances Shved balayés par sa mèche et retient le PLUS FORT (le plus retesté avant le pattern). Affiche la force du niveau et la liquidité totale récupérée. Segment en ligne discontinue.",
   "auteur": "TradeLog Institutional",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "overlay",
   "parametres": {
     "timeframeSource": "M15",
     "periodeATR": 15,
     "zoneFuzzFactor": 0.1,
-    "maxLookbackBars": 800,
+    "maxLookbackBars": 200,
+    "lookbackMaxBarsAvantPattern": 100,
     "minRetests": 1,
     "afficherFaibles": false,
     "exigerNiveauBalaye": true,
@@ -29,6 +30,28 @@
     "texteLabel": "Liq/Reint"
   },
   "definitionsVariables": [
+    {
+      "cle": "maxLookbackBars",
+      "label": "Historique Récent (Bougies)",
+      "description": "Nombre de bougies récentes analysées pour calculer les niveaux Shved (ex: 150-200 pour cibler la liquidité récente)",
+      "type": "number",
+      "valeurParDefaut": 200,
+      "min": 30,
+      "max": 1000,
+      "step": 10,
+      "groupe": "Fraîcheur & Historique Récent"
+    },
+    {
+      "cle": "lookbackMaxBarsAvantPattern",
+      "label": "Âge Max du Niveau avant le Pattern",
+      "description": "Nombre maximum de bougies entre la création du niveau et le Doji (ex: 100 bougies pour ne balayer que des niveaux récents, 0 = sans limite)",
+      "type": "number",
+      "valeurParDefaut": 100,
+      "min": 0,
+      "max": 500,
+      "step": 5,
+      "groupe": "Fraîcheur & Historique Récent"
+    },
     {
       "cle": "timeframeSource",
       "label": "Unité de Temps des Niveaux (MTF)",

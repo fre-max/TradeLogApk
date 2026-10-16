@@ -65,7 +65,7 @@ export interface OptionsShvedSupplyDemand {
   fractalSlowFactor?: number;        // Sensibilité des fractals lents majeurs (défaut: 6.0)
   minBougiesEntreRetests?: number;   // Écart minimal de bougies entre deux touches (défaut: 6)
   zoneMerge?: boolean;               // Fusionner les zones superposées (défaut: true)
-  maxLookbackBars?: number;          // Historique analysé (défaut: 800)
+  maxLookbackBars?: number;          // Historique analysé en bougies (défaut: 200)
   
   // ─── Affichage Visuel ───
   afficherZones?: boolean;           // Dessiner les rectangles (défaut: true)
@@ -189,6 +189,9 @@ export function calculerShvedSupplyDemand(
   let bougiesCalcul = bougies;
   let estMTFActif = false;
 
+  // Historique maximal d'analyse demandé (défaut: 200 bougies récentes au lieu de 800)
+  const maxHistoriqueDemande = Math.max(20, Number(options.maxLookbackBars ?? 200));
+
   // Option B : Si une timeframe spécifique (ex: M15) est demandée et qu'on dispose des bougies M1
   if (tfSource !== 'ACTUEL' && options.donneesM1 && options.donneesM1.length > 0) {
     const derniereBougieChart = bougies[bougies.length - 1];
@@ -196,17 +199,18 @@ export function calculerShvedSupplyDemand(
       ? derniereBougieChart.time
       : Math.floor(Date.parse(derniereBougieChart.time as string) / 1000);
 
-    // Détermine la date de début du graphique visible pour couvrir TOUT l'historique affiché à l'écran
-    const premiereBougieChart = bougies[0];
-    const tempsMinChartSec = premiereBougieChart
-      ? (typeof premiereBougieChart.time === 'number' ? premiereBougieChart.time : Math.floor(Date.parse(premiereBougieChart.time as string) / 1000))
+    // Détermine la date de début récente : on ne remonte qu'aux N dernières bougies du graphique visible !
+    const indexDepartChart = Math.max(0, bougies.length - maxHistoriqueDemande);
+    const premiereBougieConcernee = bougies[indexDepartChart];
+    const tempsMinChartSec = premiereBougieConcernee
+      ? (typeof premiereBougieConcernee.time === 'number' ? premiereBougieConcernee.time : Math.floor(Date.parse(premiereBougieConcernee.time as string) / 1000))
       : 0;
 
-    // Marge de recul amont (30 heures de M1) pour amorcer l'ATR et les premiers fractals dès la première bougie visible
-    const margeReculSec = 30 * 3600;
+    // Marge de recul amont modérée (4 heures de M1) pour amorcer l'ATR et les premiers fractals récents
+    const margeReculSec = 4 * 3600;
     const tempsDebutCalculSec = Math.max(0, tempsMinChartSec - margeReculSec);
 
-    // Filtrage chronologique : couvre l'intégralité du graphique visible sans aucune fuite vers le futur
+    // Filtrage chronologique : ne conserve que la fenêtre récente demandée
     const m1Filtrees: Bougie[] = [];
     for (let k = 0; k < options.donneesM1.length; k++) {
       const b = options.donneesM1[k];
@@ -237,8 +241,8 @@ export function calculerShvedSupplyDemand(
   const fastFactor = Math.max(2, Math.round(options.fractalFastFactor ?? 3.0));
   const slowFactor = Math.max(3, Math.round(options.fractalSlowFactor ?? 6.0));
   const minBougiesEntreTouches = options.minBougiesEntreRetests ?? 6;
-  // En mode MTF, on analyse toutes les bougies nécessaires pour couvrir le graphique visible sans troncature
-  const maxHistorique = estMTFActif ? Math.max(options.maxLookbackBars ?? 800, totalCalcul) : (options.maxLookbackBars ?? 800);
+  // Respecte la limite de bougies récentes : pas d'analyse qui remonte trop loin dans le passé
+  const maxHistorique = estMTFActif ? totalCalcul : maxHistoriqueDemande;
   const zoneMerge = options.zoneMerge !== false;                         // Défaut: true
   const afficherZones = options.afficherZones !== false;
   const afficherLignes = options.afficherLignes !== false;
