@@ -297,14 +297,14 @@ export function calculerSweepNiveauShvedLePlusFort(
     // Si on exige un niveau balayé et qu'il n'y en a pas, on peut quand même afficher le Doji si demandé
     if (!niveauLePlusFort) {
       if (afficherTousDojis) {
-        // Étiquette discrète pour repérer le Doji seul sans niveau Shved balayé
-        const couleurNeutre = estAchat ? `${bullColor}77` : `${bearColor}77`;
+        // Étiquette 100% opaque pour repérer le Doji seul sans niveau Shved balayé
+        const couleurDojiSeul = estAchat ? bullColor : bearColor;
         labels.push({
           id: `doji-seul-lbl-${i}`,
           prix: prixExtreme,
           date: bougie2.time,
           texte: estAchat ? 'Spring' : 'UTAD',
-          couleur: couleurNeutre,
+          couleur: couleurDojiSeul,
           position: estAchat ? 'below' : 'above',
         });
       }
@@ -359,7 +359,7 @@ export function calculerSweepNiveauShvedLePlusFort(
       position: estAchat ? 'below' : 'above',
     });
 
-    // Segment discontinu du niveau le plus fort : de sa naissance jusqu'au pattern
+    // Segment discontinu du niveau le plus fort : de sa naissance jusqu'au pattern (100% opaque, bien épais)
     if (niveauLePlusFort) {
       lignes.push({
         id: `sweep-fort-line-${i}`,
@@ -367,7 +367,7 @@ export function calculerSweepNiveauShvedLePlusFort(
         dateDebut: niveauLePlusFort.zone.dateDebut,
         dateFin: bougie2.time,
         couleur,
-        epaisseur: 2.2,
+        epaisseur: 2.5,
         style: 'dashed',
       });
     }
@@ -382,14 +382,14 @@ export function calculerSweepNiveauShvedLePlusFort(
           dateDebut: autre.zone.dateDebut,
           dateFin: bougie2.time,
           couleur,
-          epaisseur: 1,
+          epaisseur: 1.2,
           style: 'dotted',
         });
       }
     }
   }
 
-  // 7️⃣ Vision d'Ensemble : Tracé des Supports & Résistances Shved en arrière-plan
+  // 7️⃣ Vision d'Ensemble : Tracé des Supports & Résistances Shved en arrière-plan (100% Opaque)
   if (afficherNiveauxShved) {
     const derniereBougie = bougies[bougies.length - 1];
     const dateDerniereBougie = derniereBougie ? derniereBougie.time : 0;
@@ -401,9 +401,8 @@ export function calculerSweepNiveauShvedLePlusFort(
       if (zone.estCassee && !afficherNiveauxCasses) continue;
 
       const estSupport = zone.type === 'SUPPORT';
-      const couleurBase = estSupport ? bullColor : bearColor;
-      // Niveaux actifs en continu doux, niveaux cassés en pointillés discrets
-      const couleurFond = zone.estCassee ? `${couleurBase}44` : `${couleurBase}88`;
+      // 100% opaque sans canal alpha : vert franc pour support, rouge franc pour résistance
+      const couleurZone = estSupport ? bullColor : bearColor;
       const dateFin = zone.estCassee ? zone.dateFin : dateDerniereBougie;
 
       lignes.push({
@@ -411,8 +410,8 @@ export function calculerSweepNiveauShvedLePlusFort(
         prix: zone.prixMedian,
         dateDebut: zone.dateDebut,
         dateFin,
-        couleur: couleurFond,
-        epaisseur: zone.estCassee ? 1.0 : 1.3,
+        couleur: couleurZone,
+        epaisseur: zone.estCassee ? 1.5 : 1.8,
         style: zone.estCassee ? 'dashed' : 'solid',
       });
     }

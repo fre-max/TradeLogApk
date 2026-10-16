@@ -1,7 +1,7 @@
 /**
  * ==============================================================================
  * INDICATEUR SCRIPTABLE AUTONOME : LIQ/REINT + NIVEAU SHVED LE PLUS FORT (MTF)
- * Version 1.2.0
+ * Version 1.3.0
  * 
  * Quand le Doji personnalisé (Liq/Reint = Spring / UTAD) se produit, cet indicateur
  * recherche tous les supports et résistances Shved balayés par sa mèche extrême,

@@ -36,7 +36,7 @@ import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.20.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.21.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
