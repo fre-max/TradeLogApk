@@ -22,18 +22,18 @@ import type { VisualPrimitives, VisualLabel } from '@/types/indicatorScript';
  * ─── CONDITION 2 : Précision du Retournement (Close2 vs Open1) ────────────────
  *  • La Bougie 2 doit ramener le prix au point de départ (Open1) :
  *    - Dépassement favorable (au-dessus pour Achat, en dessous pour Vente) :
- *      autorisé jusqu'à `toleranceDepassement` (défaut: 25% de la hauteur moyenne).
+ *      autorisé jusqu'à `toleranceDepassement` (défaut: 100% de la hauteur moyenne).
  *    - Retrait / Déficit (la clôture n'atteint pas tout à fait Open1) :
- *      autorisé jusqu'à `toleranceDeficit` (défaut: 5% de la hauteur moyenne).
+ *      autorisé jusqu'à `toleranceDeficit` (défaut: 15% de la hauteur moyenne).
  *
  * ─── CONDITION 3 : Impulsion de la Bougie 1 (Liquidation) ─────────────────────
  *  • La hauteur totale de la Bougie 1 (High1 - Low1) doit être >= `multiplicateurBougie1`
- *    fois la moyenne des hauteurs des 10 dernières bougies (défaut: 1.75x).
+ *    fois la moyenne des hauteurs des 10 dernières bougies (défaut: 1.1x).
  *  👉 Pour détecter plus de signaux : baisser à 1.2x ou 1.3x.
  *
  * ─── CONDITION 4 : Puissance du Corps de la Bougie 2 (Réintégration) ──────────
  *  • Le corps réel de la Bougie 2 (|Open2 - Close2|) doit être >= `multiplicateurCorps2`
- *    fois la moyenne des corps des 10 dernières bougies (défaut: 1.75x).
+ *    fois la moyenne des corps des 10 dernières bougies (défaut: 1.1x).
  *  👉 Pour détecter plus de signaux : baisser à 1.2x ou 1.3x.
  * ==============================================================================
  */
@@ -43,20 +43,20 @@ import type { VisualPrimitives, VisualLabel } from '@/types/indicatorScript';
  * Entièrement modulable pour affiner les filtres de volume, taille et proximité.
  */
 export interface ParametresLiquidationReintegration {
-  // Tolérance d'écart quand la réintégration reste en retrait d'Open(1) (déficit) (défaut: 0.05 = 5% de la hauteur moyenne)
+  // Tolérance d'écart quand la réintégration reste en retrait d'Open(1) (déficit) (défaut: 0.15 = 15% de la hauteur moyenne)
   toleranceDeficit?: number;
-  // Tolérance d'approximation symétrique (utilisée si toleranceDeficit n'est pas spécifié) (défaut: 0.05 = 5%)
+  // Tolérance d'approximation symétrique (utilisée si toleranceDeficit n'est pas spécifié) (défaut: 0.15 = 15%)
   toleranceProximite?: number;
-  // Tolérance élargie quand la réintégration dépasse Open(1) dans le sens favorable (dépassement) (défaut: 0.25 = 25%)
+  // Tolérance élargie quand la réintégration dépasse Open(1) dans le sens favorable (dépassement) (défaut: 1.0 = 100%)
   toleranceDepassement?: number;
 
   // Active le filtre de taille relative sur l'historique récent (défaut: true)
   activerFiltreTaille?: boolean;
   // Nombre de bougies précédentes servant de référence pour la moyenne (défaut: 10)
   periodeHistorique?: number;
-  // Multiplicateur requis pour la Bougie 1 entière (corps + mèches) (défaut: 1.75x)
+  // Multiplicateur requis pour la Bougie 1 entière (corps + mèches) (défaut: 1.1x)
   multiplicateurBougie1?: number;
-  // Multiplicateur requis pour le corps de la Bougie 2 sans mèches (défaut: 1.75x)
+  // Multiplicateur requis pour le corps de la Bougie 2 sans mèches (défaut: 1.1x)
   multiplicateurCorps2?: number;
 
   // Filtre optionnel de tendance globale sur les barres antérieures (défaut: false)
@@ -183,10 +183,10 @@ export function validerDojiPersonnalise(params: ParametresValidationDoji): Resul
     activerVente = true,
     activerFiltreTaille = true,
     activerFiltreTendance = false,
-    toleranceDeficit = 0.05,
-    toleranceDepassement = 0.25,
-    multiplicateurBougie1 = 1.75,
-    multiplicateurCorps2 = 1.75,
+    toleranceDeficit = 0.15,
+    toleranceDepassement = 1.0,
+    multiplicateurBougie1 = 1.1,
+    multiplicateurCorps2 = 1.1,
   } = params;
 
   const range1 = b1.high - b1.low;
@@ -323,16 +323,16 @@ export function calculerLiquidationReintegration(
   const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : params.toleranceProximite;
   const toleranceDeficit = valDeficit !== undefined
     ? (valDeficit > 1 ? valDeficit / 100 : valDeficit)
-    : 0.05;
+    : 0.15;
 
   // Tolérance élargie quand la bougie dépasse Open1 dans le sens favorable (dépassement avec plus de marge)
-  const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 0.25;
+  const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 1.0;
   const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;
 
   const activerFiltreTaille = params.activerFiltreTaille !== false;
   const periodeHistorique = Math.max(3, Number(params.periodeHistorique !== undefined ? params.periodeHistorique : 10));
-  const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 !== undefined ? params.multiplicateurBougie1 : 1.75));
-  const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 !== undefined ? params.multiplicateurCorps2 : 1.75));
+  const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 !== undefined ? params.multiplicateurBougie1 : 1.1));
+  const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 !== undefined ? params.multiplicateurCorps2 : 1.1));
 
   const activerFiltreTendance = Boolean(params.activerFiltreTendance);
   const trendBars = Math.max(1, Number(params.trendBars !== undefined ? params.trendBars : 5));

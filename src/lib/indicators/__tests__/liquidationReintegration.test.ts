@@ -241,4 +241,24 @@ describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', ()
     expect(resExec?.donnees?.statistiques?.totalAchats).toBe(1);
     expect(resExec?.donnees?.signaux[0]?.situationCloture).toBe('DEPASSEMENT');
   });
+
+  it('utilise bien les nouvelles valeurs par défaut plus permissives (1.1x, 15% déficit, 100% dépassement)', () => {
+    // Moyenne range hist = 10, moyenne corps hist = 5
+    const bougies: Bougie[] = [
+      creerBougie(1000, 100, 105, 95, 100),
+      creerBougie(2000, 100, 105, 95, 100),
+      creerBougie(3000, 100, 105, 95, 100),
+      creerBougie(4000, 100, 105, 95, 100),
+      creerBougie(5000, 100, 105, 95, 100),
+      // B1 : Range = 11.5 (>= 1.1 * 10 = 11), Vendeuse (105 -> 95)
+      creerBougie(6000, 105, 105, 93.5, 95),
+      // B2 : Corps = 6 (>= 1.1 * 5 = 5.5), Acheteuse (95 -> 104) avec déficit de 1.0 (1.0 / 11 = 9% <= 15% déficit par défaut)
+      creerBougie(7000, 95, 105, 94, 104),
+    ];
+
+    // Appel SANS options : prend les valeurs par défaut
+    const resDefaut = calculerLiquidationReintegration(bougies);
+    expect(resDefaut.signaux.length).toBe(1);
+    expect(resDefaut.signaux[0].type).toBe('ACHAT');
+  });
 });
