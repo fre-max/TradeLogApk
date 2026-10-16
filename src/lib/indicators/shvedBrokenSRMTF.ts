@@ -5,6 +5,41 @@ import {
   type ZoneShved,
 } from '@/lib/bot/modules/01_liquidite/shvedSupplyDemand';
 
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur détecte et projette en Multi-Timeframe (MTF) les supports et
+ * résistances institutionnels Shved (Supply & Demand).
+ *
+ * 🎯 LES 5 RÈGLES DE DÉTECTION & DE MODIFICATION POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── RÈGLE 1 : Sommets & Creux Fractals ───────────────────────────────────────
+ *  • Les niveaux naissent sur des fractals rapides (`fractalFastFactor: 3`)
+ *    ou lents / majeurs (`fractalSlowFactor: 6`).
+ *  • Option `afficherFaibles`: autorise ou masque les niveaux issus de fractals mineurs.
+ *
+ * ─── RÈGLE 2 : Épaisseur de Zone & Tolérance ATR ──────────────────────────────
+ *  • Dimensionné par un ATR (`periodeATR: 15`).
+ *  • L'épaisseur de la zone dépend de `zoneFuzzFactor` (défaut: 0.1 = niveau très fin).
+ *  👉 Pour élargir les zones : augmenter `zoneFuzzFactor` à 0.5 ou 0.75.
+ *
+ * ─── RÈGLE 3 : Retests Minima (Pas de niveau vierge) ──────────────────────────
+ *  • Seuls les niveaux ayant au moins `minRetests` (défaut: 1) sont conservés.
+ *  👉 Pour afficher aussi les zones dès leur création : mettre `minRetests: 0`.
+ *  👉 Pour n'avoir que des niveaux historiques majeurs : mettre `minRetests: 3`.
+ *
+ * ─── RÈGLE 4 : Classement Actif vs Cassé ──────────────────────────────────────
+ *  • NIVEAU ACTIF  : Aucune clôture de bougie au-delà -> Tracé en trait CONTINU (`solid`).
+ *  • NIVEAU CASSÉ  : Une bougie a clôturé au-delà       -> Tracé en trait DISCONTINU (`dashed`).
+ *  👉 Options : `afficherNonCasses: true` et `afficherCasses: true`.
+ *
+ * ─── RÈGLE 5 : Récence & Performance ──────────────────────────────────────────
+ *  • Le scan ne remonte qu'aux `maxLookbackBars` dernières bougies (défaut: 200).
+ *  👉 Réduire à 100 pour cibler l'action récente, ou augmenter à 500 pour plus de recul.
+ * ==============================================================================
+ */
+
 // ─── 📊 Types et Structures de Données ────────────────────────────────────────
 
 /**
@@ -162,13 +197,13 @@ export function calculerShvedBrokenSRMTF(
 
   // 3️⃣ Filtrage et classement de chaque zone
   for (const zone of toutesLesZones) {
-    // Règle 1 : au moins 'minRetests' retests (jamais de niveau vierge)
+    // ─── 🔍 RÈGLE 3 : Exigence de retests (élimine les niveaux vierges sans liquidité) ───
     if (zone.retests < minRetests) continue;
 
-    // Règle 2 : fractals faibles masqués si désactivés
+    // ─── 🔍 RÈGLE 1 : Filtrage des fractals faibles (masque le bruit mineur si désactivé) ───
     if (zone.estFaible && !afficherFaibles) continue;
 
-    // Règle 3 : respecter le choix d'affichage actifs / cassés
+    // ─── 🔍 RÈGLE 4 : Tri selon le statut Actif vs Cassé ───
     const estCasse = zone.estCassee;
     if (estCasse && !afficherCasses) continue;
     if (!estCasse && !afficherNonCasses) continue;

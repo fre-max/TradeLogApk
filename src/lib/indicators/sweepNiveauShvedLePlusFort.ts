@@ -6,15 +6,57 @@ import {
 } from '@/lib/bot/modules/01_liquidite/shvedSupplyDemand';
 import { calculerLiquidationReintegration } from './liquidationReintegration';
 
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur combine deux analyses complémentaires :
+ *  1. Le chandelier "Doji personnalisé" (Liquidation & Réintégration = Spring / UTAD)
+ *  2. Les niveaux institutionnels "Shved Supply & Demand" (Supports / Résistances)
+ *
+ * 🎯 POUR QU'UN SETUP COMPLET (COMBO) SOIT VALIDÉ, IL DOIT RESPECTER 5 CONDITIONS :
+ *
+ * ─── CONDITION 1 : Formation du Doji Personnalisé (2 bougies consécutives) ────
+ *  • Bougie 1 (Liquidation) : Bougie impulsive dans le sens du piège (baissière
+ *    pour Spring, haussière pour UTAD). Sa taille totale (haut - bas) doit être
+ *    au moins `multiplicateurBougie1` fois la moyenne récente (défaut: 1.75x).
+ *  • Bougie 2 (Réintégration) : Bougie en sens inverse. Son corps réel (|open - close|)
+ *    doit être au moins `multiplicateurCorps2` fois la moyenne récente (défaut: 1.75x).
+ *  • Clôture de la Bougie 2 : Doit revenir au niveau d'ouverture de la Bougie 1.
+ *    - Si elle dépasse (sens favorable) : marge max `toleranceDepassement` (défaut: 25%).
+ *    - Si elle reste en deçà (déficit)  : marge max `toleranceDeficit` (défaut: 5%).
+ *  👉 Pour assouplir : baisser `multiplicateurBougie1` et `multiplicateurCorps2` à 1.2
+ *
+ * ─── CONDITION 2 : Balayage du Niveau Shved par la Mèche ─────────────────────
+ *  • Pour un Achat (Spring) : La mèche basse extrême (min(Low1, Low2)) doit plonger
+ *    sous le support Shved, ET la clôture de la Bougie 2 doit revenir au-dessus.
+ *  • Pour une Vente (UTAD)  : La mèche haute extrême (max(High1, High2)) doit percer
+ *    au-dessus de la résistance Shved, ET la clôture de la Bougie 2 doit revenir en dessous.
+ *
+ * ─── CONDITION 3 : Intégrité du Niveau Shved (Non cassé au préalable) ─────────
+ *  • Le niveau de liquidité devait être intact à l'arrivée du Doji. Si une bougie
+ *    antérieure a déjà clôturé au-delà du niveau, celui-ci était déjà consommé.
+ *  👉 Modifiable via la fonction : `estNiveauEncoreDisponible()`
+ *
+ * ─── CONDITION 4 : Retests Minima du Niveau AVANT le Pattern ─────────────────
+ *  • Le niveau doit avoir été retesté au moins `minRetests` fois (défaut: 1).
+ *  • Les retests sont comptés STRICTEMENT avant la Bougie 1 (sans biais futuriste).
+ *  👉 Pour accepter les zones neuves sans rebond : mettre `minRetests: 0`
+ *  👉 Pour n'avoir que les zones blindées        : mettre `minRetests: 3`
+ *
+ * ─── CONDITION 5 : Fraîcheur & Âge Récent du Niveau ──────────────────────────
+ *  • Le niveau ne doit pas avoir été créé il y a plus de `lookbackMaxBarsAvantPattern`
+ *    bougies avant le Doji (défaut: 100 bougies, 0 = illimité).
+ *  • L'historique global analysé est borné à `maxLookbackBars` (défaut: 200 bougies).
+ *  👉 Pour autoriser des niveaux plus anciens : augmenter `lookbackMaxBarsAvantPattern: 300`
+ * ==============================================================================
+ */
+
 // ─── 📊 Types et Structures de Données ────────────────────────────────────────
 
 /**
  * Options de l'indicateur combiné :
  * Doji personnalisé (Liq/Reint = Spring / UTAD) + niveau Shved le PLUS FORT balayé.
- *
- * Quand le pattern se forme, on cherche tous les supports / résistances Shved que sa mèche
- * a balayés, puis on retient celui qui a été le plus souvent retesté AVANT le pattern
- * (= celui qui contenait le plus de liquidité / de stops).
  */
 export interface ParametresSweepNiveauShvedLePlusFort {
   // ─── ⏱️ Multi-Timeframe (MTF) ───
@@ -256,23 +298,24 @@ export function calculerSweepNiveauShvedLePlusFort(
     for (const zone of zonesCandidates) {
       const prixNiveau = zone.prixMedian;
 
-      // A. La mèche a dépassé le niveau ET la clôture de réintégration est revenue de l'autre côté
+      // ─── 🔍 CONDITION 2 : Balayage du niveau par la mèche et réintégration par la clôture ───
+      // Pour Spring : mèche sous le support et clôture au-dessus. Pour UTAD : mèche au-dessus et clôture en dessous.
       const estBalaye = estAchat
         ? prixExtreme < prixNiveau && bougie2.close > prixNiveau
         : prixExtreme > prixNiveau && bougie2.close < prixNiveau;
       if (!estBalaye) continue;
 
-      // B. Le niveau doit encore contenir de la liquidité (pas cassé avant le pattern)
+      // ─── 🔍 CONDITION 3 : Intégrité du niveau Shved (aucune bougie n'a clôturé au-delà avant le Doji) ───
       if (!estNiveauEncoreDisponible(zone, tempsBougie1)) continue;
 
-      // B bis. Le niveau doit être récent : pas créé il y a une éternité avant le pattern
+      // ─── 🔍 CONDITION 5 : Âge récent du niveau (exclut les niveaux nés trop loin avant le Doji) ───
       if (maxBarsAge > 0) {
         const ageSec = tempsBougie1 - convertirEnSecondes(zone.dateDebut);
         const ageBougies = ageSec / pasTempsSec;
         if (ageBougies > maxBarsAge) continue;
       }
 
-      // C. Retests comptés uniquement AVANT le pattern (aucun regard vers le futur)
+      // ─── 🔍 CONDITION 4 : Retests minimaux survenus STRICTEMENT avant la bougie 1 ───
       const retestsAvantPattern = compterRetestsAvant(zone, tempsBougie1);
       if (retestsAvantPattern < minRetests) continue;
 

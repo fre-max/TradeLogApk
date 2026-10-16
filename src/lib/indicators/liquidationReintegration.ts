@@ -2,6 +2,38 @@ import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualLabel } from '@/types/indicatorScript';
 
 /**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Détecte les retournements impulsifs de chandelier (Spring haussier & UTAD baissier)
+ * articulés autour de 2 bougies consécutives de sens opposé.
+ *
+ * 🎯 LES 4 CONDITIONS OBLIGATOIRES POUR VALIDER LE PATTERN :
+ *
+ * ─── CONDITION 1 : Direction et Alternance des Bougies ────────────────────────
+ *  • Achat (Spring) : Bougie 1 Baissière (Close1 < Open1) + Bougie 2 Haussière (Close2 > Open2)
+ *  • Vente (UTAD)   : Bougie 1 Haussière (Close1 > Open1) + Bougie 2 Baissière (Close2 < Open2)
+ *
+ * ─── CONDITION 2 : Impulsion de la Bougie 1 (Liquidation) ─────────────────────
+ *  • La hauteur totale de la Bougie 1 (High1 - Low1) doit être >= `multiplicateurBougie1`
+ *    fois la moyenne des hauteurs des 10 dernières bougies (défaut: 1.75x).
+ *  👉 Pour détecter plus de signaux : baisser à 1.2x ou 1.3x.
+ *
+ * ─── CONDITION 3 : Puissance du Corps de la Bougie 2 (Réintégration) ──────────
+ *  • Le corps réel de la Bougie 2 (|Open2 - Close2|) doit être >= `multiplicateurCorps2`
+ *    fois la moyenne des corps des 10 dernières bougies (défaut: 1.75x).
+ *  👉 Pour détecter plus de signaux : baisser à 1.2x ou 1.3x.
+ *
+ * ─── CONDITION 4 : Précision du Retournement (Open1 vs Close2) ────────────────
+ *  • La Bougie 2 doit ramener le prix au point de départ (Open1) :
+ *    - Dépassement favorable (au-dessus pour Achat, en dessous pour Vente) :
+ *      autorisé jusqu'à `toleranceDepassement` (défaut: 25% de la hauteur moyenne).
+ *    - Retrait / Déficit (la clôture n'atteint pas tout à fait Open1) :
+ *      autorisé jusqu'à `toleranceDeficit` (défaut: 5% de la hauteur moyenne).
+ * ==============================================================================
+ */
+
+/**
  * Options de configuration complètes pour l'indicateur Liquidation & Réintégration.
  * Entièrement modulable pour affiner les filtres de volume, taille et proximité.
  */
@@ -163,17 +195,13 @@ export function calculerLiquidationReintegration(
     const tendanceHausse = !activerFiltreTendance || openTrend < open2;
     const tendanceBaisse = !activerFiltreTendance || openTrend > open2;
 
-    // B. Identification de la direction du setup à 2 bougies
-    // Achat potentiel : Bougie 1 baissière (close1 < open1) et Bougie 2 haussière (close2 > open2)
+    // ─── 🔍 CONDITION 1 : Direction et alternance des 2 bougies (Spring = Baisse puis Hausse) ───
     const estCandidatAchat = activerAchat && (close1 < open1) && (close2 > open2) && tendanceBaisse;
-    // Vente potentielle : Bougie 1 haussière (close1 > open1) et Bougie 2 baissière (close2 < open2)
     const estCandidatVente = activerVente && (close1 > open1) && (close2 < open2) && tendanceHausse;
 
     if (!estCandidatAchat && !estCandidatVente) continue;
 
-    // C. Vérification de la proximité asymétrique entre Open(1) et Close(2)
-    // - En deçà (déficit de réintégration) : marge stricte (défaut 5%)
-    // - Au-delà (dépassement favorable dans le sens du retournement) : marge beaucoup plus généreuse (défaut 25%)
+    // ─── 🔍 CONDITION 4 : Précision du retournement (Close2 doit revenir au niveau de Open1) ───
     const ecartPrix = Math.abs(open1 - close2);
     const ratioEcart = ecartPrix / hauteurMoyenne;
     let situationCloture: 'DEPASSEMENT' | 'RETRAIT' = 'RETRAIT';
@@ -181,21 +209,21 @@ export function calculerLiquidationReintegration(
 
     if (estCandidatAchat) {
       if (close2 >= open1) {
-        // Dépassement haussier : la bougie 2 a clôturé au-dessus ou pile à l'ouverture de la bougie 1
+        // Dépassement haussier favorable : marge jusqu'à toleranceDepassement (défaut: 25%)
         situationCloture = 'DEPASSEMENT';
         respecteProximite = ratioEcart <= toleranceDepassement;
       } else {
-        // En retrait : la bougie 2 a clôturé un peu en dessous de l'ouverture de la bougie 1
+        // En retrait : marge stricte toleranceDeficit (défaut: 5%)
         situationCloture = 'RETRAIT';
         respecteProximite = ratioEcart <= toleranceDeficit;
       }
     } else if (estCandidatVente) {
       if (close2 <= open1) {
-        // Dépassement baissier : la bougie 2 a clôturé en dessous ou pile à l'ouverture de la bougie 1
+        // Dépassement baissier favorable : marge jusqu'à toleranceDepassement (défaut: 25%)
         situationCloture = 'DEPASSEMENT';
         respecteProximite = ratioEcart <= toleranceDepassement;
       } else {
-        // En retrait : la bougie 2 a clôturé un peu au-dessus de l'ouverture de la bougie 1
+        // En retrait : marge stricte toleranceDeficit (défaut: 5%)
         situationCloture = 'RETRAIT';
         respecteProximite = ratioEcart <= toleranceDeficit;
       }
@@ -203,7 +231,7 @@ export function calculerLiquidationReintegration(
 
     if (!respecteProximite) continue;
 
-    // D. Calcul des moyennes récentes sur l'historique (bougies précédant la bougie 1)
+    // ─── 🔍 CONDITIONS 2 & 3 : Impulsion de Bougie 1 et Puissance du Corps de Bougie 2 ───
     let respecteTaille = true;
     let moyRangeHist = 0;
     let moyCorpsHist = 0;
@@ -227,10 +255,10 @@ export function calculerLiquidationReintegration(
         moyRangeHist = sommeRanges / nbBougiesHist;
         moyCorpsHist = sommeCorps / nbBougiesHist;
 
-        // Bougie 1 : toute la bougie entière (corps + mèches) >= multiplicateur x moyenne des tailles
+        // CONDITION 2 : Bougie 1 entière (corps + mèches) >= multiplicateurBougie1 x moyenne (défaut: 1.75x)
         const bougie1AssezGrande = range1 >= (multiplicateurBougie1 * moyRangeHist);
 
-        // Bougie 2 : uniquement le corps pur (sans mèches) >= multiplicateur x moyenne des corps
+        // CONDITION 3 : Bougie 2 corps pur >= multiplicateurCorps2 x moyenne des corps (défaut: 1.75x)
         const bougie2AssezGrande = corps2 >= (multiplicateurCorps2 * moyCorpsHist);
 
         respecteTaille = bougie1AssezGrande && bougie2AssezGrande;
