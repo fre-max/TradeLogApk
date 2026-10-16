@@ -36,7 +36,7 @@ import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.19.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.20.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4547,7 +4547,7 @@ return {
     nom: 'Liq/Reint + Liquidité Shved la Plus Forte (MTF)',
     description: 'Quand le Doji personnalisé (Liq/Reint = Spring / UTAD) se forme, identifie tous les supports / résistances Shved balayés par sa mèche et retient le PLUS FORT (le plus retesté avant le pattern). Affiche la force du niveau et la liquidité totale récupérée. Segment en ligne discontinue.',
     auteur: 'TradeLog Institutional',
-    version: '1.1.0',
+    version: '1.2.0',
     type: 'overlay',
     actif: true,
     visibleSurGraphique: true,
@@ -4561,6 +4561,9 @@ return {
       minRetests: 1,
       afficherFaibles: false,
       exigerNiveauBalaye: true,
+      afficherNiveauxShved: true,
+      afficherNiveauxCasses: true,
+      afficherTousDojis: true,
       toleranceDeficit: 0.05,
       toleranceDepassement: 0.25,
       activerFiltreTaille: true,
@@ -4688,6 +4691,30 @@ return {
         type: 'string',
         valeurParDefaut: '#F23645',
         groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherNiveauxShved',
+        label: 'Afficher les Supports & Résistances Shved',
+        description: 'Trace sur le graphique tous les supports et résistances Shved pour visualiser les niveaux de liquidité environnants',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: "Vision d'Ensemble & Contexte",
+      },
+      {
+        cle: 'afficherNiveauxCasses',
+        label: 'Afficher les Niveaux Shved Cassés',
+        description: 'Affiche également les niveaux Shved déjà franchis (en traits pointillés discrets)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: "Vision d'Ensemble & Contexte",
+      },
+      {
+        cle: 'afficherTousDojis',
+        label: 'Afficher Tous les Dojis (même sans S/R)',
+        description: 'Affiche tous les signaux de chandelier Liq/Reint (Spring/UTAD) pour repérer ceux qui n\'ont pas balayé de niveau Shved',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: "Vision d'Ensemble & Contexte",
       },
     ],
     creeLe: '2026-10-16T00:00:00.000Z',

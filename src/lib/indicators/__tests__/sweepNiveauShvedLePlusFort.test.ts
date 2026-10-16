@@ -122,4 +122,42 @@ describe('Indicateur Doji Liq/Reint + Liquidité Shved la Plus Forte', () => {
     expect(res?.primitives).toBeDefined();
     expect(res?.typeSpecial).toBe('liq-sweep-shved-plus-fort');
   });
+
+  it('affiche les niveaux Shved en arrière-plan et les Dojis seuls pour la vision d\'ensemble', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 15; k++) bougies.push(creerBougie(k * 1000, 100, 101, 99, 100));
+
+    // Création d'un support Shved
+    bougies.push(creerBougie(15000, 100, 101, 95.0, 96.0));
+    bougies.push(creerBougie(16000, 96.0, 102, 96.0, 101.0));
+    for (let k = 17; k < 23; k++) bougies.push(creerBougie(k * 1000, 101, 102, 100, 101));
+    // Retest
+    bougies.push(creerBougie(23000, 101, 102, 95.1, 98.0));
+    bougies.push(creerBougie(24000, 98.0, 103, 98.0, 102.0));
+    for (let k = 25; k < 35; k++) bougies.push(creerBougie(k * 1000, 101, 102, 100, 101));
+
+    // Doji haut dans le ciel (vers 105.0) qui ne touche PAS le support Shved (95.0)
+    bougies.push(creerBougie(35000, 101, 101, 96.0, 97.0)); // b1
+    bougies.push(creerBougie(36000, 97.0, 101.5, 97.0, 101.0)); // b2 réintègre sans balayer 95.0
+
+    const res = calculerSweepNiveauShvedLePlusFort(bougies, {
+      timeframeSource: 'ACTUEL',
+      periodeATR: 15,
+      zoneFuzzFactor: 0.1,
+      minRetests: 1,
+      exigerNiveauBalaye: true,
+      afficherNiveauxShved: true,
+      afficherTousDojis: true,
+    });
+
+    // Les lignes doivent contenir la ligne Shved de fond
+    const lignesFond = res.primitives.lignes?.filter((l) => l.id?.startsWith('bg-shved-'));
+    expect(lignesFond).toBeDefined();
+    expect(lignesFond!.length).toBeGreaterThanOrEqual(1);
+
+    // Les labels doivent inclure le Doji seul
+    const labelDojiSeul = res.primitives.labels?.find((l) => l.id?.startsWith('doji-seul-lbl-'));
+    expect(labelDojiSeul).toBeDefined();
+  });
 });
+

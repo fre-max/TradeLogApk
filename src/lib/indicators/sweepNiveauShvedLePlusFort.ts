@@ -48,7 +48,13 @@ export interface ParametresSweepNiveauShvedLePlusFort {
   activerFiltreTendance?: boolean;
   trendBars?: number;
 
-  // ─── 🎨 Affichage ───
+  // ─── 🎨 Vision d'Ensemble & Affichage ───
+  // Afficher tous les niveaux S/R Shved calculés en arrière-plan sur le graphique (défaut: true)
+  afficherNiveauxShved?: boolean;
+  // Afficher aussi les niveaux Shved déjà cassés en traits pointillés discrets (défaut: true)
+  afficherNiveauxCasses?: boolean;
+  // Afficher tous les Dojis personnalisés, même ceux sans niveau Shved balayé (défaut: true)
+  afficherTousDojis?: boolean;
   // Afficher le nombre de retests du niveau le plus fort sous/au-dessus du pattern (défaut: true)
   afficherForceDansLabel?: boolean;
   // Tracer aussi (en pointillés fins) les autres niveaux balayés, moins forts (défaut: false)
@@ -173,6 +179,9 @@ export function calculerSweepNiveauShvedLePlusFort(
   const minRetests = Math.max(1, Number(options.minRetests ?? 1));
   const exigerNiveauBalaye = options.exigerNiveauBalaye !== false;
   const afficherFaibles = Boolean(options.afficherFaibles);
+  const afficherNiveauxShved = options.afficherNiveauxShved !== false;
+  const afficherNiveauxCasses = options.afficherNiveauxCasses !== false;
+  const afficherTousDojis = options.afficherTousDojis !== false;
   const afficherForceDansLabel = options.afficherForceDansLabel !== false;
   const afficherAutresNiveaux = Boolean(options.afficherAutresNiveaux);
   const bullColor = options.bullColor || '#00E676';
@@ -284,7 +293,24 @@ export function calculerSweepNiveauShvedLePlusFort(
     });
 
     const niveauLePlusFort = niveauxBalayes.length > 0 ? niveauxBalayes[0] : null;
-    if (exigerNiveauBalaye && !niveauLePlusFort) continue;
+
+    // Si on exige un niveau balayé et qu'il n'y en a pas, on peut quand même afficher le Doji si demandé
+    if (!niveauLePlusFort) {
+      if (afficherTousDojis) {
+        // Étiquette discrète pour repérer le Doji seul sans niveau Shved balayé
+        const couleurNeutre = estAchat ? `${bullColor}77` : `${bearColor}77`;
+        labels.push({
+          id: `doji-seul-lbl-${i}`,
+          prix: prixExtreme,
+          date: bougie2.time,
+          texte: estAchat ? 'Spring' : 'UTAD',
+          couleur: couleurNeutre,
+          position: estAchat ? 'below' : 'above',
+        });
+      }
+
+      if (exigerNiveauBalaye) continue;
+    }
 
     // E. Quantité de liquidité récupérée = somme des retests de tous les niveaux balayés
     let liquiditeTotale = 0;
@@ -312,10 +338,10 @@ export function calculerSweepNiveauShvedLePlusFort(
       maxRetestsBalayes = Math.max(maxRetestsBalayes, niveauLePlusFort.retestsAvantPattern);
     }
 
-    // 6️⃣ Visuels
+    // 6️⃣ Visuels du Combo (Doji + Niveau Shved)
     const couleur = estAchat ? bullColor : bearColor;
 
-    // Étiquette du pattern, avec la force du niveau le plus fort (ex: "Liq/Reint\n5x")
+    // Étiquette du combo avec la force du niveau (ex: "Liq/Reint\n5x")
     let texte = texteLabel;
     if (afficherForceDansLabel && niveauLePlusFort) {
       texte = `${texteLabel}\n${niveauLePlusFort.retestsAvantPattern}x`;
@@ -341,7 +367,7 @@ export function calculerSweepNiveauShvedLePlusFort(
         dateDebut: niveauLePlusFort.zone.dateDebut,
         dateFin: bougie2.time,
         couleur,
-        epaisseur: 2,
+        epaisseur: 2.2,
         style: 'dashed',
       });
     }
@@ -360,6 +386,35 @@ export function calculerSweepNiveauShvedLePlusFort(
           style: 'dotted',
         });
       }
+    }
+  }
+
+  // 7️⃣ Vision d'Ensemble : Tracé des Supports & Résistances Shved en arrière-plan
+  if (afficherNiveauxShved) {
+    const derniereBougie = bougies[bougies.length - 1];
+    const dateDerniereBougie = derniereBougie ? derniereBougie.time : 0;
+    const toutesLesZones: ZoneShved[] = [...supports, ...resistances];
+
+    for (const zone of toutesLesZones) {
+      if (zone.retests < minRetests) continue;
+      if (zone.estFaible && !afficherFaibles) continue;
+      if (zone.estCassee && !afficherNiveauxCasses) continue;
+
+      const estSupport = zone.type === 'SUPPORT';
+      const couleurBase = estSupport ? bullColor : bearColor;
+      // Niveaux actifs en continu doux, niveaux cassés en pointillés discrets
+      const couleurFond = zone.estCassee ? `${couleurBase}44` : `${couleurBase}88`;
+      const dateFin = zone.estCassee ? zone.dateFin : dateDerniereBougie;
+
+      lignes.push({
+        id: `bg-shved-${zone.id}`,
+        prix: zone.prixMedian,
+        dateDebut: zone.dateDebut,
+        dateFin,
+        couleur: couleurFond,
+        epaisseur: zone.estCassee ? 1.0 : 1.3,
+        style: zone.estCassee ? 'dashed' : 'solid',
+      });
     }
   }
 
