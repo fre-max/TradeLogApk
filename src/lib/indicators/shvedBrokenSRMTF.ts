@@ -12,6 +12,11 @@ import {
  * Cet indicateur détecte et projette en Multi-Timeframe (MTF) les supports et
  * résistances institutionnels Shved (Supply & Demand).
  *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DU FILTRAGE DES NIVEAUX ?
+ *  👉 Le filtrage de chaque niveau est réuni dans une seule fonction booléenne :
+ *     `validerZoneShvedPourAffichage(params): boolean` (vers la ligne 125).
+ *     Ouvrez cette fonction pour ajuster directement les règles ou désactiver un filtre !
+ *
  * 🎯 LES 5 RÈGLES DE DÉTECTION & DE MODIFICATION POUR DÉVELOPPEUR JUNIOR :
  *
  * ─── RÈGLE 1 : Sommets & Creux Fractals ───────────────────────────────────────
@@ -24,12 +29,12 @@ import {
  *  • L'épaisseur de la zone dépend de `zoneFuzzFactor` (défaut: 0.1 = niveau très fin).
  *  👉 Pour élargir les zones : augmenter `zoneFuzzFactor` à 0.5 ou 0.75.
  *
- * ─── RÈGLE 3 : Retests Minima (Pas de niveau vierge) ──────────────────────────
+ * ─── RÈGLE 3 : Retests Minima (Pas de niveau vierge) (dans validerZoneShvedPourAffichage) ─
  *  • Seuls les niveaux ayant au moins `minRetests` (défaut: 1) sont conservés.
  *  👉 Pour afficher aussi les zones dès leur création : mettre `minRetests: 0`.
  *  👉 Pour n'avoir que des niveaux historiques majeurs : mettre `minRetests: 3`.
  *
- * ─── RÈGLE 4 : Classement Actif vs Cassé ──────────────────────────────────────
+ * ─── RÈGLE 4 : Classement Actif vs Cassé (dans validerZoneShvedPourAffichage) ───
  *  • NIVEAU ACTIF  : Aucune clôture de bougie au-delà -> Tracé en trait CONTINU (`solid`).
  *  • NIVEAU CASSÉ  : Une bougie a clôturé au-delà       -> Tracé en trait DISCONTINU (`dashed`).
  *  👉 Options : `afficherNonCasses: true` et `afficherCasses: true`.
@@ -115,6 +120,68 @@ export interface ResultatShvedBrokenSRMTF {
   timeframeSource: string;
 }
 
+// ─── 🎯 FONCTION CENTRALE DE VALIDATION DU NIVEAU SHVED (POUR LE DÉVELOPPEUR) ───
+
+/**
+ * Paramètres pour tester si une zone Shved doit être retenue et affichée.
+ */
+export interface ParametresValidationZoneShved {
+  zone: ZoneShved;
+  minRetests?: number;
+  afficherFaibles?: boolean;
+  afficherNonCasses?: boolean;
+  afficherCasses?: boolean;
+}
+
+/**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DU NIVEAU SHVED (POUR LE DÉVELOPPEUR DÉBUTANT)
+ * ==============================================================================
+ * Cette fonction unique rassemble dans UN SEUL BLOC toutes les conditions
+ * requises pour qu'un support ou une résistance Shved soit validé et affiché.
+ *
+ * 💡 COMMENT L'AJUSTER OU LA MODIFIER ?
+ *  • Pour désactiver un filtre : commentez la ligne `if (...) return false;`.
+ *  • Pour modifier le nombre minimal de retests : changez `minRetests`.
+ *  • Pour afficher aussi les zones faibles : mettez `afficherFaibles: true`.
+ *
+ * @returns {boolean} true si le niveau doit être affiché, false s'il doit être ignoré
+ */
+export function validerZoneShvedPourAffichage(params: ParametresValidationZoneShved): boolean {
+  const {
+    zone,
+    minRetests = 1,
+    afficherFaibles = false,
+    afficherNonCasses = true,
+    afficherCasses = true,
+  } = params;
+
+  // ─── 🔍 RÈGLE 1 : Exigence de Retests Minimaux ──────────────────────────────
+  // Élimine les zones vierges qui n'ont encore jamais été testées par le prix
+  if (zone.retests < minRetests) {
+    return false;
+  }
+
+  // ─── 🔍 RÈGLE 2 : Filtrage des Fractals Faibles (Bruit de marché) ───────────
+  // Si afficherFaibles est faux, on ne garde que les niveaux majeurs (fractals lents)
+  if (zone.estFaible && !afficherFaibles) {
+    return false;
+  }
+
+  // ─── 🔍 RÈGLE 3 : Statut Actif vs Cassé ──────────────────────────────────────
+  // Autorise ou filtre selon que l'on veut voir les niveaux vivants ou les cassés
+  const estCasse = zone.estCassee;
+  if (estCasse && !afficherCasses) {
+    return false;
+  }
+  if (!estCasse && !afficherNonCasses) {
+    return false;
+  }
+
+  // ✅ Toutes les conditions sont satisfaites : niveau validé !
+  return true;
+}
+
 // ─── 🚀 Fonction Principale de Calcul ────────────────────────────────────────
 
 /**
@@ -197,17 +264,18 @@ export function calculerShvedBrokenSRMTF(
 
   // 3️⃣ Filtrage et classement de chaque zone
   for (const zone of toutesLesZones) {
-    // ─── 🔍 RÈGLE 3 : Exigence de retests (élimine les niveaux vierges sans liquidité) ───
-    if (zone.retests < minRetests) continue;
+    // ─── 🎯 VÉRIFICATION DES CONDITIONS DU NIVEAU (FONCTION UNIQUE ET CENTRALISÉE) ───
+    const estValide = validerZoneShvedPourAffichage({
+      zone,
+      minRetests,
+      afficherFaibles,
+      afficherNonCasses,
+      afficherCasses,
+    });
 
-    // ─── 🔍 RÈGLE 1 : Filtrage des fractals faibles (masque le bruit mineur si désactivé) ───
-    if (zone.estFaible && !afficherFaibles) continue;
+    if (!estValide) continue;
 
-    // ─── 🔍 RÈGLE 4 : Tri selon le statut Actif vs Cassé ───
     const estCasse = zone.estCassee;
-    if (estCasse && !afficherCasses) continue;
-    if (!estCasse && !afficherNonCasses) continue;
-
     const estSupport = zone.type === 'SUPPORT';
 
     let typeNiveau: BrokenSRNiveau['type'];

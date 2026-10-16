@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { Bougie } from '@/lib/chartDataHelper';
-import { calculerSweepNiveauShvedLePlusFort } from '../sweepNiveauShvedLePlusFort';
+import {
+  calculerSweepNiveauShvedLePlusFort,
+  validerSetupNiveauShved,
+} from '../sweepNiveauShvedLePlusFort';
 
 function creerBougie(
   time: number,
@@ -158,6 +161,61 @@ describe('Indicateur Doji Liq/Reint + Liquidité Shved la Plus Forte', () => {
     // Les labels doivent inclure le Doji seul
     const labelDojiSeul = res.primitives.labels?.find((l) => l.id?.startsWith('doji-seul-lbl-'));
     expect(labelDojiSeul).toBeDefined();
+  });
+
+  it('valide ou refuse un setup via la fonction centrale validerSetupNiveauShved', () => {
+    // Création d'une fausse zone de support Shved
+    const zoneSupport = {
+      id: 'support-1',
+      type: 'SUPPORT' as const,
+      prixHaut: 100.5,
+      prixBas: 99.5,
+      prixMedian: 100.0,
+      estCassee: false,
+      estFaible: false,
+      force: 'VERIFIED' as const,
+      indexOrigine: 5,
+      retests: 2,
+      dateDebut: 1000,
+      dateFin: 10000,
+      datesTouches: [2000, 3000],
+    };
+
+    // Cas 1 : La mèche passe sous 100.0 (low = 99.0) et la clôture revient au-dessus (close = 100.5)
+    // avec 2 retests avant tempsBougie1 (5000) -> doit être VALIDÉ (true)
+    const valide = validerSetupNiveauShved({
+      estAchat: true,
+      prixExtreme: 99.0,
+      clotureBougie2: 100.5,
+      tempsBougie1: 5000,
+      zone: zoneSupport,
+      minRetests: 1,
+      maxBarsAge: 100,
+      pasTempsSec: 60,
+    });
+    expect(valide).toBe(true);
+
+    // Cas 2 : La mèche ne traverse PAS le support (low = 100.2 > 100.0) -> REFUSÉ (false)
+    const nonBalaye = validerSetupNiveauShved({
+      estAchat: true,
+      prixExtreme: 100.2,
+      clotureBougie2: 100.5,
+      tempsBougie1: 5000,
+      zone: zoneSupport,
+      minRetests: 1,
+    });
+    expect(nonBalaye).toBe(false);
+
+    // Cas 3 : Exigence de 3 retests alors que le niveau n'en a que 2 -> REFUSÉ (false)
+    const tropPeuRetests = validerSetupNiveauShved({
+      estAchat: true,
+      prixExtreme: 99.0,
+      clotureBougie2: 100.5,
+      tempsBougie1: 5000,
+      zone: zoneSupport,
+      minRetests: 3,
+    });
+    expect(tropPeuRetests).toBe(false);
   });
 });
 

@@ -14,9 +14,15 @@ import { calculerLiquidationReintegration } from './liquidationReintegration';
  *  1. Le chandelier "Doji personnalisé" (Liquidation & Réintégration = Spring / UTAD)
  *  2. Les niveaux institutionnels "Shved Supply & Demand" (Supports / Résistances)
  *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 TOUTES les conditions Shved sont rassemblées dans une seule fonction booléenne :
+ *     `validerSetupNiveauShved(params): boolean` (vers la ligne 190).
+ *     Ouvrez cette fonction pour activer/désactiver/ajuster n'importe quelle règle !
+ *
  * 🎯 POUR QU'UN SETUP COMPLET (COMBO) SOIT VALIDÉ, IL DOIT RESPECTER 5 CONDITIONS :
  *
  * ─── CONDITION 1 : Formation du Doji Personnalisé (2 bougies consécutives) ────
+ *  • Gérée par `calculerLiquidationReintegration()` dans `liquidationReintegration.ts`.
  *  • Bougie 1 (Liquidation) : Bougie impulsive dans le sens du piège (baissière
  *    pour Spring, haussière pour UTAD). Sa taille totale (haut - bas) doit être
  *    au moins `multiplicateurBougie1` fois la moyenne récente (défaut: 1.75x).
@@ -27,28 +33,27 @@ import { calculerLiquidationReintegration } from './liquidationReintegration';
  *    - Si elle reste en deçà (déficit)  : marge max `toleranceDeficit` (défaut: 5%).
  *  👉 Pour assouplir : baisser `multiplicateurBougie1` et `multiplicateurCorps2` à 1.2
  *
- * ─── CONDITION 2 : Balayage du Niveau Shved par la Mèche ─────────────────────
+ * ─── CONDITION 2 : Balayage du Niveau Shved par la Mèche (dans validerSetupNiveauShved) ───
  *  • Pour un Achat (Spring) : La mèche basse extrême (min(Low1, Low2)) doit plonger
  *    sous le support Shved, ET la clôture de la Bougie 2 doit revenir au-dessus.
  *  • Pour une Vente (UTAD)  : La mèche haute extrême (max(High1, High2)) doit percer
  *    au-dessus de la résistance Shved, ET la clôture de la Bougie 2 doit revenir en dessous.
  *
- * ─── CONDITION 3 : Intégrité du Niveau Shved (Non cassé au préalable) ─────────
+ * ─── CONDITION 3 : Intégrité du Niveau Shved (dans validerSetupNiveauShved) ────
  *  • Le niveau de liquidité devait être intact à l'arrivée du Doji. Si une bougie
  *    antérieure a déjà clôturé au-delà du niveau, celui-ci était déjà consommé.
- *  👉 Modifiable via la fonction : `estNiveauEncoreDisponible()`
  *
- * ─── CONDITION 4 : Retests Minima du Niveau AVANT le Pattern ─────────────────
- *  • Le niveau doit avoir été retesté au moins `minRetests` fois (défaut: 1).
- *  • Les retests sont comptés STRICTEMENT avant la Bougie 1 (sans biais futuriste).
- *  👉 Pour accepter les zones neuves sans rebond : mettre `minRetests: 0`
- *  👉 Pour n'avoir que les zones blindées        : mettre `minRetests: 3`
- *
- * ─── CONDITION 5 : Fraîcheur & Âge Récent du Niveau ──────────────────────────
+ * ─── CONDITION 4 : Fraîcheur & Âge Récent du Niveau (dans validerSetupNiveauShved) ──
  *  • Le niveau ne doit pas avoir été créé il y a plus de `lookbackMaxBarsAvantPattern`
  *    bougies avant le Doji (défaut: 100 bougies, 0 = illimité).
  *  • L'historique global analysé est borné à `maxLookbackBars` (défaut: 200 bougies).
  *  👉 Pour autoriser des niveaux plus anciens : augmenter `lookbackMaxBarsAvantPattern: 300`
+ *
+ * ─── CONDITION 5 : Retests Minima du Niveau AVANT le Doji (dans validerSetupNiveauShved) ─
+ *  • Le niveau doit avoir été retesté au moins `minRetests` fois (défaut: 1).
+ *  • Les retests sont comptés STRICTEMENT avant la Bougie 1 (sans biais futuriste).
+ *  👉 Pour accepter les zones neuves sans rebond : mettre `minRetests: 0`
+ *  👉 Pour n'avoir que les zones blindées        : mettre `minRetests: 3`
  * ==============================================================================
  */
 
@@ -186,6 +191,113 @@ function estNiveauEncoreDisponible(zone: ZoneShved, tempsBougie1: number): boole
   return convertirEnSecondes(zone.dateFin) >= tempsBougie1;
 }
 
+// ─── 🎯 FONCTION CENTRALE DE VALIDATION DU SETUP (POUR LE DÉVELOPPEUR) ──────
+
+/**
+ * Paramètres nécessaires pour tester la validité d'un niveau Shved face à un Doji.
+ */
+export interface ParametresValidationSetupShved {
+  estAchat: boolean;
+  prixExtreme: number;
+  clotureBougie2: number;
+  tempsBougie1: number;
+  zone: ZoneShved;
+  minRetests?: number;
+  maxBarsAge?: number;
+  pasTempsSec?: number;
+}
+
+/**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DU SETUP (POUR LE DÉVELOPPEUR DÉBUTANT)
+ * ==============================================================================
+ * Cette fonction unique rassemble dans UN SEUL BLOC toutes les conditions
+ * nécessaires pour qu'un niveau Shved soit validé par le Doji personnalisé.
+ *
+ * 💡 COMMENT L'AJUSTER OU LA MODIFIER ?
+ *  • Pour désactiver une condition : commentez simplement son bloc `if (...) return false;`.
+ *  • Pour assouplir une règle : modifiez les opérateurs (<, >) ou les valeurs de comparaison.
+ *  • Pour ajouter une nouvelle règle : ajoutez votre `if (!maCondition) return false;`.
+ *
+ * Exemple d'utilisation :
+ * ```typescript
+ * const estValide = validerSetupNiveauShved({
+ *   estAchat: true,
+ *   prixExtreme: 1.0820,
+ *   clotureBougie2: 1.0850,
+ *   tempsBougie1: 1791936000,
+ *   zone: supportShved,
+ *   minRetests: 1,
+ *   maxBarsAge: 100,
+ *   pasTempsSec: 900
+ * });
+ * console.log('Le setup est-il validé ?', estValide); // true ou false
+ * ```
+ *
+ * @returns {boolean} true si le niveau respecte TOUTES les conditions du setup, false sinon
+ */
+export function validerSetupNiveauShved(params: ParametresValidationSetupShved): boolean {
+  const {
+    estAchat,
+    prixExtreme,
+    clotureBougie2,
+    tempsBougie1,
+    zone,
+    minRetests = 1,
+    maxBarsAge = 100,
+    pasTempsSec = 3600,
+  } = params;
+
+  const prixNiveau = zone.prixMedian;
+
+  // ─── 🔍 CONDITION 1 : Balayage par la mèche et réintégration par la clôture ───
+  // • Pour un Achat (Spring) : la mèche doit plonger SOUS le support (< prixNiveau)
+  //   ET la clôture de la bougie 2 doit revenir AU-DESSUS (> prixNiveau).
+  // • Pour une Vente (UTAD)  : la mèche doit percer AU-DESSUS de la résistance (> prixNiveau)
+  //   ET la clôture de la bougie 2 doit revenir EN DESSOUS (< prixNiveau).
+  const estBalaye = estAchat
+    ? prixExtreme < prixNiveau && clotureBougie2 > prixNiveau
+    : prixExtreme > prixNiveau && clotureBougie2 < prixNiveau;
+
+  if (!estBalaye) {
+    // ❌ Échoué : Le prix n'a pas balayé le niveau avec réintégration immédiate
+    return false;
+  }
+
+  // ─── 🔍 CONDITION 2 : Intégrité du niveau (non cassé avant le Doji) ───────────
+  // Le niveau Shved devait être intact au moment où le Doji s'est formé.
+  // Si une bougie antérieure a déjà clôturé au-delà, la liquidité a déjà été consommée.
+  const estDisponible = estNiveauEncoreDisponible(zone, tempsBougie1);
+  if (!estDisponible) {
+    // ❌ Échoué : Le niveau a été cassé dans le passé avant l'arrivée du Doji
+    return false;
+  }
+
+  // ─── 🔍 CONDITION 3 : Fraîcheur & Âge récent du niveau ─────────────────────────
+  // Évite de réagir à des niveaux créés trop loin dans le passé.
+  // Si maxBarsAge = 0, cette règle est ignorée (historique illimité).
+  if (maxBarsAge > 0) {
+    const ageSec = tempsBougie1 - convertirEnSecondes(zone.dateDebut);
+    const ageBougies = ageSec / Math.max(1, pasTempsSec);
+    if (ageBougies > maxBarsAge) {
+      // ❌ Échoué : Le niveau est trop ancien (dépasse maxBarsAge bougies)
+      return false;
+    }
+  }
+
+  // ─── 🔍 CONDITION 4 : Retests minimaux survenus AVANT le Doji ─────────────────
+  // Ne conserve que les niveaux prouvés qui ont été testés au moins `minRetests` fois.
+  // Les retests postérieurs au Doji sont strictement ignorés pour éviter tout biais futur.
+  const retestsAvant = compterRetestsAvant(zone, tempsBougie1);
+  if (retestsAvant < minRetests) {
+    // ❌ Échoué : Le niveau n'a pas encore assez de retests prouvés
+    return false;
+  }
+
+  // ✅ TOUTES les conditions sont satisfaites : le setup est validé !
+  return true;
+}
+
 // ─── 🚀 Fonction Principale ───────────────────────────────────────────────────
 
 /**
@@ -296,34 +408,27 @@ export function calculerSweepNiveauShvedLePlusFort(
     const niveauxBalayes: NiveauShvedBalaye[] = [];
 
     for (const zone of zonesCandidates) {
-      const prixNiveau = zone.prixMedian;
+      // ─── 🎯 VÉRIFICATION DES CONDITIONS DU SETUP (FONCTION UNIQUE ET CENTRALISÉE) ───
+      const setupValide = validerSetupNiveauShved({
+        estAchat,
+        prixExtreme,
+        clotureBougie2: bougie2.close,
+        tempsBougie1,
+        zone,
+        minRetests,
+        maxBarsAge,
+        pasTempsSec,
+      });
 
-      // ─── 🔍 CONDITION 2 : Balayage du niveau par la mèche et réintégration par la clôture ───
-      // Pour Spring : mèche sous le support et clôture au-dessus. Pour UTAD : mèche au-dessus et clôture en dessous.
-      const estBalaye = estAchat
-        ? prixExtreme < prixNiveau && bougie2.close > prixNiveau
-        : prixExtreme > prixNiveau && bougie2.close < prixNiveau;
-      if (!estBalaye) continue;
+      // Si l'une des conditions a échoué dans la fonction, on ignore ce niveau
+      if (!setupValide) continue;
 
-      // ─── 🔍 CONDITION 3 : Intégrité du niveau Shved (aucune bougie n'a clôturé au-delà avant le Doji) ───
-      if (!estNiveauEncoreDisponible(zone, tempsBougie1)) continue;
-
-      // ─── 🔍 CONDITION 5 : Âge récent du niveau (exclut les niveaux nés trop loin avant le Doji) ───
-      if (maxBarsAge > 0) {
-        const ageSec = tempsBougie1 - convertirEnSecondes(zone.dateDebut);
-        const ageBougies = ageSec / pasTempsSec;
-        if (ageBougies > maxBarsAge) continue;
-      }
-
-      // ─── 🔍 CONDITION 4 : Retests minimaux survenus STRICTEMENT avant la bougie 1 ───
       const retestsAvantPattern = compterRetestsAvant(zone, tempsBougie1);
-      if (retestsAvantPattern < minRetests) continue;
-
       niveauxBalayes.push({
         zone,
-        prix: prixNiveau,
+        prix: zone.prixMedian,
         retestsAvantPattern,
-        profondeur: Math.abs(prixNiveau - prixExtreme),
+        profondeur: Math.abs(zone.prixMedian - prixExtreme),
       });
     }
 
