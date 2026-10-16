@@ -1,0 +1,123 @@
+{
+  "nom": "Liq/Reint + Liquidité Shved la Plus Forte (MTF)",
+  "description": "Quand le Doji personnalisé (Liq/Reint = Spring / UTAD) se forme, identifie tous les supports / résistances Shved balayés par sa mèche et retient le PLUS FORT (le plus retesté avant le pattern). Affiche la force du niveau et la liquidité totale récupérée. Segment en ligne discontinue.",
+  "auteur": "TradeLog Institutional",
+  "version": "1.0.0",
+  "type": "overlay",
+  "parametres": {
+    "timeframeSource": "M15",
+    "periodeATR": 15,
+    "zoneFuzzFactor": 0.1,
+    "maxLookbackBars": 800,
+    "minRetests": 1,
+    "afficherFaibles": false,
+    "exigerNiveauBalaye": true,
+    "toleranceDeficit": 0.05,
+    "toleranceDepassement": 0.25,
+    "activerFiltreTaille": true,
+    "periodeHistorique": 10,
+    "multiplicateurBougie1": 1.75,
+    "multiplicateurCorps2": 1.75,
+    "activerAchat": true,
+    "activerVente": true,
+    "activerFiltreTendance": false,
+    "trendBars": 5,
+    "afficherForceDansLabel": true,
+    "afficherAutresNiveaux": false,
+    "bullColor": "#00E676",
+    "bearColor": "#F23645",
+    "texteLabel": "Liq/Reint"
+  },
+  "definitionsVariables": [
+    {
+      "cle": "timeframeSource",
+      "label": "Unité de Temps des Niveaux (MTF)",
+      "description": "Unité de temps sur laquelle les niveaux Shved sont calculés puis projetés sur le graphique",
+      "type": "select",
+      "valeurParDefaut": "M15",
+      "options": [
+        { "label": "Graphique Actuel", "value": "ACTUEL" },
+        { "label": "M5 (5 minutes)", "value": "M5" },
+        { "label": "M15 (15 minutes)", "value": "M15" },
+        { "label": "M30 (30 minutes)", "value": "M30" },
+        { "label": "H1 (1 heure)", "value": "H1" },
+        { "label": "H4 (4 heures)", "value": "H4" }
+      ],
+      "groupe": "Multi-Timeframe (MTF)"
+    },
+    {
+      "cle": "periodeATR",
+      "label": "Période ATR",
+      "description": "Période de l'ATR servant à dimensionner chaque niveau Shved",
+      "type": "number",
+      "valeurParDefaut": 15,
+      "min": 3,
+      "max": 50,
+      "step": 1,
+      "groupe": "Paramètres Shved"
+    },
+    {
+      "cle": "zoneFuzzFactor",
+      "label": "Zone Fuzz Factor",
+      "description": "Épaisseur de la zone en fraction d'ATR (0.1 = niveaux très fins)",
+      "type": "number",
+      "valeurParDefaut": 0.1,
+      "min": 0.05,
+      "max": 2,
+      "step": 0.05,
+      "groupe": "Paramètres Shved"
+    },
+    {
+      "cle": "minRetests",
+      "label": "Retests Minimum avant le Pattern",
+      "description": "Un niveau n'est retenu que s'il a été retesté au moins ce nombre de fois AVANT le Doji",
+      "type": "number",
+      "valeurParDefaut": 1,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "groupe": "Règles de Liquidité"
+    },
+    {
+      "cle": "exigerNiveauBalaye",
+      "label": "Exiger un Niveau Balayé",
+      "description": "N'affiche le pattern que s'il a balayé au moins un niveau Shved",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Règles de Liquidité"
+    },
+    {
+      "cle": "afficherForceDansLabel",
+      "label": "Afficher la Force du Niveau",
+      "description": "Ajoute sous le pattern le nombre de retests du niveau le plus fort (ex: 5x) et le nombre de niveaux balayés",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "afficherAutresNiveaux",
+      "label": "Afficher les Autres Niveaux Balayés",
+      "description": "Trace en pointillés fins les niveaux balayés moins forts",
+      "type": "boolean",
+      "valeurParDefaut": false,
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bullColor",
+      "label": "Couleur Signal Achat (Spring)",
+      "description": "Couleur du Spring et de son niveau balayé",
+      "type": "string",
+      "valeurParDefaut": "#00E676",
+      "groupe": "Visuels & Graphique"
+    },
+    {
+      "cle": "bearColor",
+      "label": "Couleur Signal Vente (UTAD)",
+      "description": "Couleur de l'UTAD et de son niveau balayé",
+      "type": "string",
+      "valeurParDefaut": "#F23645",
+      "groupe": "Visuels & Graphique"
+    }
+  ],
+  "code": "return {\n  calculer: function(contexte) {\n    const { bougies, parametres, donneesM1, timeframe } = contexte;\n    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };\n\n    const res = calculerSweepNiveauShvedLePlusFort(bougies, {\n      ...parametres,\n      donneesM1: donneesM1,\n      chartTimeframe: timeframe\n    });\n\n    return {\n      donnees: res,\n      primitives: res.primitives,\n      typeSpecial: 'liq-sweep-shved-plus-fort'\n    };\n  }\n};"
+}

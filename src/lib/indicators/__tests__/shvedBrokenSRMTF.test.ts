@@ -158,6 +158,47 @@ describe('Indicateur Shved Broken S/R MTF', () => {
     expect(resultat.primitives.boites).toHaveLength(0);
   });
 
+  it('distingue les niveaux actifs (trait continu solid) et cassés (trait discontinu dashed)', () => {
+    const bougies: Bougie[] = [];
+
+    // Base neutre suffisante pour amorcer l'ATR et le slowFactor (8 bougies)
+    for (let k = 0; k < 8; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 99, 101));
+    }
+
+    // Creux support à 95.0 (index 8)
+    bougies.push(creerBougie(8000, 101, 102, 95.0, 96.0));
+    bougies.push(creerBougie(9000, 96.0, 103, 96.0, 102.0));
+
+    // Période intermédiaire (au moins 6 bougies pour respecter minBougiesEntreTouches)
+    for (let k = 10; k < 18; k++) {
+      bougies.push(creerBougie(k * 1000, 101, 103, 100, 102));
+    }
+
+    // Retest du support qui touche exactement le creux 95.0 (index 18)
+    bougies.push(creerBougie(18000, 102, 103, 95.0, 98.0));
+    bougies.push(creerBougie(19000, 98.0, 104, 98.0, 103.0));
+
+    // Le prix monte et le support reste intact (jamais cassé)
+    for (let k = 20; k < 35; k++) {
+      bougies.push(creerBougie(k * 1000, 103, 106, 102, 105));
+    }
+
+    const resultat = calculerShvedBrokenSRMTF(bougies, {
+      timeframeSource: 'ACTUEL',
+      periodeATR: 5,
+      zoneFuzzFactor: 0.5,
+      minRetests: 1,
+    });
+
+    expect(resultat.supportsActifs.length).toBeGreaterThanOrEqual(1);
+    expect(resultat.supportsCasses).toHaveLength(0);
+
+    const ligne = resultat.primitives.lignes?.find((l) => l.style === 'solid');
+    expect(ligne).toBeDefined();
+    expect(ligne?.style).toBe('solid'); // Niveau actif en trait continu
+  });
+
   it('s\'exécute avec succès via evaluerIndicateurScript depuis INDICATEURS_PAR_DEFAUT', async () => {
     const { INDICATEURS_PAR_DEFAUT, evaluerIndicateurScript } = await import('../indicatorEngine');
     const scriptDef = INDICATEURS_PAR_DEFAUT.find(

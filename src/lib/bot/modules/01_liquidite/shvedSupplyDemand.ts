@@ -37,6 +37,9 @@ export interface ZoneShved {
   dateDebut: number | string;     // Horodatage de création
   dateFin: number | string;       // Horodatage de fin (dernière bougie ou moment de cassure)
   indexCassure?: number;          // Index de la bougie de cassure si rompue
+  // Horodatages de chaque retest comptabilisé (permet de compter les retests AVANT un instant donné,
+  // sans regarder le futur). Exemple : [1727190000, 1727205000]
+  datesTouches?: (number | string)[];
 }
 
 /**
@@ -280,6 +283,7 @@ export function calculerShvedSupplyDemand(
       let indexDerniereTouche = i;
       let indexCassure = totalCalcul - 1;
       let dateFin: number | string = dateFinDefaut;
+      const datesTouches: (number | string)[] = [];
 
       // Évolution temporelle de la zone depuis sa création jusqu'au présent
       for (let k = i + 1; k < totalCalcul; k++) {
@@ -290,6 +294,7 @@ export function calculerShvedSupplyDemand(
           if (k - indexDerniereTouche >= minBougiesEntreTouches) {
             testCount++;
             indexDerniereTouche = k;
+            datesTouches.push(b.time); // On mémorise QUAND le retest a eu lieu
           }
         }
 
@@ -333,6 +338,7 @@ export function calculerShvedSupplyDemand(
         dateDebut: bougiesCalcul[i].time,
         dateFin,
         indexCassure: estCassee ? indexCassure : undefined,
+        datesTouches,
       });
     }
 
@@ -354,6 +360,7 @@ export function calculerShvedSupplyDemand(
       let indexDerniereTouche = i;
       let indexCassure = totalCalcul - 1;
       let dateFin: number | string = dateFinDefaut;
+      const datesTouches: (number | string)[] = [];
 
       // Évolution temporelle de la zone
       for (let k = i + 1; k < totalCalcul; k++) {
@@ -364,6 +371,7 @@ export function calculerShvedSupplyDemand(
           if (k - indexDerniereTouche >= minBougiesEntreTouches) {
             testCount++;
             indexDerniereTouche = k;
+            datesTouches.push(b.time); // On mémorise QUAND le retest a eu lieu
           }
         }
 
@@ -403,6 +411,7 @@ export function calculerShvedSupplyDemand(
         dateDebut: bougiesCalcul[i].time,
         dateFin,
         indexCassure: estCassee ? indexCassure : undefined,
+        datesTouches,
       });
     }
   }
@@ -423,6 +432,10 @@ export function calculerShvedSupplyDemand(
       let totalRetests = zA.retests;
       let dateDebutFusion = zA.dateDebut;
       let forceFusion = zA.force;
+      let estCasseeFusion = zA.estCassee;
+      let dateFinFusion = zA.dateFin;
+      let indexCassureFusion = zA.indexCassure;
+      const datesTouchesFusion: (number | string)[] = [...(zA.datesTouches || [])];
       traitees.add(zA.id);
 
       for (let b = a + 1; b < zonesCandidates.length; b++) {
@@ -440,6 +453,12 @@ export function calculerShvedSupplyDemand(
           prixHautFusion = Math.max(prixHautFusion, zB.prixHaut);
           prixBasFusion = Math.min(prixBasFusion, zB.prixBas);
           totalRetests += zB.retests;
+          datesTouchesFusion.push(...(zB.datesTouches || []));
+          if (zB.estCassee) {
+            estCasseeFusion = true;
+            dateFinFusion = zB.dateFin;
+            indexCassureFusion = zB.indexCassure;
+          }
           traitees.add(zB.id);
 
           if (totalRetests > 3) forceFusion = 'PROVEN';
@@ -455,6 +474,10 @@ export function calculerShvedSupplyDemand(
         retests: totalRetests,
         force: forceFusion,
         dateDebut: dateDebutFusion,
+        dateFin: dateFinFusion,
+        estCassee: estCasseeFusion,
+        indexCassure: indexCassureFusion,
+        datesTouches: datesTouchesFusion,
       });
     }
     zonesFinales = fusionnees;

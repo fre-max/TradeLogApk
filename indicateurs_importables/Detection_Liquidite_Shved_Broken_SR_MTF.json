@@ -1,17 +1,19 @@
 {
-  "nom": "Détection de Liquidité : Shved S/R Cassés (MTF)",
-  "description": "Détecte les Supports et Résistances Shved cassés ayant subi au moins un retest préalable (non vierges). Calculé sur unité de temps inférieure (ex: M15) et projeté sur le graphique actuel (ex: H4) sous forme de segments horizontaux en trait discontinu (dashed). Aucune boîte rectangulaire.",
+  "nom": "Détection de Liquidité : Shved S/R Actifs & Cassés (MTF)",
+  "description": "Affiche les Supports et Résistances Shved retestés au moins une fois (jamais de niveau vierge) : niveaux ACTIFS en trait continu, niveaux CASSÉS en trait discontinu. Calculé sur une unité de temps inférieure (ex: M15) et projeté sur le graphique actuel (ex: H4). Sans texte ni rectangle.",
   "auteur": "Shved / TradeLog Institutional",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "overlay",
   "parametres": {
     "timeframeSource": "M15",
     "minRetests": 1,
-    "prolongerVersLePresent": true,
+    "afficherNonCasses": true,
+    "afficherCasses": true,
+    "prolongerVersLePresent": false,
     "afficherFaibles": false,
     "afficherEtiquettes": false,
-    "periodeATR": 7,
-    "zoneFuzzFactor": 0.75,
+    "periodeATR": 15,
+    "zoneFuzzFactor": 0.1,
     "maxLookbackBars": 800,
     "bullColor": "#10b981",
     "bearColor": "#ef4444"
@@ -36,22 +38,60 @@
       "groupe": "Multi-Timeframe (MTF)"
     },
     {
+      "cle": "periodeATR",
+      "label": "Période ATR",
+      "description": "Période de l'ATR servant à dimensionner chaque niveau Shved",
+      "type": "number",
+      "valeurParDefaut": 15,
+      "min": 3,
+      "max": 50,
+      "step": 1,
+      "groupe": "Paramètres Shved"
+    },
+    {
+      "cle": "zoneFuzzFactor",
+      "label": "Zone Fuzz Factor",
+      "description": "Épaisseur de la zone en fraction d'ATR (0.1 = niveaux très fins et précis)",
+      "type": "number",
+      "valeurParDefaut": 0.1,
+      "min": 0.05,
+      "max": 2,
+      "step": 0.05,
+      "groupe": "Paramètres Shved"
+    },
+    {
       "cle": "minRetests",
       "label": "Nombre Minimum de Retests",
-      "description": "Exige au moins ce nombre de retests avant cassure (ignore strictement les niveaux vierges sans retest)",
+      "description": "Exige au moins ce nombre de retests (ignore strictement les niveaux vierges sans retest)",
       "type": "number",
       "valeurParDefaut": 1,
       "min": 1,
       "max": 10,
       "step": 1,
-      "groupe": "Filtrage des Niveaux Cassés"
+      "groupe": "Filtrage des Niveaux"
+    },
+    {
+      "cle": "afficherNonCasses",
+      "label": "Afficher les Niveaux Actifs",
+      "description": "Supports / résistances jamais clôturés au-delà (trait continu)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtrage des Niveaux"
+    },
+    {
+      "cle": "afficherCasses",
+      "label": "Afficher les Niveaux Cassés",
+      "description": "Supports / résistances clôturés au-delà (trait discontinu)",
+      "type": "boolean",
+      "valeurParDefaut": true,
+      "groupe": "Filtrage des Niveaux"
     },
     {
       "cle": "prolongerVersLePresent",
-      "label": "Prolonger jusqu'à la bougie courante",
-      "description": "Prolonge le segment discontinu du niveau cassé jusqu'à la dernière bougie du graphique",
+      "label": "Prolonger les Niveaux Cassés",
+      "description": "Prolonge le trait discontinu des niveaux cassés jusqu'à la bougie courante (sinon il s'arrête à la cassure)",
       "type": "boolean",
-      "valeurParDefaut": true,
+      "valeurParDefaut": false,
       "groupe": "Visuels & Segments"
     },
     {
@@ -60,7 +100,7 @@
       "description": "Inclut les niveaux issus de fractals secondaires / faibles",
       "type": "boolean",
       "valeurParDefaut": false,
-      "groupe": "Filtrage des Niveaux Cassés"
+      "groupe": "Filtrage des Niveaux"
     },
     {
       "cle": "afficherEtiquettes",
@@ -72,16 +112,16 @@
     },
     {
       "cle": "bullColor",
-      "label": "Couleur Support Cassé",
-      "description": "Couleur du segment horizontal discontinu pour un support cassé",
+      "label": "Couleur des Supports",
+      "description": "Couleur des supports (continu = actif, discontinu = cassé)",
       "type": "string",
       "valeurParDefaut": "#10b981",
       "groupe": "Visuels & Segments"
     },
     {
       "cle": "bearColor",
-      "label": "Couleur Résistance Cassée",
-      "description": "Couleur du segment horizontal discontinu pour une résistance cassée",
+      "label": "Couleur des Résistances",
+      "description": "Couleur des résistances (continu = active, discontinu = cassée)",
       "type": "string",
       "valeurParDefaut": "#ef4444",
       "groupe": "Visuels & Segments"

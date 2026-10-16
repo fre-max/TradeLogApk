@@ -8,9 +8,11 @@ import {
 // ─── 📊 Types et Structures de Données ────────────────────────────────────────
 
 /**
- * Options de configuration pour l'indicateur Shved Broken S/R MTF :
- * Détecte spécifiquement les Supports et Résistances CASSÉS ayant été retestés au moins une fois,
- * calculés sur une timeframe inférieure (ex: M15) et projetés en segments discontinus (dashed).
+ * Options de configuration pour l'indicateur Shved S/R (Actifs + Cassés) MTF :
+ * Affiche les Supports et Résistances Shved retestés au moins une fois :
+ *  - les niveaux ACTIFS (jamais clôturés au-delà) en trait CONTINU
+ *  - les niveaux CASSÉS (clôture au-delà) en trait DISCONTINU
+ * Calculés sur une timeframe inférieure (ex: M15) et projetés sur le graphique actuel (ex: H4).
  */
 export interface OptionsShvedBrokenSRMTF {
   // ─── ⏱️ Multi-Timeframe (MTF) ───
@@ -21,37 +23,44 @@ export interface OptionsShvedBrokenSRMTF {
   // Unité de temps du graphique d'affichage (ex: 'H4')
   chartTimeframe?: string;
 
-  // ─── 🎯 Filtrage des Niveaux Cassés ───
-  // Nombre minimum de retests requis avant la cassure (défaut: 1 pour exiger au moins 1 retest)
+  // ─── 🎯 Filtrage des Niveaux ───
+  // Nombre minimum de retests requis (défaut: 1 → jamais de niveau vierge)
   minRetests?: number;
+  // Afficher les niveaux encore actifs / non cassés (défaut: true)
+  afficherNonCasses?: boolean;
+  // Afficher les niveaux cassés (défaut: true)
+  afficherCasses?: boolean;
   // Afficher également les zones issues de fractals faibles (défaut: false)
   afficherFaibles?: boolean;
-  // Prolonger le segment discontinu jusqu'à la dernière bougie actuelle (défaut: true)
+  // Prolonger les niveaux CASSÉS jusqu'à la dernière bougie (défaut: false → ils s'arrêtent à la cassure)
+  // Les niveaux actifs, eux, vont toujours jusqu'à la bougie courante.
   prolongerVersLePresent?: boolean;
 
   // ─── 📐 Paramètres Shved ───
-  periodeATR?: number;            // Période de l'ATR (défaut: 7)
-  zoneFuzzFactor?: number;        // Épaisseur de zone (défaut: 0.75)
+  periodeATR?: number;            // Période de l'ATR (défaut: 15)
+  zoneFuzzFactor?: number;        // Épaisseur de zone (défaut: 0.1 → niveaux très fins)
   maxLookbackBars?: number;       // Historique scanné (défaut: 800)
 
   // ─── 🎨 Affichage Visuel ───
   // Afficher les étiquettes de prix discrètes (défaut: false pour un graphique épuré)
   afficherEtiquettes?: boolean;
-  bullColor?: string;             // Couleur pour Support cassé (défaut: #10b981)
-  bearColor?: string;             // Couleur pour Résistance cassée (défaut: #ef4444)
+  bullColor?: string;             // Couleur des supports (défaut: #10b981)
+  bearColor?: string;             // Couleur des résistances (défaut: #ef4444)
 }
 
 /**
- * Représente un Support ou une Résistance Shved cassé retenu
+ * Représente un Support ou une Résistance Shved retenu (actif ou cassé)
  */
 export interface BrokenSRNiveau {
   id: string;
-  type: 'SUPPORT_CASSE' | 'RESISTANCE_CASSEE';
+  type: 'SUPPORT_CASSE' | 'RESISTANCE_CASSEE' | 'SUPPORT_ACTIF' | 'RESISTANCE_ACTIVE';
+  estCasse: boolean;
   prixMedian: number;
   prixHaut: number;
   prixBas: number;
   retests: number;
   dateDebut: number | string;
+  // Date de cassure si le niveau est cassé, sinon date de la dernière bougie
   dateCassure: number | string;
   timeframeSource: string;
   zoneOrigine: ZoneShved;
@@ -63,7 +72,10 @@ export interface BrokenSRNiveau {
 export interface ResultatShvedBrokenSRMTF {
   supportsCasses: BrokenSRNiveau[];
   resistancesCassees: BrokenSRNiveau[];
+  supportsActifs: BrokenSRNiveau[];
+  resistancesActives: BrokenSRNiveau[];
   totalNiveauxCasses: number;
+  totalNiveauxActifs: number;
   primitives: VisualPrimitives;
   timeframeSource: string;
 }
@@ -71,63 +83,69 @@ export interface ResultatShvedBrokenSRMTF {
 // ─── 🚀 Fonction Principale de Calcul ────────────────────────────────────────
 
 /**
- * Calcule les supports et résistances Shved qui ont été CASSÉS après avoir été retestés au moins une fois.
- * Affiche uniquement des segments en trait discontinu (dashed) sans aucune zone rectangulaire.
- * 
+ * Calcule les supports et résistances Shved retestés au moins une fois,
+ * et les classe en deux familles : ACTIFS (trait continu) et CASSÉS (trait discontinu).
+ * Aucune zone rectangulaire, aucun texte encombrant.
+ *
  * Exemple :
  * const res = calculerShvedBrokenSRMTF(bougiesH4, {
  *   timeframeSource: 'M15',
  *   donneesM1: bougiesM1,
- *   minRetests: 1,
- *   prolongerVersLePresent: true
+ *   periodeATR: 15,
+ *   zoneFuzzFactor: 0.1,
  * });
+ * console.log(res.totalNiveauxActifs, res.totalNiveauxCasses);
  */
 export function calculerShvedBrokenSRMTF(
   bougies: Bougie[],
   options: OptionsShvedBrokenSRMTF = {}
 ): ResultatShvedBrokenSRMTF {
-  // Primitives visuelles : AUCUNE boîte rectangulaire, uniquement des segments discontinus et étiquettes
+  // Primitives visuelles : AUCUNE boîte rectangulaire, uniquement des segments
   const lignes: VisualLine[] = [];
   const labels: VisualLabel[] = [];
 
-  const defResultat: ResultatShvedBrokenSRMTF = {
-    supportsCasses: [],
-    resistancesCassees: [],
-    totalNiveauxCasses: 0,
-    primitives: { lignes, labels, boites: [], points: [] },
-    timeframeSource: options.timeframeSource || 'M15',
-  };
+  const tfSource = options.timeframeSource || 'M15';
 
   if (!bougies || bougies.length < 5) {
-    return defResultat;
+    return {
+      supportsCasses: [],
+      resistancesCassees: [],
+      supportsActifs: [],
+      resistancesActives: [],
+      totalNiveauxCasses: 0,
+      totalNiveauxActifs: 0,
+      primitives: { lignes, labels, boites: [], points: [] },
+      timeframeSource: tfSource,
+    };
   }
 
   // 1️⃣ Extraction des paramètres
-  const tfSource = options.timeframeSource || 'M15';
   const minRetests = Math.max(1, Number(options.minRetests ?? 1));
+  const afficherNonCasses = options.afficherNonCasses !== false;
+  const afficherCasses = options.afficherCasses !== false;
   const afficherFaibles = Boolean(options.afficherFaibles);
-  const prolongerVersLePresent = options.prolongerVersLePresent !== false;
-  const afficherEtiquettes = Boolean(options.afficherEtiquettes); // Désactivé par défaut pour un graphique épuré sans texte
+  const prolongerCasses = Boolean(options.prolongerVersLePresent);
+  const afficherEtiquettes = Boolean(options.afficherEtiquettes); // Désactivé par défaut (graphique épuré)
   const bullColor = options.bullColor || '#10b981';
   const bearColor = options.bearColor || '#ef4444';
 
   const derniereBougie = bougies[bougies.length - 1];
   const dateDerniereBougie = derniereBougie ? derniereBougie.time : 0;
 
-  // 2️⃣ Appel du moteur Shved en conservant impérativement toutes les zones cassées
-  // et en activant le mode Multi-Timeframe si des données M1 sont disponibles
+  // 2️⃣ Appel du moteur Shved en conservant TOUTES les zones (actives + cassées)
+  // zoneMerge: false → chaque niveau garde son propre état (actif/cassé) et son propre historique de retests
   const resultatShved = calculerShvedSupplyDemand(bougies, {
     timeframeSource: tfSource,
     donneesM1: options.donneesM1,
     chartTimeframe: options.chartTimeframe,
-    supprimerZonesCassees: false,  // CRUCIAL : on veut récupérer les zones cassées !
+    supprimerZonesCassees: false,  // On garde les zones cassées
     afficherNonRetestees: true,    // On filtre nous-mêmes sur minRetests
-    afficherFaibles: true,
+    afficherFaibles: true,         // On filtre nous-mêmes sur afficherFaibles
     minRetests: 0,
-    periodeATR: options.periodeATR ?? 7,
-    zoneFuzzFactor: options.zoneFuzzFactor ?? 0.75,
+    periodeATR: options.periodeATR ?? 15,
+    zoneFuzzFactor: options.zoneFuzzFactor ?? 0.1,
     maxLookbackBars: options.maxLookbackBars ?? 800,
-    afficherZones: false,          // Pas de boîtes Shved par défaut
+    afficherZones: false,
     afficherLignes: false,
     afficherEtiquettes: false,
   });
@@ -139,26 +157,35 @@ export function calculerShvedBrokenSRMTF(
 
   const supportsCasses: BrokenSRNiveau[] = [];
   const resistancesCassees: BrokenSRNiveau[] = [];
+  const supportsActifs: BrokenSRNiveau[] = [];
+  const resistancesActives: BrokenSRNiveau[] = [];
 
-  // 3️⃣ Filtrage strict des zones cassées et retestées au moins 1 fois
+  // 3️⃣ Filtrage et classement de chaque zone
   for (const zone of toutesLesZones) {
-    // Règle 1 : La zone doit obligatoirement avoir été CASSÉE
-    if (!zone.estCassee) continue;
-
-    // Règle 2 : La zone doit avoir été retestée au moins 'minRetests' fois (défaut: 1)
+    // Règle 1 : au moins 'minRetests' retests (jamais de niveau vierge)
     if (zone.retests < minRetests) continue;
 
-    // Règle 3 : Filtrer les fractals faibles si désactivés
+    // Règle 2 : fractals faibles masqués si désactivés
     if (zone.estFaible && !afficherFaibles) continue;
 
-    const estSupport = zone.type === 'SUPPORT';
-    const typeNiveau: 'SUPPORT_CASSE' | 'RESISTANCE_CASSEE' = estSupport
-      ? 'SUPPORT_CASSE'
-      : 'RESISTANCE_CASSEE';
+    // Règle 3 : respecter le choix d'affichage actifs / cassés
+    const estCasse = zone.estCassee;
+    if (estCasse && !afficherCasses) continue;
+    if (!estCasse && !afficherNonCasses) continue;
 
-    const brokenItem: BrokenSRNiveau = {
-      id: `broken-${zone.id}`,
+    const estSupport = zone.type === 'SUPPORT';
+
+    let typeNiveau: BrokenSRNiveau['type'];
+    if (estSupport) {
+      typeNiveau = estCasse ? 'SUPPORT_CASSE' : 'SUPPORT_ACTIF';
+    } else {
+      typeNiveau = estCasse ? 'RESISTANCE_CASSEE' : 'RESISTANCE_ACTIVE';
+    }
+
+    const niveau: BrokenSRNiveau = {
+      id: `sr-${zone.id}`,
       type: typeNiveau,
+      estCasse,
       prixMedian: zone.prixMedian,
       prixHaut: zone.prixHaut,
       prixBas: zone.prixBas,
@@ -169,33 +196,37 @@ export function calculerShvedBrokenSRMTF(
       zoneOrigine: zone,
     };
 
-    if (estSupport) {
-      supportsCasses.push(brokenItem);
-    } else {
-      resistancesCassees.push(brokenItem);
+    // Rangement dans la bonne liste
+    if (estSupport && estCasse) supportsCasses.push(niveau);
+    if (estSupport && !estCasse) supportsActifs.push(niveau);
+    if (!estSupport && estCasse) resistancesCassees.push(niveau);
+    if (!estSupport && !estCasse) resistancesActives.push(niveau);
+
+    // 4️⃣ Segment horizontal épuré (sans texte)
+    // - Actif  : trait CONTINU jusqu'à la bougie courante (liquidité encore disponible)
+    // - Cassé  : trait DISCONTINU jusqu'à la cassure (ou jusqu'au présent si option activée)
+    const couleur = estSupport ? bullColor : bearColor;
+    let dateFinSegment: number | string = dateDerniereBougie;
+    if (estCasse && !prolongerCasses) {
+      dateFinSegment = zone.dateFin;
     }
 
-    // 4️⃣ Génération du Segment en Ligne Discontinue (Dashed) épuré
-    // Conformément à la demande utilisateur, suppression des textes encombrants comme "résistance cassée M15"
-    const couleur = estSupport ? bullColor : bearColor;
-    const dateFinSegment = prolongerVersLePresent ? dateDerniereBougie : zone.dateFin;
-
     lignes.push({
-      id: `broken-line-${zone.id}`,
+      id: `sr-line-${zone.id}`,
       prix: zone.prixMedian,
       dateDebut: zone.dateDebut,
       dateFin: dateFinSegment,
       couleur,
-      epaisseur: 1.8,
-      style: 'dashed', // Segment en trait discontinu épuré
+      epaisseur: estCasse ? 1.5 : 1.8,
+      style: estCasse ? 'dashed' : 'solid',
     });
 
-    // 5️⃣ Étiquette textuelle facultative (désactivée par défaut) : affiche uniquement le prix numérique
+    // 5️⃣ Étiquette facultative (désactivée par défaut) : uniquement le prix
     if (afficherEtiquettes) {
       labels.push({
-        id: `broken-lbl-${zone.id}`,
+        id: `sr-lbl-${zone.id}`,
         prix: zone.prixMedian,
-        date: zone.dateFin,
+        date: dateFinSegment,
         texte: zone.prixMedian.toFixed(5),
         couleur,
         position: estSupport ? 'below' : 'above',
@@ -206,11 +237,14 @@ export function calculerShvedBrokenSRMTF(
   return {
     supportsCasses,
     resistancesCassees,
+    supportsActifs,
+    resistancesActives,
     totalNiveauxCasses: supportsCasses.length + resistancesCassees.length,
+    totalNiveauxActifs: supportsActifs.length + resistancesActives.length,
     primitives: {
       lignes,
       labels,
-      boites: [], // AUCUNE zone rectangulaire n'est générée
+      boites: [], // AUCUNE zone rectangulaire
       points: [],
     },
     timeframeSource: tfSource,

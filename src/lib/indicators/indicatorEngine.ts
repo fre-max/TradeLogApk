@@ -30,12 +30,13 @@ import { calculerLiquidationSweepChevauchementExtremes } from './liquidationSwee
 import { calculerLiquidationSweepChevauchementVagueOpposee } from './liquidationSweepChevauchementVagueOpposee';
 import { calculerLiquidationSweepChevauchementMultiVagues } from './liquidationSweepChevauchementMultiVagues';
 import { calculerShvedBrokenSRMTF } from './shvedBrokenSRMTF';
+import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.17.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.18.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4366,10 +4367,10 @@ return {
   },
   {
     id: 'script-shved-mtf-broken-sr',
-    nom: 'Détection de Liquidité : Shved S/R Cassés (MTF)',
-    description: 'Détecte les Supports et Résistances Shved cassés ayant subi au moins un retest préalable (non vierges). Calculé sur unité de temps inférieure (ex: M15) et projeté sur le graphique actuel (ex: H4) sous forme de segments horizontaux en trait discontinu.',
+    nom: 'Détection de Liquidité : Shved S/R Actifs & Cassés (MTF)',
+    description: 'Affiche les Supports et Résistances Shved retestés au moins une fois (jamais de niveau vierge) : niveaux ACTIFS en trait continu, niveaux CASSÉS en trait discontinu. Calculé sur une unité de temps inférieure (ex: M15) et projeté sur le graphique actuel (ex: H4). Sans texte ni rectangle.',
     auteur: 'Shved / TradeLog Institutional',
-    version: '1.0.0',
+    version: '2.0.0',
     type: 'overlay',
     actif: true,
     visibleSurGraphique: true,
@@ -4377,11 +4378,13 @@ return {
     parametres: {
       timeframeSource: 'M15',
       minRetests: 1,
-      prolongerVersLePresent: true,
+      afficherNonCasses: true,
+      afficherCasses: true,
+      prolongerVersLePresent: false,
       afficherFaibles: false,
       afficherEtiquettes: false,
-      periodeATR: 7,
-      zoneFuzzFactor: 0.75,
+      periodeATR: 15,
+      zoneFuzzFactor: 0.1,
       maxLookbackBars: 800,
       bullColor: '#10b981',
       bearColor: '#ef4444',
@@ -4406,22 +4409,60 @@ return {
         groupe: 'Multi-Timeframe (MTF)',
       },
       {
+        cle: 'periodeATR',
+        label: 'Période ATR',
+        description: 'Période de l\'ATR servant à dimensionner chaque niveau Shved',
+        type: 'number',
+        valeurParDefaut: 15,
+        min: 3,
+        max: 50,
+        step: 1,
+        groupe: 'Paramètres Shved',
+      },
+      {
+        cle: 'zoneFuzzFactor',
+        label: 'Zone Fuzz Factor',
+        description: 'Épaisseur de la zone en fraction d\'ATR (0.1 = niveaux très fins et précis)',
+        type: 'number',
+        valeurParDefaut: 0.1,
+        min: 0.05,
+        max: 2,
+        step: 0.05,
+        groupe: 'Paramètres Shved',
+      },
+      {
         cle: 'minRetests',
         label: 'Nombre Minimum de Retests',
-        description: 'Exige au moins ce nombre de retests avant cassure (ignore strictement les niveaux vierges sans retest)',
+        description: 'Exige au moins ce nombre de retests (ignore strictement les niveaux vierges sans retest)',
         type: 'number',
         valeurParDefaut: 1,
         min: 1,
         max: 10,
         step: 1,
-        groupe: 'Filtrage des Niveaux Cassés',
+        groupe: 'Filtrage des Niveaux',
+      },
+      {
+        cle: 'afficherNonCasses',
+        label: 'Afficher les Niveaux Actifs',
+        description: 'Supports / résistances jamais clôturés au-delà (trait continu)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtrage des Niveaux',
+      },
+      {
+        cle: 'afficherCasses',
+        label: 'Afficher les Niveaux Cassés',
+        description: 'Supports / résistances clôturés au-delà (trait discontinu)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtrage des Niveaux',
       },
       {
         cle: 'prolongerVersLePresent',
-        label: 'Prolonger jusqu\'à la bougie courante',
-        description: 'Prolonge le segment discontinu du niveau cassé jusqu\'à la dernière bougie du graphique',
+        label: 'Prolonger les Niveaux Cassés',
+        description: 'Prolonge le trait discontinu des niveaux cassés jusqu\'à la bougie courante (sinon il s\'arrête à la cassure)',
         type: 'boolean',
-        valeurParDefaut: true,
+        valeurParDefaut: false,
         groupe: 'Visuels & Segments',
       },
       {
@@ -4430,7 +4471,7 @@ return {
         description: 'Inclut les niveaux issus de fractals secondaires / faibles',
         type: 'boolean',
         valeurParDefaut: false,
-        groupe: 'Filtrage des Niveaux Cassés',
+        groupe: 'Filtrage des Niveaux',
       },
       {
         cle: 'afficherEtiquettes',
@@ -4442,23 +4483,23 @@ return {
       },
       {
         cle: 'bullColor',
-        label: 'Couleur Support Cassé',
-        description: 'Couleur du segment horizontal discontinu pour un support cassé',
+        label: 'Couleur des Supports',
+        description: 'Couleur des supports (continu = actif, discontinu = cassé)',
         type: 'string',
         valeurParDefaut: '#10b981',
         groupe: 'Visuels & Segments',
       },
       {
         cle: 'bearColor',
-        label: 'Couleur Résistance Cassée',
-        description: 'Couleur du segment horizontal discontinu pour une résistance cassée',
+        label: 'Couleur des Résistances',
+        description: 'Couleur des résistances (continu = active, discontinu = cassée)',
         type: 'string',
         valeurParDefaut: '#ef4444',
         groupe: 'Visuels & Segments',
       },
     ],
     creeLe: '2026-10-14T00:00:00.000Z',
-    misAJourLe: '2026-10-14T00:00:00.000Z',
+    misAJourLe: '2026-10-16T00:00:00.000Z',
     code: `return {
   calculer: function(contexte) {
     const { bougies, parametres, donneesM1, timeframe } = contexte;
@@ -4475,6 +4516,153 @@ return {
       donnees: res,
       primitives: res.primitives,
       typeSpecial: 'shved-broken-sr-mtf'
+    };
+  }
+};`
+  },
+  {
+    id: 'script-liq-sweep-shved-plus-fort',
+    nom: 'Liq/Reint + Liquidité Shved la Plus Forte (MTF)',
+    description: 'Quand le Doji personnalisé (Liq/Reint = Spring / UTAD) se forme, identifie tous les supports / résistances Shved balayés par sa mèche et retient le PLUS FORT (le plus retesté avant le pattern). Affiche la force du niveau et la liquidité totale récupérée. Segment en ligne discontinue.',
+    auteur: 'TradeLog Institutional',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      timeframeSource: 'M15',
+      periodeATR: 15,
+      zoneFuzzFactor: 0.1,
+      maxLookbackBars: 800,
+      minRetests: 1,
+      afficherFaibles: false,
+      exigerNiveauBalaye: true,
+      toleranceDeficit: 0.05,
+      toleranceDepassement: 0.25,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.75,
+      multiplicateurCorps2: 1.75,
+      activerAchat: true,
+      activerVente: true,
+      activerFiltreTendance: false,
+      trendBars: 5,
+      afficherForceDansLabel: true,
+      afficherAutresNiveaux: false,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+    },
+    definitionsVariables: [
+      {
+        cle: 'timeframeSource',
+        label: 'Unité de Temps des Niveaux (MTF)',
+        description: 'Unité de temps sur laquelle les niveaux Shved sont calculés puis projetés sur le graphique',
+        type: 'select',
+        valeurParDefaut: 'M15',
+        options: [
+          { label: 'Graphique Actuel', value: 'ACTUEL' },
+          { label: 'M5 (5 minutes)', value: 'M5' },
+          { label: 'M15 (15 minutes)', value: 'M15' },
+          { label: 'M30 (30 minutes)', value: 'M30' },
+          { label: 'H1 (1 heure)', value: 'H1' },
+          { label: 'H4 (4 heures)', value: 'H4' },
+        ],
+        groupe: 'Multi-Timeframe (MTF)',
+      },
+      {
+        cle: 'periodeATR',
+        label: 'Période ATR',
+        description: 'Période de l\'ATR servant à dimensionner chaque niveau Shved',
+        type: 'number',
+        valeurParDefaut: 15,
+        min: 3,
+        max: 50,
+        step: 1,
+        groupe: 'Paramètres Shved',
+      },
+      {
+        cle: 'zoneFuzzFactor',
+        label: 'Zone Fuzz Factor',
+        description: 'Épaisseur de la zone en fraction d\'ATR (0.1 = niveaux très fins)',
+        type: 'number',
+        valeurParDefaut: 0.1,
+        min: 0.05,
+        max: 2,
+        step: 0.05,
+        groupe: 'Paramètres Shved',
+      },
+      {
+        cle: 'minRetests',
+        label: 'Retests Minimum avant le Pattern',
+        description: 'Un niveau n\'est retenu que s\'il a été retesté au moins ce nombre de fois AVANT le Doji',
+        type: 'number',
+        valeurParDefaut: 1,
+        min: 1,
+        max: 10,
+        step: 1,
+        groupe: 'Règles de Liquidité',
+      },
+      {
+        cle: 'exigerNiveauBalaye',
+        label: 'Exiger un Niveau Balayé',
+        description: 'N\'affiche le pattern que s\'il a balayé au moins un niveau Shved',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Règles de Liquidité',
+      },
+      {
+        cle: 'afficherForceDansLabel',
+        label: 'Afficher la Force du Niveau',
+        description: 'Ajoute sous le pattern le nombre de retests du niveau le plus fort (ex: 5x) et le nombre de niveaux balayés',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'afficherAutresNiveaux',
+        label: 'Afficher les Autres Niveaux Balayés',
+        description: 'Trace en pointillés fins les niveaux balayés moins forts',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Signal Achat (Spring)',
+        description: 'Couleur du Spring et de son niveau balayé',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Visuels & Graphique',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Signal Vente (UTAD)',
+        description: 'Couleur de l\'UTAD et de son niveau balayé',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Visuels & Graphique',
+      },
+    ],
+    creeLe: '2026-10-16T00:00:00.000Z',
+    misAJourLe: '2026-10-16T00:00:00.000Z',
+    code: `return {
+  calculer: function(contexte) {
+    const { bougies, parametres, donneesM1, timeframe } = contexte;
+    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };
+
+    // Doji personnalisé + niveau Shved le plus fort balayé (MTF)
+    const res = calculerSweepNiveauShvedLePlusFort(bougies, {
+      ...parametres,
+      donneesM1: donneesM1,
+      chartTimeframe: timeframe
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'liq-sweep-shved-plus-fort'
     };
   }
 };`
@@ -4604,6 +4792,8 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementVagueOpposee(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepChevauchementMultiVagues')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementMultiVagues(contexte.bougies, contexte.parametres);\n  }\n};\n`;
+    } else if (js.includes('calculerSweepNiveauShvedLePlusFort')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSweepNiveauShvedLePlusFort(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerShvedBrokenSRMTF')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerShvedBrokenSRMTF(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepCombo')) {
@@ -4877,6 +5067,7 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerLiquidationSweepChevauchementVagueOpposee',
       'calculerLiquidationSweepChevauchementMultiVagues',
       'calculerShvedBrokenSRMTF',
+      'calculerSweepNiveauShvedLePlusFort',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -4929,7 +5120,8 @@ export function evaluerIndicateurScript(
       calculerLiquidationSweepChevauchementExtremes,
       calculerLiquidationSweepChevauchementVagueOpposee,
       calculerLiquidationSweepChevauchementMultiVagues,
-      calculerShvedBrokenSRMTF
+      calculerShvedBrokenSRMTF,
+      calculerSweepNiveauShvedLePlusFort
     );
 
     // 2️⃣ Si le script expose une méthode calculer()
