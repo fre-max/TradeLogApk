@@ -58,6 +58,7 @@ const OUTILS_TRACAGE = [
   ]},
   { group: 'Laboratoire', items: [
     { id: 'setup-probe', label: '🎯 SONDE', title: 'Sonder Setup Wyckoff / Liquidation — 1 clic sur la bougie du Sweep' },
+    { id: 'inspect-setup', label: '🔍 DIAG', title: 'Diagnostic Setup Liq/Reint — 1 clic sur une bougie pour voir les conditions acceptées/rejetées' },
   ]},
 ];
 
@@ -2188,6 +2189,17 @@ export function BacktestWorkspace() {
                 🎯
               </button>
 
+              {/* 🔍 Outil Diagnostic Setup Liq/Reint */}
+              <button
+                onClick={() => setOutilActif(outilActif === 'inspect-setup' ? null : 'inspect-setup')}
+                title="Diagnostic Setup Liq/Reint — 1 clic sur une bougie pour voir pourquoi elle passe ou échoue"
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
+                  outilActif === 'inspect-setup' ? 'bg-cyan-600 text-white shadow' : C.btnBase
+                }`}
+              >
+                🔍
+              </button>
+
               {/* 🧪 Outil Banque de Setups & Synthèse */}
               <button
                 onClick={() => useLaboratoireStore.getState().ouvrirBanque()}
@@ -2485,6 +2497,17 @@ export function BacktestWorkspace() {
                   title="Sonder Setup Wyckoff / Liquidation 🎯"
                 >
                   🎯
+                </button>
+
+                {/* 🔍 Outil Diagnostic Setup Liq/Reint */}
+                <button
+                  onClick={() => setOutilActif(outilActif === 'inspect-setup' ? null : 'inspect-setup')}
+                  className={`w-7 h-7 flex items-center justify-center rounded-xl text-xs transition-colors ${
+                    outilActif === 'inspect-setup' ? 'bg-cyan-600 text-white shadow' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title="Diagnostic Setup Liq/Reint 🔍"
+                >
+                  🔍
                 </button>
 
                 {/* 🧪 Outil Banque de Setups */}

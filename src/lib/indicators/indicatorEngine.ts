@@ -1,36 +1,36 @@
-import type { IndicatorScript, IndicatorContext, IndicatorExecutionResult, VisualPrimitives, VariableExterneDef } from '@/types/indicatorScript';
-import { calculerLuxAlgoSMC } from './luxAlgoSMC';
-import { calculerProtectedSwings } from './protectedSwings';
-import { calculerZigZag } from './zigzag';
-import { calculerUnmitigatedVolumeProfile } from './unmitigatedVolumeProfile';
 import {
+  calculerCompleteSetupVisualizer,
   calculerDetectionLiquidite,
-  calculerSweepSpringValidation,
   calculerDetectionLiquiditeEQ,
   calculerDetectionLiquiditeSRTL,
-  calculerShvedSupplyDemand,
-  calculerUnmitigatedOverlapProfile,
   calculerFractalLtfEntry,
   calculerMoneyManagementRules,
   calculerMtfConductor,
-  calculerCompleteSetupVisualizer,
+  calculerShvedSupplyDemand,
+  calculerSweepSpringValidation,
+  calculerUnmitigatedOverlapProfile,
 } from '@/lib/bot/modules';
-import { calculerOverMitigationHighway } from './overMitigationHighway';
-import { calculerMethodeACompression } from './methodeACompressionRatio';
-import { calculerMethodeBOverlap } from './methodeBOverlapSurface';
-import { calculerMethodeCSlice } from './methodeCSliceDensity';
-import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
-import { calculerFractalZigZag } from './fractalZigZag';
+import type { IndicatorContext, IndicatorExecutionResult, IndicatorScript, VariableExterneDef, VisualPrimitives } from '@/types/indicatorScript';
 import { calculerCandlestickPatterns } from './candlestickPatterns';
+import { calculerFractalZigZag } from './fractalZigZag';
 import { calculerLiquidationReintegration } from './liquidationReintegration';
+import { calculerLiquidationSweepChevauchementExtremes } from './liquidationSweepChevauchementExtremes';
+import { calculerLiquidationSweepChevauchementMultiVagues } from './liquidationSweepChevauchementMultiVagues';
+import { calculerLiquidationSweepChevauchementVagueOpposee } from './liquidationSweepChevauchementVagueOpposee';
 import { calculerLiquidationSweepCombo } from './liquidationSweepCombo';
 import { calculerLiquidationSweepPointFigure } from './liquidationSweepPointFigure';
 import { calculerLiquidationSweepShved } from './liquidationSweepShved';
-import { calculerLiquidationSweepChevauchementExtremes } from './liquidationSweepChevauchementExtremes';
-import { calculerLiquidationSweepChevauchementVagueOpposee } from './liquidationSweepChevauchementVagueOpposee';
-import { calculerLiquidationSweepChevauchementMultiVagues } from './liquidationSweepChevauchementMultiVagues';
+import { calculerLuxAlgoSMC } from './luxAlgoSMC';
+import { calculerMethodeACompression } from './methodeACompressionRatio';
+import { calculerMethodeBOverlap } from './methodeBOverlapSurface';
+import { calculerMethodeCSlice } from './methodeCSliceDensity';
+import { calculerOverMitigationHighway } from './overMitigationHighway';
+import { calculerProtectedSwings } from './protectedSwings';
 import { calculerShvedBrokenSRMTF } from './shvedBrokenSRMTF';
 import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort';
+import { calculerUnmitigatedVolumeProfile } from './unmitigatedVolumeProfile';
+import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
+import { calculerZigZag } from './zigzag';
 
 // Clé de stockage local pour persister les indicateurs personnalisés sur le smartphone
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
@@ -3122,10 +3122,10 @@ return {
     visibleSurGraphique: true,
     collecteActive: true,
     parametres: {
-      toleranceDeficit: 0.15,
+      toleranceDeficit: 0.1,
       toleranceDepassement: 1.0,
       activerFiltreTaille: true,
-      periodeHistorique: 10,
+      periodeHistorique: 5,
       multiplicateurBougie1: 1.1,
       multiplicateurCorps2: 1.1,
       activerAchat: true,

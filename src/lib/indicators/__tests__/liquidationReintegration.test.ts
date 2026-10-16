@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Bougie } from '@/lib/chartDataHelper';
-import { calculerLiquidationReintegration } from '../liquidationReintegration';
+import { calculerLiquidationReintegration, diagnostiquerBougieDoji } from '../liquidationReintegration';
 import { evaluerIndicateurScript, INDICATEURS_PAR_DEFAUT } from '../indicatorEngine';
 
 describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', () => {
@@ -260,5 +260,33 @@ describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', ()
     const resDefaut = calculerLiquidationReintegration(bougies);
     expect(resDefaut.signaux.length).toBe(1);
     expect(resDefaut.signaux[0].type).toBe('ACHAT');
+  });
+
+  it('produit un diagnostic complet et pédagogique expliquant pourquoi une bougie est acceptée ou rejetée', () => {
+    // Bougie 1 : Range = 10, Corps = 8 (100 -> 92)
+    // Bougie 2 : Range = 10, Corps = 8 (92 -> 99) -> Clôture à 99 vs Open1 100 -> Retrait de 1 / 10 = 10%
+    const bougies: Bougie[] = [
+      creerBougie(1000, 100, 105, 95, 103),
+      creerBougie(2000, 100, 105, 95, 103),
+      creerBougie(3000, 100, 105, 95, 103),
+      creerBougie(4000, 100, 105, 95, 103),
+      creerBougie(5000, 100, 105, 95, 103),
+      creerBougie(6000, 100, 102, 90, 92), // B1 : Range = 12 (12/10 = 1.2x >= 1.1x)
+      creerBougie(7000, 92, 101, 91, 99),  // B2 : Corps = 7 (7/3 = 2.33x >= 1.1x), Close 99 vs Open1 100 -> Retrait de 1 / 11 = 9.09%
+    ];
+
+    // Test avec tolérance de retrait stricte (5%) : doit être rejeté pour retrait trop grand
+    const diagRejete = diagnostiquerBougieDoji(bougies, 6, { toleranceDeficit: 0.05 });
+    expect(diagRejete).not.toBeNull();
+    expect(diagRejete?.estValide).toBe(false);
+    expect(diagRejete?.typeCandidat).toBe('ACHAT');
+    expect(diagRejete?.verdict).toContain('REJETÉ');
+    expect(diagRejete?.conditions.find((c) => c.titre.includes('Clôture'))?.valide).toBe(false);
+
+    // Test avec tolérance de retrait plus large (15%) : doit être validé !
+    const diagAccepte = diagnostiquerBougieDoji(bougies, 6, { toleranceDeficit: 0.15 });
+    expect(diagAccepte?.estValide).toBe(true);
+    expect(diagAccepte?.verdict).toContain('VALIDÉ À 100%');
+    expect(diagAccepte?.conditions.every((c) => c.valide)).toBe(true);
   });
 });

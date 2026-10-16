@@ -472,3 +472,293 @@ export function calculerLiquidationReintegration(
     },
   };
 }
+
+// ─── 🔍 MOTEUR D'INSPECTION & DIAGNOSTIC AU CLIC SUR LE GRAPHIQUE ─────────────
+
+/**
+ * Ligne de détail pour une condition spécifique dans le diagnostic d'une bougie
+ */
+export interface LigneDiagnosticCondition {
+  titre: string;
+  valide: boolean;
+  valeurMesuree: string;
+  valeurRequise: string;
+  explication: string;
+}
+
+/**
+ * Rapport complet de diagnostic pour une bougie inspectée
+ */
+export interface RapportDiagnosticDoji {
+  indexBougie: number;
+  temps: number | string;
+  estValide: boolean;
+  typeCandidat: 'ACHAT' | 'VENTE' | 'AUCUN';
+  conditions: LigneDiagnosticCondition[];
+  verdict: string;
+  roleBougieCliquee?: 'B1' | 'B2';
+  detailsPrix: {
+    open1: number;
+    close1: number;
+    range1: number;
+    open2: number;
+    close2: number;
+    range2: number;
+    corps2: number;
+    moyenneRangeHist: number;
+    moyenneCorpsHist: number;
+  };
+}
+
+/**
+ * Analyse spécifique pour un binôme fixe [B1, B2]
+ */
+function analyserPaireBougies(
+  bougies: Bougie[],
+  indexB1: number,
+  indexB2: number,
+  params: ParametresLiquidationReintegration
+): RapportDiagnosticDoji {
+  const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : (params.toleranceProximite ?? 0.15);
+  const toleranceDeficit = valDeficit > 1 ? valDeficit / 100 : valDeficit;
+
+  const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 1.0;
+  const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;
+
+  const activerFiltreTaille = params.activerFiltreTaille !== false;
+  const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));
+  const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 ?? 1.1));
+  const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 ?? 1.1));
+
+  const activerAchat = params.activerAchat !== false;
+  const activerVente = params.activerVente !== false;
+  const activerFiltreTendance = Boolean(params.activerFiltreTendance);
+  const trendBars = Math.max(1, Number(params.trendBars ?? 5));
+
+  const b1 = bougies[indexB1];
+  const b2 = bougies[indexB2];
+
+  const range1 = b1.high - b1.low;
+  const range2 = b2.high - b2.low;
+  const corps2 = Math.abs(b2.open - b2.close);
+  const hauteurMoyenne = (range1 + range2) / 2;
+
+  // Calcul des moyennes historiques
+  const indexFinHist = indexB2 - 2;
+  const indexDebutHist = Math.max(0, indexB2 - 1 - periodeHistorique);
+  const nbBougiesHist = Math.max(0, indexFinHist - indexDebutHist + 1);
+
+  let moyRangeHist = hauteurMoyenne;
+  let moyCorpsHist = corps2;
+
+  if (nbBougiesHist >= 3) {
+    let sommeRanges = 0;
+    let sommeCorps = 0;
+    for (let k = indexDebutHist; k <= indexFinHist; k++) {
+      sommeRanges += (bougies[k].high - bougies[k].low);
+      sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
+    }
+    moyRangeHist = sommeRanges / nbBougiesHist;
+    moyCorpsHist = sommeCorps / nbBougiesHist;
+  }
+
+  // Tendance
+  const indexTrend = Math.max(0, indexB2 - trendBars);
+  const openTrend = bougies[indexTrend].open;
+  const tendanceHausse = !activerFiltreTendance || openTrend < b2.open;
+  const tendanceBaisse = !activerFiltreTendance || openTrend > b2.open;
+
+  // 1️⃣ Sens et alternance des 2 bougies
+  const b1Baissiere = b1.close < b1.open;
+  const b1Haussiere = b1.close > b1.open;
+  const b2Haussiere = b2.close > b2.open;
+  const b2Baissiere = b2.close < b2.open;
+
+  const estAchat = b1Baissiere && b2Haussiere;
+  const estVente = b1Haussiere && b2Baissiere;
+
+  let typeCandidat: 'ACHAT' | 'VENTE' | 'AUCUN' = 'AUCUN';
+  if (estAchat) typeCandidat = 'ACHAT';
+  else if (estVente) typeCandidat = 'VENTE';
+
+  const conditions: LigneDiagnosticCondition[] = [];
+
+  // Condition 1 : Sens opposé
+  const condSensValide = typeCandidat !== 'AUCUN';
+  conditions.push({
+    titre: '1. Alternance & Sens des Bougies',
+    valide: condSensValide,
+    valeurMesuree: `B1: ${b1Baissiere ? 'Baissière 🔴' : 'Haussière 🟢'} ➔ B2: ${b2Haussiere ? 'Haussière 🟢' : 'Baissière 🔴'}`,
+    valeurRequise: 'B1 et B2 doivent être de sens opposés',
+    explication: condSensValide
+      ? `Configuration ${typeCandidat === 'ACHAT' ? 'Achat (Spring)' : 'Vente (UTAD)'} détectée`
+      : 'Les deux bougies ne forment pas un retournement opposé (ex: 2 bougies de même couleur)',
+  });
+
+  // Condition 2 : Direction autorisée
+  let condDirectionValide = true;
+  if (typeCandidat === 'ACHAT') {
+    condDirectionValide = activerAchat && tendanceBaisse;
+  } else if (typeCandidat === 'VENTE') {
+    condDirectionValide = activerVente && tendanceHausse;
+  }
+  conditions.push({
+    titre: '2. Direction & Filtre Tendance',
+    valide: condDirectionValide,
+    valeurMesuree: typeCandidat === 'ACHAT'
+      ? `Achats: ${activerAchat ? 'ON' : 'OFF'} (Tendance baisse: ${tendanceBaisse ? 'Oui' : 'Non'})`
+      : `Ventes: ${activerVente ? 'ON' : 'OFF'} (Tendance hausse: ${tendanceHausse ? 'Oui' : 'Non'})`,
+    valeurRequise: typeCandidat === 'ACHAT' ? 'Achat activé dans les réglages' : 'Vente activée dans les réglages',
+    explication: condDirectionValide
+      ? 'La direction est autorisée par vos réglages'
+      : 'La direction correspondante est désactivée ou bloquée par le filtre de tendance',
+  });
+
+  // Condition 3 : Précision du retournement (Close2 vs Open1)
+  const ecartPrix = Math.abs(b1.open - b2.close);
+  const ratioEcart = hauteurMoyenne > 0 ? (ecartPrix / hauteurMoyenne) : 0;
+  const ratioEcartPct = (ratioEcart * 100).toFixed(1);
+
+  let estDepassement = false;
+  let toleranceMax = toleranceDeficit;
+  let condProximiteValide = false;
+
+  if (typeCandidat === 'ACHAT') {
+    estDepassement = b2.close >= b1.open;
+    toleranceMax = estDepassement ? toleranceDepassement : toleranceDeficit;
+    condProximiteValide = ratioEcart <= toleranceMax;
+  } else if (typeCandidat === 'VENTE') {
+    estDepassement = b2.close <= b1.open;
+    toleranceMax = estDepassement ? toleranceDepassement : toleranceDeficit;
+    condProximiteValide = ratioEcart <= toleranceMax;
+  }
+
+  const tolPct = (toleranceMax * 100).toFixed(0);
+  conditions.push({
+    titre: '3. Clôture B2 vs Ouverture B1',
+    valide: condProximiteValide,
+    valeurMesuree: `${estDepassement ? 'Dépassement' : 'Retrait'}: ${ratioEcartPct}% (Écart: ${ecartPrix.toFixed(4)})`,
+    valeurRequise: `Max autorisé: ${tolPct}%`,
+    explication: condProximiteValide
+      ? `La réintégration est millimétrée (${ratioEcartPct}% <= ${tolPct}%)`
+      : `La clôture est trop éloignée : ${ratioEcartPct}% mesuré vs max ${tolPct}% autorisé`,
+  });
+
+  // Condition 4 : Taille de la Bougie 1
+  const ratioTailleB1 = moyRangeHist > 0 ? range1 / moyRangeHist : 1;
+  const ratioTailleB1Txt = ratioTailleB1.toFixed(2);
+  const condTailleB1Valide = !activerFiltreTaille || ratioTailleB1 >= multiplicateurBougie1;
+  conditions.push({
+    titre: '4. Impulsion Bougie 1 (Liquidation)',
+    valide: condTailleB1Valide,
+    valeurMesuree: `${ratioTailleB1Txt}x moyenne (${range1.toFixed(4)} vs moy ${moyRangeHist.toFixed(4)})`,
+    valeurRequise: `Min requis: ${multiplicateurBougie1.toFixed(2)}x`,
+    explication: condTailleB1Valide
+      ? `Bougie 1 suffisamment impulsive (${ratioTailleB1Txt}x >= ${multiplicateurBougie1}x)`
+      : `Bougie 1 trop courte : ${ratioTailleB1Txt}x < ${multiplicateurBougie1}x (il manque ${(multiplicateurBougie1 - ratioTailleB1).toFixed(2)}x)`,
+  });
+
+  // Condition 5 : Corps de la Bougie 2
+  const ratioCorpsB2 = moyCorpsHist > 0 ? corps2 / moyCorpsHist : 1;
+  const ratioCorpsB2Txt = ratioCorpsB2.toFixed(2);
+  const condCorpsB2Valide = !activerFiltreTaille || ratioCorpsB2 >= multiplicateurCorps2;
+  conditions.push({
+    titre: '5. Puissance Corps Bougie 2 (Réintégration)',
+    valide: condCorpsB2Valide,
+    valeurMesuree: `${ratioCorpsB2Txt}x moyenne (${corps2.toFixed(4)} vs moy ${moyCorpsHist.toFixed(4)})`,
+    valeurRequise: `Min requis: ${multiplicateurCorps2.toFixed(2)}x`,
+    explication: condCorpsB2Valide
+      ? `Corps de B2 suffisamment puissant (${ratioCorpsB2Txt}x >= ${multiplicateurCorps2}x)`
+      : `Corps de B2 trop petit : ${ratioCorpsB2Txt}x < ${multiplicateurCorps2}x (il manque ${(multiplicateurCorps2 - ratioCorpsB2).toFixed(2)}x)`,
+  });
+
+  // Verdict global
+  const estValideGlobal = condSensValide && condDirectionValide && condProximiteValide && condTailleB1Valide && condCorpsB2Valide;
+
+  let verdict = '';
+  if (estValideGlobal) {
+    verdict = `✅ SETUP ${typeCandidat} VALIDÉ À 100% (Signal actif)`;
+  } else {
+    const motifsRejet: string[] = [];
+    if (!condSensValide) motifsRejet.push('sens des bougies non opposé');
+    if (!condDirectionValide) motifsRejet.push('direction/tendance désactivée');
+    if (!condProximiteValide) motifsRejet.push(`écart clôture trop grand (${ratioEcartPct}% > ${tolPct}%)`);
+    if (!condTailleB1Valide) motifsRejet.push(`B1 trop petite (${ratioTailleB1Txt}x < ${multiplicateurBougie1}x)`);
+    if (!condCorpsB2Valide) motifsRejet.push(`corps B2 trop petit (${ratioCorpsB2Txt}x < ${multiplicateurCorps2}x)`);
+    verdict = `❌ REJETÉ : ${motifsRejet.join(', ')}`;
+  }
+
+  return {
+    indexBougie: indexB2,
+    temps: b2.time,
+    estValide: estValideGlobal,
+    typeCandidat,
+    conditions,
+    verdict,
+    detailsPrix: {
+      open1: b1.open,
+      close1: b1.close,
+      range1,
+      open2: b2.open,
+      close2: b2.close,
+      range2,
+      corps2,
+      moyenneRangeHist: moyRangeHist,
+      moyenneCorpsHist: moyCorpsHist,
+    },
+  };
+}
+
+/**
+ * ==============================================================================
+ * 🔍 FONCTION D'INSPECTION & DIAGNOSTIC DES SETUPS (POUR LE TRADER ET LE DEV)
+ * ==============================================================================
+ * Analyse en profondeur n'importe quelle bougie du graphique (i) et sa précédente (i-1)
+ * et explique en français pourquoi le setup a été accepté ou rejeté, avec chaque valeur chiffrée.
+ *
+ * Supporte le clic sur la 1ère bougie (B1) OU la 2ème bougie (B2) du setup !
+ *
+ * Exemple d'utilisation :
+ * const diag = diagnostiquerBougieDoji(bougies, 142, { toleranceDeficit: 0.15 });
+ * console.log(diag.verdict); // "❌ REJETÉ : écart clôture trop grand (18.2% > 15%)"
+ */
+export function diagnostiquerBougieDoji(
+  bougies: Bougie[],
+  indexBougie: number,
+  options?: ParametresLiquidationReintegration
+): RapportDiagnosticDoji | null {
+  if (!bougies || indexBougie < 0 || indexBougie >= bougies.length) {
+    return null;
+  }
+
+  const params = options || {};
+
+  // Hypothèse 1 : La bougie cliquée est la deuxième bougie B2 (le signal)
+  let diagB2: RapportDiagnosticDoji | null = null;
+  if (indexBougie >= 1) {
+    diagB2 = analyserPaireBougies(bougies, indexBougie - 1, indexBougie, params);
+    diagB2.roleBougieCliquee = 'B2';
+  }
+
+  // Hypothèse 2 : La bougie cliquée est la première bougie B1 (l'impulsion)
+  let diagB1: RapportDiagnosticDoji | null = null;
+  if (indexBougie + 1 < bougies.length) {
+    diagB1 = analyserPaireBougies(bougies, indexBougie, indexBougie + 1, params);
+    diagB1.roleBougieCliquee = 'B1';
+  }
+
+  // 1️⃣ Si l'un des deux est valide à 100%, c'est sans doute le setup recherché
+  if (diagB2 && diagB2.estValide) return diagB2;
+  if (diagB1 && diagB1.estValide) return diagB1;
+
+  // 2️⃣ Si l'un des deux a un sens opposé candidat (Achat ou Vente) et pas l'autre
+  if (diagB2 && diagB2.typeCandidat !== 'AUCUN' && (!diagB1 || diagB1.typeCandidat === 'AUCUN')) {
+    return diagB2;
+  }
+  if (diagB1 && diagB1.typeCandidat !== 'AUCUN' && (!diagB2 || diagB2.typeCandidat === 'AUCUN')) {
+    return diagB1;
+  }
+
+  // 3️⃣ Par défaut, on renvoie l'analyse comme B2 (si disponible) sinon B1
+  return diagB2 || diagB1;
+}

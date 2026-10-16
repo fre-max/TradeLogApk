@@ -46,6 +46,10 @@ import { dessinerResultatIndicateur, dessinerPrimitivesIndicateur } from '@/lib/
 import type { IndicatorScript, IndicatorExecutionResult } from '@/types/indicatorScript';
 import { sonderSetupComplet } from '@/lib/bot/laboratoire/sondeurSetup';
 import { useLaboratoireStore } from '@/store/laboratoireStore';
+import {
+  diagnostiquerBougieDoji,
+  type RapportDiagnosticDoji,
+} from '@/lib/indicators/liquidationReintegration';
 
 // ─── 🛠️ Seuils de détection tactile élargis ──────────────────────────────────
 // 30px de tolérance au lieu de 5px par défaut pour faciliter la sélection au doigt.
@@ -152,6 +156,11 @@ const CONFIG_OUTILS: Record<string, {
     ancres: 1,
     instructions: ['🎯 Cliquez sur la bougie du Sweep pour sonder le setup'],
     couleurPreview: '#ec4899',
+  },
+  'inspect-setup': {
+    ancres: 1,
+    instructions: ['🔍 Cliquez sur une bougie (B1 ou B2) pour diagnostiquer le setup Liq/Reint'],
+    couleurPreview: '#06b6d4',
   },
 };
 
@@ -629,6 +638,9 @@ export const BacktestChart = React.forwardRef<
     initDureeEstimeeLargeur: number;
     initDureeEstimeeBougies: number;
   } | null>(null);
+
+  // 🔍 Diagnostic interactif de Setup Liquidation & Réintégration
+  const [diagnosticDoji, setDiagnosticDoji] = useState<RapportDiagnosticDoji | null>(null);
 
   // Réf stable pour les callbacks
   const stateRef = useRef({
@@ -1532,6 +1544,13 @@ export const BacktestChart = React.forwardRef<
   // Clavier : Raccourcis pour Duplication (Ctrl+D / D) et Suppression (Delete)
   useEffect(() => {
     const gererTouche = (e: KeyboardEvent) => {
+      // Annulation / Fermeture avec Échap
+      if (e.key === 'Escape') {
+        if (diagnosticDoji) {
+          setDiagnosticDoji(null);
+        }
+      }
+
       if (activeTool !== null) return;
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
 
@@ -1663,6 +1682,32 @@ export const BacktestChart = React.forwardRef<
         }
         if (onDrawingComplete) {
           onDrawingComplete();
+        }
+        return;
+      }
+
+      // 🔍 Si l'outil actif est l'inspecteur / diagnostic de setup Liq / Reint
+      if (activeTool === 'inspect-setup') {
+        const rect = conteneur.getBoundingClientRect();
+        const px = event.clientX - rect.left;
+        const logical = chart.timeScale().coordinateToLogical(px);
+        if (logical !== null) {
+          const targetIndex = Math.round(logical);
+          const completes = stateRef.current.donneesCompletes;
+          if (targetIndex >= 0 && targetIndex < completes.length) {
+            console.log(`🔍 [BacktestChart] Diagnostic demandé sur la bougie #${targetIndex}`);
+            const scriptLiq = scriptsIndicateurs.find((s) => s.id === 'script-liquidation-reintegration');
+            const rapport = diagnostiquerBougieDoji(completes, targetIndex, scriptLiq?.parametres);
+            if (rapport) {
+              setDiagnosticDoji(rapport);
+              useUIStore.getState().addToast(
+                rapport.estValide
+                  ? `Setup #${targetIndex} validé (${rapport.typeCandidat})`
+                  : `Diagnostic #${targetIndex} affiché en haut à droite`,
+                rapport.estValide ? 'success' : 'info'
+              );
+            }
+          }
         }
         return;
       }
@@ -1930,6 +1975,110 @@ export const BacktestChart = React.forwardRef<
             </button>
           )}
         </div>
+
+        {/* ── 🔍 Encart Flottant de Diagnostic Liq / Reint (Checklist en direct) ── */}
+        {diagnosticDoji && (
+          <div className="absolute top-2 right-2 sm:right-4 z-30 w-80 sm:w-96 max-h-[82vh] overflow-y-auto rounded-xl p-3 shadow-2xl backdrop-blur-md border border-cyan-500/40 bg-[#131722]/95 text-slate-100 flex flex-col gap-2.5">
+            {/* En-tête */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-cyan-400 text-sm">🔍</span>
+                <span className="font-bold text-xs text-white">Diagnostic Setup Liq / Reint</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-950/80 text-cyan-300 border border-cyan-700/50">
+                  #{diagnosticDoji.indexBougie}
+                </span>
+                {diagnosticDoji.roleBougieCliquee && (
+                  <span className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/10 text-slate-300">
+                    {diagnosticDoji.roleBougieCliquee === 'B1' ? 'Bougie 1' : 'Bougie 2'}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setDiagnosticDoji(null)}
+                className="w-5 h-5 flex items-center justify-center rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors text-xs"
+                title="Fermer le diagnostic (Échap)"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Verdict global */}
+            <div
+              className={`p-2 rounded-lg text-xs font-medium border ${
+                diagnosticDoji.estValide
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+              }`}
+            >
+              <div className="font-bold">{diagnosticDoji.verdict}</div>
+              <div className="text-[10px] opacity-80 mt-0.5">
+                Type candidat : <span className="font-semibold">{diagnosticDoji.typeCandidat}</span>
+              </div>
+            </div>
+
+            {/* Checklist détaillée des 5 conditions */}
+            <div className="flex flex-col gap-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold px-0.5">
+                Vérification des conditions :
+              </div>
+              {diagnosticDoji.conditions.map((cond, idx) => (
+                <div
+                  key={idx}
+                  className={`p-2 rounded-lg text-[11px] border transition-colors ${
+                    cond.valide
+                      ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
+                      : 'bg-rose-950/20 border-rose-500/30 text-rose-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span>
+                      {cond.valide ? '✅' : '❌'} {cond.titre}
+                    </span>
+                    <span className="text-[9.5px] opacity-75 font-mono">
+                      {cond.valide ? 'PASS' : 'ÉCHEC'}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-col gap-0.5 text-[10px] font-mono text-slate-300">
+                    <div>
+                      <span className="text-slate-400">Mesuré :</span> {cond.valeurMesuree}
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Requis :</span> {cond.valeurRequise}
+                    </div>
+                  </div>
+                  <div className="mt-1 text-[9.5px] italic text-slate-300/90 border-t border-white/5 pt-1">
+                    💡 {cond.explication}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Données de prix détaillées */}
+            <div className="p-2 rounded-lg bg-black/30 border border-white/5 text-[10px] font-mono text-slate-400 flex flex-col gap-0.5">
+              <div className="flex justify-between">
+                <span>B1 Open: {diagnosticDoji.detailsPrix.open1}</span>
+                <span>B1 Close: {diagnosticDoji.detailsPrix.close1}</span>
+                <span>Range1: {diagnosticDoji.detailsPrix.range1.toFixed(4)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>B2 Open: {diagnosticDoji.detailsPrix.open2}</span>
+                <span>B2 Close: {diagnosticDoji.detailsPrix.close2}</span>
+                <span>Corps2: {diagnosticDoji.detailsPrix.corps2.toFixed(4)}</span>
+              </div>
+            </div>
+
+            {/* Bouton pour ajuster les paramètres de l'indicateur */}
+            {onOpenIndicatorModal && (
+              <button
+                onClick={() => onOpenIndicatorModal('script-liquidation-reintegration', 'configuration')}
+                className="w-full py-1.5 px-3 bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/50 text-cyan-200 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                title="Ouvrir les réglages pour ajuster les tolérances et multiplicateurs"
+              >
+                <span>⚙️</span> Ajuster les Paramètres Liq / Reint
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Barre d'outils d'actions flottante (dessin sélectionné OU position canvas) */}
         {(idDessinSelectionne || positionSelectionneeId) && activeTool === null && (
