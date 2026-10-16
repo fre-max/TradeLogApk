@@ -1,6 +1,38 @@
 import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualLabel, VisualLine, VisualPoint } from '@/types/indicatorScript';
 import { determinerStepPrix } from '@/lib/indicators/unmitigatedVolumeProfile';
+import { validerDojiPersonnalise } from './liquidationReintegration';
+
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur combine deux analyses complémentaires :
+ *  1. Le chandelier Doji de retournement (Liq / Reint = Spring / UTAD)
+ *  2. Le palier horizontal dense formé par le chevauchement des mèches extrêmes
+ *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 Condition du Doji : fonction `validerDojiPersonnalise()` dans `liquidationReintegration.ts`.
+ *  👉 Condition du Palier Extrême : fonction `validerPalierExtreme()` (vers la ligne 170).
+ *
+ * 🎯 LES CONDITIONS CLÉS DU SETUP POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── CONDITION 1 : Formation du Doji Personnalisé ─────────────────────────────
+ *  • B1 impulsive dans le sens du piège + B2 puissante en sens inverse.
+ *  • Clôture de B2 au niveau d'Open1 (dépassement max: 25%, déficit max: 5%).
+ *
+ * ─── CONDITION 2 : Chevauchement des Mèches Extrêmes (dans validerPalierExtreme) ─
+ *  • Au moins `minBougiesChevauchement` bougies (défaut: 2) ont aligné leurs mèches
+ *    sur le même palier de prix (support ou résistance horizontal).
+ *
+ * ─── CONDITION 3 : Balayage par la Mèche du Doji (dans validerPalierExtreme) ──
+ *  • Pour Achat : le point bas de la mèche doit traverser sous le palier.
+ *  • Pour Vente : le point haut de la mèche doit percer au-dessus du palier.
+ *
+ * ─── CONDITION 4 : Intégrité Unmitigated (dans validerPalierExtreme) ──────────
+ *  • Aucune bougie entre la fin du palier et le Doji ne doit avoir clôturé au-delà.
+ * ==============================================================================
+ */
 
 // ─── 📊 Structures et Types de Données ────────────────────────────────────────
 
@@ -98,6 +130,73 @@ export interface ResultatChevauchementExtremes {
   };
 }
 
+// ─── 🎯 FONCTION CENTRALE DE VALIDATION DU PALIER EXTRÊME (POUR LE DÉVELOPPEUR) ───
+
+/**
+ * Paramètres pour tester si un palier de chevauchement d'extrêmes est valide.
+ */
+export interface ParametresValidationPalierExtreme {
+  prixPalier: number;
+  nbBougies: number;
+  indices: number[];
+  direction: 'ACHAT' | 'VENTE';
+  prixExtreme: number;
+  minBougies?: number;
+  exigerIntact?: boolean;
+  bougies: Bougie[];
+  indexFinScan: number;
+}
+
+/**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DU PALIER (POUR LE DÉVELOPPEUR DÉBUTANT)
+ * ==============================================================================
+ * Rassemble en UN SEUL BLOC toutes les conditions pour qu'un palier extrême
+ * soit considéré comme balayé et valide pour le setup.
+ *
+ * 💡 MODIFICATION RAPIDE :
+ *  • Pour désactiver l'intégrité (Unmitigated) : commentez la CONDITION 3.
+ *  • Pour accepter les paliers à 1 seule bougie : mettez `minBougies: 1`.
+ *
+ * @returns {boolean} true si le palier respecte TOUTES les conditions, false sinon
+ */
+export function validerPalierExtreme(params: ParametresValidationPalierExtreme): boolean {
+  const {
+    prixPalier,
+    nbBougies,
+    indices,
+    direction,
+    prixExtreme,
+    minBougies = 2,
+    exigerIntact = true,
+    bougies,
+    indexFinScan,
+  } = params;
+
+  // ─── 🔍 CONDITION 1 : Densité minimale de chevauchement ─────────────────────
+  if (nbBougies < minBougies) return false;
+
+  // ─── 🔍 CONDITION 2 : Balayage effectif par l'extrême du Doji ───────────────
+  // Achat : le creux du setup doit avoir percé SOUS le palier
+  // Vente : le sommet du setup doit avoir percé AU-DESSUS du palier
+  if (direction === 'ACHAT' && prixExtreme >= prixPalier) return false;
+  if (direction === 'VENTE' && prixExtreme <= prixPalier) return false;
+
+  // ─── 🔍 CONDITION 3 : Intégrité (Unmitigated / Palier non clôturé au-delà) ───
+  if (exigerIntact && indices.length > 0) {
+    const dernierIndexPalier = Math.max(...indices);
+    for (let j = dernierIndexPalier + 1; j <= indexFinScan; j++) {
+      if (bougies[j]) {
+        if (direction === 'ACHAT' && bougies[j].close < prixPalier) return false;
+        if (direction === 'VENTE' && bougies[j].close > prixPalier) return false;
+      }
+    }
+  }
+
+  // ✅ Palier validé !
+  return true;
+}
+
 // ─── 🔍 Fonctions de Détection des Paliers d'Extrêmes ─────────────────────────
 
 /**
@@ -159,31 +258,20 @@ export function identifierPalierExtremeAdapte(
   let maxChevauchement = 0;
 
   for (const [prixPalier, info] of cartePaliers.entries()) {
-    // Condition de volume de bougies
-    if (info.nbBougies < minBougies) continue;
+    // ─── 🎯 VÉRIFICATION DES CONDITIONS DU PALIER ───
+    const palierValide = validerPalierExtreme({
+      prixPalier,
+      nbBougies: info.nbBougies,
+      indices: info.indices,
+      direction,
+      prixExtreme,
+      minBougies,
+      exigerIntact,
+      bougies,
+      indexFinScan,
+    });
 
-    // Condition de balayage géométrique par le setup :
-    // - En Achat : le creux du setup doit avoir plongé sous le palier (prixExtreme < prixPalier)
-    // - En Vente : le sommet du setup doit avoir percé au-dessus du palier (prixExtreme > prixPalier)
-    if (direction === 'ACHAT' && prixExtreme >= prixPalier) continue;
-    if (direction === 'VENTE' && prixExtreme <= prixPalier) continue;
-
-    // Condition de niveau intact (Unmitigated) :
-    // Aucune bougie entre la fin du palier et le setup ne doit avoir clôturé au-delà
-    const dernierIndexPalier = Math.max(...info.indices);
-    if (exigerIntact) {
-      let estViole = false;
-      for (let j = dernierIndexPalier + 1; j <= indexFinScan; j++) {
-        if (direction === 'ACHAT' && bougies[j].close < prixPalier) {
-          estViole = true;
-          break;
-        } else if (direction === 'VENTE' && bougies[j].close > prixPalier) {
-          estViole = true;
-          break;
-        }
-      }
-      if (estViole) continue;
-    }
+    if (!palierValide) continue;
 
     // Le palier le plus liquide est celui avec le plus fort nombre de bougies de chevauchement
     if (info.nbBougies > maxChevauchement) {
@@ -274,58 +362,13 @@ export function calculerLiquidationSweepChevauchementExtremes(
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
 
-    const range1 = b1.high - b1.low;
-    const range2 = b2.high - b2.low;
-    const corps2 = Math.abs(b2.open - b2.close);
-    const hauteurMoyenne = (range1 + range2) / 2;
-    if (hauteurMoyenne <= 0) continue;
-
-    // Filtre optionnel de tendance antérieure
-    let tendanceHausse = true;
-    let tendanceBaisse = true;
-    if (activerFiltreTendance) {
-      const idxTrend = Math.max(0, i - trendBars);
-      const openTrend = bougies[idxTrend].open;
-      tendanceHausse = openTrend < b2.open;
-      tendanceBaisse = openTrend > b2.open;
-    }
-
-    // Direction candidate
-    const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
-    const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
-    if (!estCandidatAchat && !estCandidatVente) continue;
-
-    // 3️⃣ Proximité asymétrique
-    const ecartPrix = Math.abs(b1.open - b2.close);
-    const ratioEcart = ecartPrix / hauteurMoyenne;
-    let situationCloture: 'DEPASSEMENT' | 'RETRAIT' = 'RETRAIT';
-    let estValideProximite = false;
-
-    if (estCandidatAchat) {
-      if (b2.close >= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    } else if (estCandidatVente) {
-      if (b2.close <= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    }
-    if (!estValideProximite) continue;
-
-    // 4️⃣ Filtre de dynamisme d'impulsion
+    // Moyennes historiques pour le Doji
+    let moyRange = 0;
+    let moyCorps = 0;
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
       const nbBougiesHist = indexFinHist - indexDebutHist + 1;
-
       if (nbBougiesHist >= 3) {
         let sommeRanges = 0;
         let sommeCorps = 0;
@@ -333,14 +376,40 @@ export function calculerLiquidationSweepChevauchementExtremes(
           sommeRanges += (bougies[k].high - bougies[k].low);
           sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
         }
-        const moyRange = sommeRanges / nbBougiesHist;
-        const moyCorps = sommeCorps / nbBougiesHist;
-
-        const b1AssezGrande = range1 >= (multiplicateurBougie1 * moyRange);
-        const corps2AssezGrand = corps2 >= (multiplicateurCorps2 * moyCorps);
-        if (!b1AssezGrande || !corps2AssezGrand) continue;
+        moyRange = sommeRanges / nbBougiesHist;
+        moyCorps = sommeCorps / nbBougiesHist;
       }
     }
+
+    const idxTrend = Math.max(0, i - trendBars);
+    const openTrend = bougies[idxTrend].open;
+
+    // ─── 🎯 VÉRIFICATION CENTRALISÉE DU DOJI ───
+    const valDoji = validerDojiPersonnalise({
+      b1,
+      b2,
+      moyRangeHist: moyRange,
+      moyCorpsHist: moyCorps,
+      openTendance: openTrend,
+      activerAchat,
+      activerVente,
+      activerFiltreTaille,
+      activerFiltreTendance,
+      toleranceDeficit,
+      toleranceDepassement,
+      multiplicateurBougie1,
+      multiplicateurCorps2,
+    });
+
+    if (!valDoji.estValide) continue;
+
+    const estCandidatAchat = valDoji.type === 'ACHAT';
+    const estCandidatVente = valDoji.type === 'VENTE';
+    const situationCloture = valDoji.situationCloture;
+    const ecartPrix = valDoji.ecartPrix;
+    const ratioEcart = valDoji.ratioEcart;
+    const range1 = valDoji.rangeBougie1;
+    const corps2 = valDoji.corpsBougie2;
 
     // 5️⃣ Détermination du point extrême balayeur et de la fenêtre d'analyse
     let prixExtreme = 0;

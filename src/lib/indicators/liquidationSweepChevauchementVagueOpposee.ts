@@ -2,6 +2,34 @@ import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualLabel, VisualLine, VisualPoint } from '@/types/indicatorScript';
 import { determinerStepPrix, type PointZigZag } from '@/lib/indicators/unmitigatedVolumeProfile';
 import { detecterPivotsZigZagAvance } from '@/lib/bot/modules/03_tp_uop/unmitigatedOverlapProfile';
+import { validerDojiPersonnalise } from './liquidationReintegration';
+
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur combine deux analyses complémentaires :
+ *  1. Le chandelier Doji de retournement (Liq / Reint = Spring / UTAD)
+ *  2. Le palier horizontal de trafic de la vague ZigZag opposée précédente
+ *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 Condition du Doji : fonction `validerDojiPersonnalise()` dans `liquidationReintegration.ts`.
+ *  👉 Condition de la Vague Opposée : fonction `validerPalierVagueOpposee()` (vers la ligne 125).
+ *
+ * 🎯 LES CONDITIONS CLÉS DU SETUP POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── CONDITION 1 : Formation du Doji Personnalisé ─────────────────────────────
+ *  • B1 impulsive dans le sens du piège + B2 puissante en sens inverse.
+ *  • Clôture de B2 au niveau d'Open1 (dépassement max: 25%, déficit max: 5%).
+ *
+ * ─── CONDITION 2 : Trafic de la Vague Opposée (dans validerPalierVagueOpposee) ─
+ *  • Le palier doit avoir été traversé par au moins `minBougiesChevauchement` bougies (défaut: 2).
+ *
+ * ─── CONDITION 3 : Balayage par la Mèche du Doji (dans validerPalierVagueOpposee) ─
+ *  • Pour Achat : le point bas de la mèche doit traverser sous le palier opposé.
+ *  • Pour Vente : le point haut de la mèche doit percer au-dessus du palier opposé.
+ * ==============================================================================
+ */
 
 // ─── 📊 Structures et Types de Données ────────────────────────────────────────
 
@@ -91,6 +119,61 @@ export interface ResultatChevauchementVagueOpposee {
     totalVentes: number;
     maxBougiesVagueOpposee: number;
   };
+}
+
+/**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DU PALIER DE LA VAGUE OPPOSÉE
+ * ==============================================================================
+ * Cette fonction rassemble TOUTES les conditions qu'un palier de la vague
+ * opposée doit respecter pour être retenu comme niveau balayé par le setup.
+ *
+ * Pour un développeur junior :
+ * Si tu souhaites assouplir ou modifier les règles de la vague opposée,
+ * c'est ICI qu'il faut intervenir !
+ *
+ * Règles vérifiées :
+ *  1️⃣ Le palier a été touché par au moins `minBougies` (trafic suffisant)
+ *  2️⃣ En ACHAT : la mèche basse du setup a balayé sous le palier (prixExtreme < palierPrix)
+ *  3️⃣ En VENTE : la mèche haute du setup a balayé au-dessus du palier (prixExtreme > palierPrix)
+ *
+ * Exemple :
+ * const estValide = validerPalierVagueOpposee({
+ *   direction: 'ACHAT',
+ *   prixExtreme: 1.0920,
+ *   palierPrix: 1.0950,
+ *   nbBougiesSurPalier: 4,
+ *   minBougiesRequises: 2
+ * }); // Renvoie true
+ */
+export function validerPalierVagueOpposee(params: {
+  direction: 'ACHAT' | 'VENTE';
+  prixExtreme: number;
+  palierPrix: number;
+  nbBougiesSurPalier: number;
+  minBougiesRequises: number;
+}): boolean {
+  const { direction, prixExtreme, palierPrix, nbBougiesSurPalier, minBougiesRequises } = params;
+
+  // 1️⃣ Règle du trafic minimum
+  if (nbBougiesSurPalier < minBougiesRequises) {
+    return false;
+  }
+
+  // 2️⃣ Règle géométrique de balayage (sweep)
+  if (direction === 'ACHAT') {
+    // La mèche basse doit percer SOUS le palier de la vague descendante
+    if (prixExtreme >= palierPrix) {
+      return false;
+    }
+  } else {
+    // La mèche haute doit percer AU-DESSUS du palier de la vague montante
+    if (prixExtreme <= palierPrix) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // ─── 🔍 Analyse du Chevauchement dans la Vague Opposée ────────────────────────
@@ -184,13 +267,16 @@ export function trouverPalierVagueOpposee(
   let maxBougies = 0;
 
   for (const [palierPrix, nbB] of buckets.entries()) {
-    if (nbB < minBougies) continue;
+    // ✅ Utilisation de la fonction centrale de validation du palier
+    const estValide = validerPalierVagueOpposee({
+      direction,
+      prixExtreme,
+      palierPrix,
+      nbBougiesSurPalier: nbB,
+      minBougiesRequises: minBougies,
+    });
 
-    // Condition géométrique de balayage :
-    // - En Achat : notre mèche extrême basse doit avoir dépassé sous ce palier (prixExtreme < palierPrix)
-    // - En Vente : notre mèche extrême haute doit avoir dépassé sur ce palier (prixExtreme > palierPrix)
-    if (direction === 'ACHAT' && prixExtreme >= palierPrix) continue;
-    if (direction === 'VENTE' && prixExtreme <= palierPrix) continue;
+    if (!estValide) continue;
 
     if (nbB > maxBougies) {
       maxBougies = nbB;
@@ -293,57 +379,13 @@ export function calculerLiquidationSweepChevauchementVagueOpposee(
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
 
-    const range1 = b1.high - b1.low;
-    const range2 = b2.high - b2.low;
-    const corps2 = Math.abs(b2.open - b2.close);
-    const hauteurMoyenne = (range1 + range2) / 2;
-    if (hauteurMoyenne <= 0) continue;
-
-    // Filtre optionnel de tendance
-    let tendanceHausse = true;
-    let tendanceBaisse = true;
-    if (activerFiltreTendance) {
-      const idxTrend = Math.max(0, i - trendBars);
-      const openTrend = bougies[idxTrend].open;
-      tendanceHausse = openTrend < b2.open;
-      tendanceBaisse = openTrend > b2.open;
-    }
-
-    const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
-    const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
-    if (!estCandidatAchat && !estCandidatVente) continue;
-
-    // Proximité asymétrique
-    const ecartPrix = Math.abs(b1.open - b2.close);
-    const ratioEcart = ecartPrix / hauteurMoyenne;
-    let situationCloture: 'DEPASSEMENT' | 'RETRAIT' = 'RETRAIT';
-    let estValideProximite = false;
-
-    if (estCandidatAchat) {
-      if (b2.close >= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    } else if (estCandidatVente) {
-      if (b2.close <= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    }
-    if (!estValideProximite) continue;
-
-    // Filtre de dynamisme
+    // Moyennes historiques pour le Doji
+    let moyRange = 0;
+    let moyCorps = 0;
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
       const nbBougiesHist = indexFinHist - indexDebutHist + 1;
-
       if (nbBougiesHist >= 3) {
         let sommeRanges = 0;
         let sommeCorps = 0;
@@ -351,14 +393,40 @@ export function calculerLiquidationSweepChevauchementVagueOpposee(
           sommeRanges += (bougies[k].high - bougies[k].low);
           sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
         }
-        const moyRange = sommeRanges / nbBougiesHist;
-        const moyCorps = sommeCorps / nbBougiesHist;
-
-        const b1AssezGrande = range1 >= (multiplicateurBougie1 * moyRange);
-        const corps2AssezGrand = corps2 >= (multiplicateurCorps2 * moyCorps);
-        if (!b1AssezGrande || !corps2AssezGrand) continue;
+        moyRange = sommeRanges / nbBougiesHist;
+        moyCorps = sommeCorps / nbBougiesHist;
       }
     }
+
+    const idxTrend = Math.max(0, i - trendBars);
+    const openTrend = bougies[idxTrend].open;
+
+    // ─── 🎯 VÉRIFICATION CENTRALISÉE DU DOJI ───
+    const valDoji = validerDojiPersonnalise({
+      b1,
+      b2,
+      moyRangeHist: moyRange,
+      moyCorpsHist: moyCorps,
+      openTendance: openTrend,
+      activerAchat,
+      activerVente,
+      activerFiltreTaille,
+      activerFiltreTendance,
+      toleranceDeficit,
+      toleranceDepassement,
+      multiplicateurBougie1,
+      multiplicateurCorps2,
+    });
+
+    if (!valDoji.estValide) continue;
+
+    const estCandidatAchat = valDoji.type === 'ACHAT';
+    const estCandidatVente = valDoji.type === 'VENTE';
+    const situationCloture = valDoji.situationCloture;
+    const ecartPrix = valDoji.ecartPrix;
+    const ratioEcart = valDoji.ratioEcart;
+    const range1 = valDoji.rangeBougie1;
+    const corps2 = valDoji.corpsBougie2;
 
     let prixExtreme = 0;
     let bougieExtreme: 1 | 2 = 1;

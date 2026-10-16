@@ -1,5 +1,38 @@
 import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualLabel, VisualLine, VisualBox, VisualPoint } from '@/types/indicatorScript';
+import { validerDojiPersonnalise } from './liquidationReintegration';
+
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur combine deux analyses complémentaires :
+ *  1. Le chandelier Doji de retournement (Liq / Reint = Spring / UTAD)
+ *  2. La Cause Point & Figure (P&F) : palier horizontal carré formé par des colonnes alignées
+ *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 Condition du Doji : fonction `validerDojiPersonnalise()` dans `liquidationReintegration.ts`.
+ *  👉 Condition du Palier P&F : fonction `validerPalierPF()` (vers la ligne 255).
+ *
+ * 🎯 LES CONDITIONS CLÉS DU SETUP POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── CONDITION 1 : Formation du Doji Personnalisé ─────────────────────────────
+ *  • B1 impulsive dans le sens du piège + B2 puissante en sens inverse.
+ *  • Clôture de B2 au niveau d'Open1 (dépassement max: 25%, déficit max: 5%).
+ *
+ * ─── CONDITION 2 : Structure Carrée P&F (dans validerPalierPF) ────────────────
+ *  • Au moins `minColonnesAlignees` colonnes alignées (défaut: 2).
+ *  • En ACHAT : support formé par des bas de colonnes 'O'.
+ *  • En VENTE : résistance formée par des hauts de colonnes 'X'.
+ *
+ * ─── CONDITION 3 : Non-Consommation (Palier Intact / Unmitigated) ─────────────
+ *  • Le palier ne doit jamais avoir été clôturé au-delà avant notre bougie de setup.
+ *
+ * ─── CONDITION 4 : Balayage (Sweep) par la Mèche du Doji ─────────────────────
+ *  • Pour Achat : le point bas de la mèche doit traverser sous le support P&F.
+ *  • Pour Vente : le point haut de la mèche doit percer au-dessus de la résistance P&F.
+ * ==============================================================================
+ */
 
 /**
  * Options de configuration pour l'indicateur combiné :
@@ -242,6 +275,89 @@ export function construireColonnesPF(
 }
 
 /**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DU PALIER POINT & FIGURE (P&F)
+ * ==============================================================================
+ * Cette fonction rassemble TOUTES les conditions qu'un palier horizontal P&F
+ * (Support 'O' ou Résistance 'X') doit respecter pour être retenu comme niveau balayé.
+ *
+ * Pour un développeur junior :
+ * Si tu souhaites assouplir ou modifier les règles de sélection P&F,
+ * c'est ICI qu'il faut intervenir !
+ *
+ * Règles vérifiées :
+ *  1️⃣ Le palier n'est pas consommé (intact / unmitigated)
+ *  2️⃣ Le palier compte au moins `minColonnesAlignees` colonnes alignées (structure solide)
+ *  3️⃣ En ACHAT : la mèche basse du setup a balayé sous le support P&F (prixExtreme < prixNiveau)
+ *  4️⃣ En ACHAT : le support reste sous la référence haute (prixNiveau <= prixReference)
+ *  5️⃣ En VENTE : la mèche haute du setup a balayé au-dessus de la résistance P&F (prixExtreme > prixNiveau)
+ *  6️⃣ En VENTE : la résistance reste au-dessus de la référence basse (prixNiveau >= prixReference)
+ *
+ * Exemple :
+ * const estValide = validerPalierPF({
+ *   direction: 'ACHAT',
+ *   prixExtreme: 1.0920,
+ *   prixNiveau: 1.0950,
+ *   prixReference: 1.1000,
+ *   nbColonnesAlignees: 3,
+ *   minColonnesAlignees: 2,
+ *   estConsomme: false
+ * }); // Renvoie true
+ */
+export function validerPalierPF(params: {
+  direction: 'ACHAT' | 'VENTE';
+  prixExtreme: number;
+  prixNiveau: number;
+  prixReference: number;
+  nbColonnesAlignees: number;
+  minColonnesAlignees: number;
+  estConsomme: boolean;
+}): boolean {
+  const {
+    direction,
+    prixExtreme,
+    prixNiveau,
+    prixReference,
+    nbColonnesAlignees,
+    minColonnesAlignees,
+    estConsomme,
+  } = params;
+
+  // 1️⃣ Le palier ne doit pas avoir été violé / consommé antérieurement
+  if (estConsomme) {
+    return false;
+  }
+
+  // 2️⃣ La structure P&F doit comporter assez de colonnes alignées
+  if (nbColonnesAlignees < minColonnesAlignees) {
+    return false;
+  }
+
+  // 3️⃣ Balayage géométrique et cohérence des bornes de prix
+  if (direction === 'ACHAT') {
+    // La mèche basse doit balayer SOUS le support
+    if (prixExtreme >= prixNiveau) {
+      return false;
+    }
+    // Le support doit rester sous la référence haute
+    if (prixNiveau > prixReference) {
+      return false;
+    }
+  } else {
+    // La mèche haute doit balayer AU-DESSUS de la résistance
+    if (prixExtreme <= prixNiveau) {
+      return false;
+    }
+    // La résistance doit rester au-dessus de la référence basse
+    if (prixNiveau < prixReference) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * Recherche le palier horizontal P&F (support ou résistance le plus adapté)
  * qui a été balayé par la manipulation immédiate :
  * 1. Palier intact (Unmitigated) : aucune clôture antérieure n'est passée à travers
@@ -274,15 +390,9 @@ function identifierPalierPFLePlusAdapte(
       const colBase = colonnesO[i];
       const prixSupport = colBase.bas;
 
-      // Le support doit être au-dessus du creux extrême balayé et rester sous la référence haute
-      if (prixExtreme >= prixSupport || prixSupport > prixReferenceHaut) {
-        continue;
-      }
-
       // 1️⃣ Vérification de Non-Consommation (Unmitigated / Palier Intact) :
-      // Aucune bougie entre la fin de cette colonne et l'avant-dernière bougie ne doit avoir clôturé SOUS le palier
+      let estConsomme = false;
       if (exigerPalierIntact) {
-        let estConsomme = false;
         const indexFinControle = Math.max(colBase.indexFin + 1, indexSetup - 2);
         for (let k = colBase.indexFin + 1; k < indexFinControle; k++) {
           if (bougies[k] && bougies[k].close < prixSupport) {
@@ -290,7 +400,6 @@ function identifierPalierPFLePlusAdapte(
             break;
           }
         }
-        if (estConsomme) continue;
       }
 
       // 2️⃣ Comptage des colonnes 'O' alignées
@@ -314,7 +423,18 @@ function identifierPalierPFLePlusAdapte(
         }
       }
 
-      if (countAlignes >= minColonnesAlignees) {
+      // ✅ Utilisation de la fonction centrale de validation du palier P&F
+      const estValide = validerPalierPF({
+        direction: 'ACHAT',
+        prixExtreme,
+        prixNiveau: prixSupport,
+        prixReference: prixReferenceHaut,
+        nbColonnesAlignees: countAlignes,
+        minColonnesAlignees,
+        estConsomme,
+      });
+
+      if (!estValide) continue;
         let solidite: 'CARRE_MAJEUR' | 'SOLIDE' | 'STANDARD' = 'STANDARD';
         if (countAlignes >= 4) solidite = 'CARRE_MAJEUR';
         else if (countAlignes >= 3) solidite = 'SOLIDE';
@@ -369,7 +489,6 @@ function identifierPalierPFLePlusAdapte(
           prixPremiereLiquidation: prixPremLiq,
           scorePertinence,
         });
-      }
     }
   } else {
     // 🔴 Recherche de résistances formées par les hauts de colonnes 'X'
@@ -379,13 +498,9 @@ function identifierPalierPFLePlusAdapte(
       const colBase = colonnesX[i];
       const prixResistance = colBase.haut;
 
-      if (prixExtreme <= prixResistance || prixResistance < prixReferenceBas) {
-        continue;
-      }
-
       // 1️⃣ Non-Consommation :
+      let estConsomme = false;
       if (exigerPalierIntact) {
-        let estConsomme = false;
         const indexFinControle = Math.max(colBase.indexFin + 1, indexSetup - 2);
         for (let k = colBase.indexFin + 1; k < indexFinControle; k++) {
           if (bougies[k] && bougies[k].close > prixResistance) {
@@ -393,7 +508,6 @@ function identifierPalierPFLePlusAdapte(
             break;
           }
         }
-        if (estConsomme) continue;
       }
 
       let countAlignes = 0;
@@ -416,10 +530,22 @@ function identifierPalierPFLePlusAdapte(
         }
       }
 
-      if (countAlignes >= minColonnesAlignees) {
-        let solidite: 'CARRE_MAJEUR' | 'SOLIDE' | 'STANDARD' = 'STANDARD';
-        if (countAlignes >= 4) solidite = 'CARRE_MAJEUR';
-        else if (countAlignes >= 3) solidite = 'SOLIDE';
+      // ✅ Utilisation de la fonction centrale de validation du palier P&F
+      const estValide = validerPalierPF({
+        direction: 'VENTE',
+        prixExtreme,
+        prixNiveau: prixResistance,
+        prixReference: prixReferenceBas,
+        nbColonnesAlignees: countAlignes,
+        minColonnesAlignees,
+        estConsomme,
+      });
+
+      if (!estValide) continue;
+
+      let solidite: 'CARRE_MAJEUR' | 'SOLIDE' | 'STANDARD' = 'STANDARD';
+      if (countAlignes >= 4) solidite = 'CARRE_MAJEUR';
+      else if (countAlignes >= 3) solidite = 'SOLIDE';
 
         // 3️⃣ Détection Double Liquidation :
         let estDoubleLiq = false;
@@ -470,7 +596,6 @@ function identifierPalierPFLePlusAdapte(
           prixPremiereLiquidation: prixPremLiq,
           scorePertinence,
         });
-      }
     }
   }
 
@@ -589,52 +714,13 @@ export function calculerLiquidationSweepPointFigure(
   for (let i = 1; i < bougies.length; i++) {
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
-
-    const range1 = b1.high - b1.low;
-    const range2 = b2.high - b2.low;
-    const corps2 = Math.abs(b2.open - b2.close);
-    const hauteurMoyenne = (range1 + range2) / 2;
-    if (hauteurMoyenne <= 0) continue;
-
-    const idxTrend = Math.max(0, i - trendBars);
-    const openTrend = bougies[idxTrend].open;
-    const tendanceHausse = !activerFiltreTendance || openTrend < b2.open;
-    const tendanceBaisse = !activerFiltreTendance || openTrend > b2.open;
-
-    const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
-    const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
-    if (!estCandidatAchat && !estCandidatVente) continue;
-
-    const ecartPrix = Math.abs(b1.open - b2.close);
-    const ratioEcart = ecartPrix / hauteurMoyenne;
-    let situationCloture: 'DEPASSEMENT' | 'RETRAIT' = 'RETRAIT';
-    let estValideProximite = false;
-
-    if (estCandidatAchat) {
-      if (b2.close >= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    } else if (estCandidatVente) {
-      if (b2.close <= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    }
-    if (!estValideProximite) continue;
-
-    // Filtre de momentum sur l'historique récent
+    // Moyennes historiques pour le Doji
+    let moyRange = 0;
+    let moyCorps = 0;
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
       const nbBougiesHist = indexFinHist - indexDebutHist + 1;
-
       if (nbBougiesHist >= 3) {
         let sommeRanges = 0;
         let sommeCorps = 0;
@@ -642,13 +728,40 @@ export function calculerLiquidationSweepPointFigure(
           sommeRanges += (bougies[k].high - bougies[k].low);
           sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
         }
-        const moyRange = sommeRanges / nbBougiesHist;
-        const moyCorps = sommeCorps / nbBougiesHist;
-        if (range1 < multiplicateurBougie1 * moyRange || corps2 < multiplicateurCorps2 * moyCorps) {
-          continue;
-        }
+        moyRange = sommeRanges / nbBougiesHist;
+        moyCorps = sommeCorps / nbBougiesHist;
       }
     }
+
+    const idxTrend = Math.max(0, i - trendBars);
+    const openTrend = bougies[idxTrend].open;
+
+    // ─── 🎯 VÉRIFICATION CENTRALISÉE DU DOJI ───
+    const valDoji = validerDojiPersonnalise({
+      b1,
+      b2,
+      moyRangeHist: moyRange,
+      moyCorpsHist: moyCorps,
+      openTendance: openTrend,
+      activerAchat,
+      activerVente,
+      activerFiltreTaille,
+      activerFiltreTendance,
+      toleranceDeficit,
+      toleranceDepassement,
+      multiplicateurBougie1,
+      multiplicateurCorps2,
+    });
+
+    if (!valDoji.estValide) continue;
+
+    const estCandidatAchat = valDoji.type === 'ACHAT';
+    const estCandidatVente = valDoji.type === 'VENTE';
+    const situationCloture = valDoji.situationCloture;
+    const ecartPrix = valDoji.ecartPrix;
+    const ratioEcart = valDoji.ratioEcart;
+    const range1 = valDoji.rangeBougie1;
+    const corps2 = valDoji.corpsBougie2;
 
     // Point extrême de liquidation
     let prixExtreme = 0;

@@ -8,6 +8,34 @@ import {
   type PalierChevauchement,
   type PalierSuperpositionVagues,
 } from '@/lib/bot/modules/03_tp_uop/unmitigatedOverlapProfile';
+import { validerDojiPersonnalise } from './liquidationReintegration';
+
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur combine deux analyses complémentaires :
+ *  1. Le chandelier Doji de retournement (Liq / Reint = Spring / UTAD)
+ *  2. La cartographie de chevauchement multi-vagues UOP (Zones Fortes superposées)
+ *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 Condition du Doji : fonction `validerDojiPersonnalise()` dans `liquidationReintegration.ts`.
+ *  👉 Condition du Palier Multi-Vagues : fonction `validerPalierMultiVagues()` (vers la ligne 185).
+ *
+ * 🎯 LES CONDITIONS CLÉS DU SETUP POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── CONDITION 1 : Formation du Doji Personnalisé ─────────────────────────────
+ *  • B1 impulsive dans le sens du piège + B2 puissante en sens inverse.
+ *  • Clôture de B2 au niveau d'Open1 (dépassement max: 25%, déficit max: 5%).
+ *
+ * ─── CONDITION 2 : Zone Forte UOP Superposée (dans validerPalierMultiVagues) ──
+ *  • Le palier doit cumuler au moins `seuilBougiesBleuFonce` bougies (défaut: 3).
+ *
+ * ─── CONDITION 3 : Balayage par la Mèche du Doji (dans validerPalierMultiVagues) ─
+ *  • Pour Achat : le point bas de la mèche doit traverser sous le palier.
+ *  • Pour Vente : le point haut de la mèche doit percer au-dessus du palier.
+ * ==============================================================================
+ */
 
 // ─── 📊 Structures et Types de Données ────────────────────────────────────────
 
@@ -93,6 +121,48 @@ export interface ResultatChevauchementMultiVagues {
     totalVentes: number;
     maxBougiesCumulees: number;
   };
+}
+
+// ─── 🎯 FONCTION CENTRALE DE VALIDATION DU PALIER MULTI-VAGUES (POUR LE DÉVELOPPEUR) ───
+
+/**
+ * Paramètres pour tester si un palier superposé UOP est une zone forte balayée valide.
+ */
+export interface ParametresValidationPalierMultiVagues {
+  palierPrix: number;
+  sommeBougies: number;
+  estBleuFonce: boolean;
+  seuilBleuFonce: number;
+  direction: 'ACHAT' | 'VENTE';
+  prixExtreme: number;
+}
+
+/**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DU PALIER MULTI-VAGUES (POUR LE DÉVELOPPEUR DÉBUTANT)
+ * ==============================================================================
+ * Rassemble en UN SEUL BLOC toutes les conditions pour qu'un palier superposé
+ * UOP soit considéré comme zone forte balayée par le Doji.
+ *
+ * 💡 MODIFICATION RAPIDE :
+ *  • Pour assouplir le seuil de zone forte : réduisez `seuilBleuFonce` (ex: 2 au lieu de 3).
+ *
+ * @returns {boolean} true si le palier respecte TOUTES les conditions, false sinon
+ */
+export function validerPalierMultiVagues(params: ParametresValidationPalierMultiVagues): boolean {
+  const { palierPrix, sommeBougies, estBleuFonce, seuilBleuFonce, direction, prixExtreme } = params;
+
+  // ─── 🔍 CONDITION 1 : Densité de Chevauchement (Zone Forte) ──────────────────
+  if (!estBleuFonce && sommeBougies < seuilBleuFonce) return false;
+
+  // ─── 🔍 CONDITION 2 : Balayage effectif par l'extrême du Doji ────────────────
+  // Achat : le creux du setup doit avoir plongé sous ce palier
+  // Vente : le sommet du setup doit avoir percé au-dessus de ce palier
+  if (direction === 'ACHAT' && prixExtreme >= palierPrix) return false;
+  if (direction === 'VENTE' && prixExtreme <= palierPrix) return false;
+
+  // ✅ Zone forte validée !
+  return true;
 }
 
 // ─── 🔍 Analyse de la Cartographie UOP Multi-Vagues ──────────────────────────
@@ -192,14 +262,17 @@ export function trouverZoneForteUOPAdaptee(
   const premierIndexVagues = vagues[0].indexDebut;
 
   for (const palier of mapSuperposee.values()) {
-    // Condition de densité : le palier doit atteindre le seuil de zone forte (bleu foncé)
-    if (!palier.estBleuFonce && palier.sommeBougies < seuilBleuFonce) continue;
+    // ─── 🎯 VÉRIFICATION DES CONDITIONS DU PALIER MULTI-VAGUES ───
+    const palierValide = validerPalierMultiVagues({
+      palierPrix: palier.prix,
+      sommeBougies: palier.sommeBougies,
+      estBleuFonce: palier.estBleuFonce,
+      seuilBleuFonce,
+      direction,
+      prixExtreme,
+    });
 
-    // Condition géométrique de balayage :
-    // - En Achat : notre creux doit avoir plongé sous ce palier (prixExtreme < palier.prix)
-    // - En Vente : notre sommet doit avoir dépassé sur ce palier (prixExtreme > palier.prix)
-    if (direction === 'ACHAT' && prixExtreme >= palier.prix) continue;
-    if (direction === 'VENTE' && prixExtreme <= palier.prix) continue;
+    if (!palierValide) continue;
 
     if (palier.sommeBougies > maxBougiesCumul) {
       maxBougiesCumul = palier.sommeBougies;
@@ -287,56 +360,13 @@ export function calculerLiquidationSweepChevauchementMultiVagues(
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
 
-    const range1 = b1.high - b1.low;
-    const range2 = b2.high - b2.low;
-    const corps2 = Math.abs(b2.open - b2.close);
-    const hauteurMoyenne = (range1 + range2) / 2;
-    if (hauteurMoyenne <= 0) continue;
-
-    let tendanceHausse = true;
-    let tendanceBaisse = true;
-    if (activerFiltreTendance) {
-      const idxTrend = Math.max(0, i - trendBars);
-      const openTrend = bougies[idxTrend].open;
-      tendanceHausse = openTrend < b2.open;
-      tendanceBaisse = openTrend > b2.open;
-    }
-
-    const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
-    const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
-    if (!estCandidatAchat && !estCandidatVente) continue;
-
-    // Proximité asymétrique
-    const ecartPrix = Math.abs(b1.open - b2.close);
-    const ratioEcart = ecartPrix / hauteurMoyenne;
-    let situationCloture: 'DEPASSEMENT' | 'RETRAIT' = 'RETRAIT';
-    let estValideProximite = false;
-
-    if (estCandidatAchat) {
-      if (b2.close >= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    } else if (estCandidatVente) {
-      if (b2.close <= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    }
-    if (!estValideProximite) continue;
-
-    // Filtre d'impulsion
+    // Moyennes historiques pour le Doji
+    let moyRange = 0;
+    let moyCorps = 0;
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
       const nbBougiesHist = indexFinHist - indexDebutHist + 1;
-
       if (nbBougiesHist >= 3) {
         let sommeRanges = 0;
         let sommeCorps = 0;
@@ -344,14 +374,40 @@ export function calculerLiquidationSweepChevauchementMultiVagues(
           sommeRanges += (bougies[k].high - bougies[k].low);
           sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
         }
-        const moyRange = sommeRanges / nbBougiesHist;
-        const moyCorps = sommeCorps / nbBougiesHist;
-
-        const b1AssezGrande = range1 >= (multiplicateurBougie1 * moyRange);
-        const corps2AssezGrand = corps2 >= (multiplicateurCorps2 * moyCorps);
-        if (!b1AssezGrande || !corps2AssezGrand) continue;
+        moyRange = sommeRanges / nbBougiesHist;
+        moyCorps = sommeCorps / nbBougiesHist;
       }
     }
+
+    const idxTrend = Math.max(0, i - trendBars);
+    const openTrend = bougies[idxTrend].open;
+
+    // ─── 🎯 VÉRIFICATION CENTRALISÉE DU DOJI ───
+    const valDoji = validerDojiPersonnalise({
+      b1,
+      b2,
+      moyRangeHist: moyRange,
+      moyCorpsHist: moyCorps,
+      openTendance: openTrend,
+      activerAchat,
+      activerVente,
+      activerFiltreTaille,
+      activerFiltreTendance,
+      toleranceDeficit,
+      toleranceDepassement,
+      multiplicateurBougie1,
+      multiplicateurCorps2,
+    });
+
+    if (!valDoji.estValide) continue;
+
+    const estCandidatAchat = valDoji.type === 'ACHAT';
+    const estCandidatVente = valDoji.type === 'VENTE';
+    const situationCloture = valDoji.situationCloture;
+    const ecartPrix = valDoji.ecartPrix;
+    const ratioEcart = valDoji.ratioEcart;
+    const range1 = valDoji.rangeBougie1;
+    const corps2 = valDoji.corpsBougie2;
 
     let prixExtreme = 0;
     let bougieExtreme: 1 | 2 = 1;

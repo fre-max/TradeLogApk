@@ -2,6 +2,40 @@ import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualBox, VisualLine, VisualLabel } from '@/types/indicatorScript';
 
 /**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur implémente la méthode Wyckoff couplée au Point & Figure (P&F) :
+ *  1. Détection des Trading Ranges de consolidation (Cause Wyckoff).
+ *  2. Filtrage des niveaux horizontaux par nombre de retests (solidité).
+ *  3. Détection des manipulations de fausse cassure :
+ *     - Spring (Achat sous le support suivi d'une réintégration)
+ *     - UTAD (Vente au-dessus de la résistance suivie d'une réintégration)
+ *  4. Validation institutionnelle : Filtre de volume (Climax/Test) & Signature Bougies (Pinbar ou V-Shape).
+ *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 Fonction centrale : `validerSetupWyckoff()` (vers la ligne 100).
+ *     Cette fonction booléenne regroupe TOUTES les conditions requises pour valider un Spring ou UTAD.
+ *
+ * 🎯 LES CONDITIONS CLÉS DU SETUP POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── CONDITION 1 : Solidité du Niveau (Retests) ───────────────────────────────
+ *  • Au moins `minRetestsRequis` colonnes alignées (défaut: 2).
+ *
+ * ─── CONDITION 2 : Dépassement / Fausse Cassure ──────────────────────────────
+ *  • Dépassement minimal : au moins 0.5 boîte pour sortir du Range.
+ *  • Dépassement maximal : pas plus de 8 boîtes (au-delà, c'est un breakout durable).
+ *
+ * ─── CONDITION 3 : Réintégration Intérieure ──────────────────────────────────
+ *  • La colonne suivante doit réintégrer d'au moins 0.5 boîte à l'intérieur du Range.
+ *
+ * ─── CONDITION 4 : Validation Volume & Grandes Bougies ───────────────────────
+ *  • Volume climax ou test institutionnel.
+ *  • Pinbar avec mèche de rejet ou V-Shape de displacement rapide.
+ * ==============================================================================
+ */
+
+/**
  * Options configurables par l'utilisateur pour l'indicateur Wyckoff Point & Figure.
  */
 export interface OptionsWyckoffPointFigure {
@@ -75,6 +109,86 @@ interface ColonnePF {
   indexFin: number;
   tempsDebut: number | string;
   tempsFin: number | string;
+}
+
+/**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION D'UN SETUP WYCKOFF (SPRING OU UTAD)
+ * ==============================================================================
+ * Cette fonction rassemble TOUTES les conditions qu'un Spring ou UTAD Wyckoff
+ * doit respecter pour être validé et générer un signal de trading.
+ *
+ * Pour un développeur junior :
+ * Si tu souhaites assouplir ou modifier les règles de validation Wyckoff,
+ * c'est ICI qu'il faut intervenir !
+ *
+ * Règles vérifiées :
+ *  1️⃣ Le niveau a été retesté assez de fois (`nbRetests >= minRetestsRequis`)
+ *  2️⃣ Fausse cassure calibrée : dépassement entre 0.5 et 8 boîtes P&F
+ *  3️⃣ Réintégration confirmée dans le Trading Range
+ *  4️⃣ Validation du filtre de volume (Effort vs Résultat)
+ *  5️⃣ Validation du filtre de bougies (Pinbar de rejet ou V-Shape rapide)
+ *
+ * Exemple :
+ * const estValide = validerSetupWyckoff({
+ *   type: 'spring',
+ *   nbRetests: 3,
+ *   minRetestsRequis: 2,
+ *   depassement: 15,
+ *   tailleBox: 10,
+ *   aReintegre: true,
+ *   volumeValide: true,
+ *   bougiesValide: true
+ * }); // Renvoie true
+ */
+export function validerSetupWyckoff(params: {
+  type: 'spring' | 'utad';
+  nbRetests: number;
+  minRetestsRequis: number;
+  depassement: number;
+  tailleBox: number;
+  aReintegre: boolean;
+  volumeValide: boolean;
+  bougiesValide: boolean;
+}): boolean {
+  const {
+    nbRetests,
+    minRetestsRequis,
+    depassement,
+    tailleBox,
+    aReintegre,
+    volumeValide,
+    bougiesValide,
+  } = params;
+
+  // 1️⃣ Règle de solidité du niveau (nombre de retests)
+  if (nbRetests < minRetestsRequis) {
+    return false;
+  }
+
+  // 2️⃣ Règle de fausse cassure (ni trop faible ni breakout incontrôlé)
+  const depassementMin = tailleBox * 0.5;
+  const depassementMax = tailleBox * 8;
+  if (depassement < depassementMin || depassement > depassementMax) {
+    return false;
+  }
+
+  // 3️⃣ Règle de réintégration dans le Range
+  if (!aReintegre) {
+    return false;
+  }
+
+  // 4️⃣ Règle de volume (climax ou test)
+  if (!volumeValide) {
+    return false;
+  }
+
+  // 5️⃣ Règle de morphologie de bougie (rejet pinbar ou V-Shape)
+  if (!bougiesValide) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -600,22 +714,26 @@ export function calculerWyckoffPointAndFigure(
           }
         }
 
-        // 🛑 Filtrage de solidité : si le niveau n'a pas été retesté assez de fois, on l'ignore !
-        if (nbRetests < minRetestsRequis) {
-          continue;
-        }
-
         const qualiteNiveau = qualifierSoliditeNiveau(nbRetests);
 
         const depassementBas = supportEstime - colPrecedente.bas;
-        const aCasseSupport = depassementBas >= (tailleBox * 0.5) && depassementBas <= (8 * tailleBox);
         const aReintegre = colActuelle.haut >= supportEstime + (tailleBox * 0.5);
+        const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);
+        const testBougies = verifierGrandesBougiesWyckoff('spring', colPrecedente.indexDebut, colActuelle.indexFin);
 
-        if (aCasseSupport && aReintegre) {
-          const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);
-          const testBougies = verifierGrandesBougiesWyckoff('spring', colPrecedente.indexDebut, colActuelle.indexFin);
+        // ✅ Utilisation de la fonction centrale de validation du setup Wyckoff
+        const estValide = validerSetupWyckoff({
+          type: 'spring',
+          nbRetests,
+          minRetestsRequis,
+          depassement: depassementBas,
+          tailleBox,
+          aReintegre,
+          volumeValide: testVolume.valide,
+          bougiesValide: testBougies.valide,
+        });
 
-          if (testVolume.valide && testBougies.valide) {
+        if (estValide) {
             const bgSignal = bougies[colActuelle.indexFin];
             const largeurRange = c - (c - colonnesMinRange - 1);
             // Loi de Cause à Effet de Wyckoff : projection proportionnelle à la largeur du Range
@@ -702,7 +820,6 @@ export function calculerWyckoffPointAndFigure(
             });
           }
         }
-      }
     }
 
     // ─── B. DÉTECTION DU UTAD WYCKOFF (VENTE) ───────────────────────────
@@ -732,22 +849,26 @@ export function calculerWyckoffPointAndFigure(
           }
         }
 
-        // 🛑 Filtrage de solidité : si le niveau n'a pas été retesté assez de fois, on l'ignore !
-        if (nbRetests < minRetestsRequis) {
-          continue;
-        }
-
         const qualiteNiveau = qualifierSoliditeNiveau(nbRetests);
 
         const depassementHaut = colPrecedente.haut - resistanceEstimee;
-        const aCasseResistance = depassementHaut >= (tailleBox * 0.5) && depassementHaut <= (8 * tailleBox);
         const aReintegre = colActuelle.bas <= resistanceEstimee - (tailleBox * 0.5);
+        const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);
+        const testBougies = verifierGrandesBougiesWyckoff('utad', colPrecedente.indexDebut, colActuelle.indexFin);
 
-        if (aCasseResistance && aReintegre) {
-          const testVolume = verifierVolumeWyckoff(colPrecedente.indexFin, colActuelle.indexFin);
-          const testBougies = verifierGrandesBougiesWyckoff('utad', colPrecedente.indexDebut, colActuelle.indexFin);
+        // ✅ Utilisation de la fonction centrale de validation du setup Wyckoff
+        const estValide = validerSetupWyckoff({
+          type: 'utad',
+          nbRetests,
+          minRetestsRequis,
+          depassement: depassementHaut,
+          tailleBox,
+          aReintegre,
+          volumeValide: testVolume.valide,
+          bougiesValide: testBougies.valide,
+        });
 
-          if (testVolume.valide && testBougies.valide) {
+        if (estValide) {
             const bgSignal = bougies[colActuelle.indexFin];
             const largeurRange = c - (c - colonnesMinRange - 1);
             const cibleWyckoff = resistanceEstimee - (largeurRange * tailleBox * reversalCount);
@@ -833,7 +954,6 @@ export function calculerWyckoffPointAndFigure(
             });
           }
         }
-      }
     }
   }
 

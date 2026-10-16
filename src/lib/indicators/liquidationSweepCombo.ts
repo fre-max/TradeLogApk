@@ -1,5 +1,36 @@
 import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualLabel, VisualLine, VisualBox, VisualPoint } from '@/types/indicatorScript';
+import { validerDojiPersonnalise } from './liquidationReintegration';
+
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur combine deux analyses complémentaires :
+ *  1. Le chandelier Doji de retournement (Liq / Reint = Spring / UTAD)
+ *  2. La détection et sélection de la liquidité BSL/SSL la plus adaptée (relief, proximité, proportionnalité)
+ *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 Condition du Doji : fonction `validerDojiPersonnalise()` dans `liquidationReintegration.ts`.
+ *  👉 Condition de la Liquidité : fonction `validerCandidatLiquidite()` (vers la ligne 255).
+ *
+ * 🎯 LES CONDITIONS CLÉS DU SETUP POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── CONDITION 1 : Formation du Doji Personnalisé ─────────────────────────────
+ *  • B1 impulsive dans le sens du piège + B2 puissante en sens inverse.
+ *  • Clôture de B2 au niveau d'Open1 (dépassement max: 25%, déficit max: 5%).
+ *
+ * ─── CONDITION 2 : Relief du Pivot Balayé (dans validerCandidatLiquidite) ─────
+ *  • Le pivot balayé doit avoir un relief minimal (`ratioRelief >= reliefMinRatio`).
+ *
+ * ─── CONDITION 3 : Sweet Spot de Pénétration (dans validerCandidatLiquidite) ──
+ *  • Pénétration minimale : stops touchés (`ratioSweep >= penetrationMinRatio`).
+ *  • Pénétration maximale : pas de cassure impulsive (`ratioSweep <= penetrationMaxRatio`).
+ *
+ * ─── CONDITION 4 : Niveau Intact (dans validerCandidatLiquidite) ──────────────
+ *  • Le niveau ne doit pas avoir été franchi avant notre bougie de manipulation.
+ * ==============================================================================
+ */
 
 /**
  * Options de configuration pour l'indicateur combiné :
@@ -221,6 +252,72 @@ function verifierNiveauIntact(
 }
 
 /**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DE LA LIQUIDITÉ BALAYÉE
+ * ==============================================================================
+ * Cette fonction rassemble TOUTES les conditions qu'un niveau de liquidité
+ * (SSL creux ou BSL sommet) doit respecter pour être retenu comme balayé.
+ *
+ * Pour un développeur junior :
+ * Si tu souhaites assouplir ou modifier les critères de liquidité balayée,
+ * c'est ICI qu'il faut intervenir !
+ *
+ * Règles vérifiées :
+ *  1️⃣ Le niveau est intact (non violé antérieurement, si requis)
+ *  2️⃣ Le relief du pivot est suffisant (`ratioRelief >= reliefMinRatio`)
+ *  3️⃣ Pénétration dans le Sweet Spot :
+ *      - Ni trop faible (`ratioSweep >= penetrationMinRatio`)
+ *      - Ni excessive / cassure impulsive (`ratioSweep <= penetrationMaxRatio`)
+ *
+ * Exemple :
+ * const estValide = validerCandidatLiquidite({
+ *   ratioRelief: 1.2,
+ *   reliefMinRatio: 0.5,
+ *   ratioSweep: 0.4,
+ *   penetrationMinRatio: 0.05,
+ *   penetrationMaxRatio: 1.5,
+ *   estIntact: true,
+ *   exigerNiveauIntact: true
+ * }); // Renvoie true
+ */
+export function validerCandidatLiquidite(params: {
+  ratioRelief: number;
+  reliefMinRatio: number;
+  ratioSweep: number;
+  penetrationMinRatio: number;
+  penetrationMaxRatio: number;
+  estIntact: boolean;
+  exigerNiveauIntact: boolean;
+}): boolean {
+  const {
+    ratioRelief,
+    reliefMinRatio,
+    ratioSweep,
+    penetrationMinRatio,
+    penetrationMaxRatio,
+    estIntact,
+    exigerNiveauIntact,
+  } = params;
+
+  // 1️⃣ Règle de conservation du niveau intact
+  if (exigerNiveauIntact && !estIntact) {
+    return false;
+  }
+
+  // 2️⃣ Règle de pénétration (Sweet Spot : assez profond pour toucher les stops, mais sans excès)
+  if (ratioSweep < penetrationMinRatio || ratioSweep > penetrationMaxRatio) {
+    return false;
+  }
+
+  // 3️⃣ Règle du relief minimum (le pivot doit être visible et marquant)
+  if (ratioRelief < reliefMinRatio) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Recherche et sélectionne la liquidité la plus adaptée parmi tous les pivots balayés,
  * selon les critères de proportionnalité, de relief et de proximité.
  */
@@ -276,20 +373,12 @@ function trouverLiquiditeLaPlusAdaptee(
 
     // 1️⃣ Vérification si le niveau était intact
     const estIntact = verifierNiveauIntact(bougies, k, indexFinRecherche, prixPivot, direction);
-    if (exigerNiveauIntact && !estIntact) {
-      continue; // Niveau déjà violé dans le passé : ignoré
-    }
 
     // 2️⃣ Analyse de la pénétration (Sweet Spot du sweep)
     const profondeurSweep = direction === 'ACHAT'
       ? prixPivot - prixExtreme
       : prixExtreme - prixPivot;
     const ratioSweep = profondeurSweep / tailleMoyenneBougie;
-
-    // Filtre sur la pénétration minimale et maximale
-    if (ratioSweep < penetrationMinRatio || ratioSweep > penetrationMaxRatio) {
-      continue;
-    }
 
     // 3️⃣ Analyse du relief du swing (Importance du pivot)
     const relief = calculerReliefPivot(
@@ -300,10 +389,18 @@ function trouverLiquiditeLaPlusAdaptee(
     );
     const ratioRelief = relief / tailleMoyenneBougie;
 
-    // Filtre sur le relief minimal
-    if (ratioRelief < reliefMinRatio) {
-      continue;
-    }
+    // ✅ Validation centralisée du candidat liquidité
+    const estValide = validerCandidatLiquidite({
+      ratioRelief,
+      reliefMinRatio,
+      ratioSweep,
+      penetrationMinRatio,
+      penetrationMaxRatio,
+      estIntact,
+      exigerNiveauIntact,
+    });
+
+    if (!estValide) continue;
 
     // Classification en qualité
     let qualiteNiveau: 'MAJEUR' | 'MOYEN' | 'MINEUR' = 'MINEUR';
@@ -461,57 +558,13 @@ export function calculerLiquidationSweepCombo(
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
 
-    const range1 = b1.high - b1.low;
-    const range2 = b2.high - b2.low;
-    const corps2 = Math.abs(b2.open - b2.close);
-    const hauteurMoyenne = (range1 + range2) / 2;
-    if (hauteurMoyenne <= 0) continue;
-
-    // Filtre de tendance optionnel
-    const idxTrend = Math.max(0, i - trendBars);
-    const openTrend = bougies[idxTrend].open;
-    const tendanceHausse = !activerFiltreTendance || openTrend < b2.open;
-    const tendanceBaisse = !activerFiltreTendance || openTrend > b2.open;
-
-    // Candidats achat/vente
-    const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
-    const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
-    if (!estCandidatAchat && !estCandidatVente) continue;
-
-    // Proximité asymétrique
-    const ecartPrix = Math.abs(b1.open - b2.close);
-    const ratioEcart = ecartPrix / hauteurMoyenne;
-    let situationCloture: 'DEPASSEMENT' | 'RETRAIT' = 'RETRAIT';
-    let estValideProximite = false;
-
-    if (estCandidatAchat) {
-      if (b2.close >= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    } else if (estCandidatVente) {
-      if (b2.close <= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    }
-    if (!estValideProximite) continue;
-
-    // Moyenne de référence historique
-    let moyenneRangeRef = hauteurMoyenne;
-    let respecteTaille = true;
-
+    // Moyennes historiques pour le Doji
+    let moyRange = 0;
+    let moyCorps = 0;
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
       const nbBougiesHist = indexFinHist - indexDebutHist + 1;
-
       if (nbBougiesHist >= 3) {
         let sommeRanges = 0;
         let sommeCorps = 0;
@@ -519,16 +572,42 @@ export function calculerLiquidationSweepCombo(
           sommeRanges += (bougies[k].high - bougies[k].low);
           sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
         }
-        const moyRange = sommeRanges / nbBougiesHist;
-        const moyCorps = sommeCorps / nbBougiesHist;
-        moyenneRangeRef = moyRange;
-
-        const b1AssezGrande = range1 >= (multiplicateurBougie1 * moyRange);
-        const corps2AssezGrand = corps2 >= (multiplicateurCorps2 * moyCorps);
-        respecteTaille = b1AssezGrande && corps2AssezGrand;
+        moyRange = sommeRanges / nbBougiesHist;
+        moyCorps = sommeCorps / nbBougiesHist;
       }
     }
-    if (!respecteTaille) continue;
+
+    const idxTrend = Math.max(0, i - trendBars);
+    const openTrend = bougies[idxTrend].open;
+
+    // ─── 🎯 VÉRIFICATION CENTRALISÉE DU DOJI ───
+    const valDoji = validerDojiPersonnalise({
+      b1,
+      b2,
+      moyRangeHist: moyRange,
+      moyCorpsHist: moyCorps,
+      openTendance: openTrend,
+      activerAchat,
+      activerVente,
+      activerFiltreTaille,
+      activerFiltreTendance,
+      toleranceDeficit,
+      toleranceDepassement,
+      multiplicateurBougie1,
+      multiplicateurCorps2,
+    });
+
+    if (!valDoji.estValide) continue;
+
+    const estCandidatAchat = valDoji.type === 'ACHAT';
+    const estCandidatVente = valDoji.type === 'VENTE';
+    const situationCloture = valDoji.situationCloture;
+    const ecartPrix = valDoji.ecartPrix;
+    const ratioEcart = valDoji.ratioEcart;
+    const range1 = valDoji.rangeBougie1;
+    const corps2 = valDoji.corpsBougie2;
+
+    const moyenneRangeRef = moyRange > 0 ? moyRange : ((b1.high - b1.low) + (b2.high - b2.low)) / 2;
 
     // 4️⃣ Identification de la bougie portant le point extrême de liquidation
     let prixExtreme = 0;

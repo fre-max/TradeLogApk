@@ -6,6 +6,37 @@ import {
   type ForceZoneShved,
   type OptionsShvedSupplyDemand,
 } from '@/lib/bot/modules/01_liquidite/shvedSupplyDemand';
+import { validerDojiPersonnalise } from './liquidationReintegration';
+
+/**
+ * ==============================================================================
+ * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
+ * ==============================================================================
+ * Cet indicateur combine deux analyses complémentaires :
+ *  1. Le Doji de retournement (Liq / Reint = Spring / UTAD)
+ *  2. La zone Shved Supply & Demand balayée (avec détection de Re-Sweep)
+ *
+ * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS ?
+ *  👉 Condition du Doji : fonction `validerDojiPersonnalise()` dans `liquidationReintegration.ts`.
+ *  👉 Condition de la Zone Shved : fonction `validerZoneShvedPourSweep()` (vers la ligne 170).
+ *
+ * 🎯 LES CONDITIONS CLÉS DU SETUP POUR DÉVELOPPEUR JUNIOR :
+ *
+ * ─── RÈGLE 1 : Formation du Doji Personnalisé ─────────────────────────────────
+ *  • B1 impulsive dans le sens du piège + B2 puissante en sens inverse.
+ *  • Clôture de B2 au niveau d'Open1 (dépassement max: 25%, déficit max: 5%).
+ *
+ * ─── RÈGLE 2 : Balayage de la Zone Shved (dans validerZoneShvedPourSweep) ──────
+ *  • Pour Achat (Spring) : la mèche basse perce dans ou sous le Support Demand.
+ *  • Pour Vente (UTAD)   : la mèche haute perce dans ou sur la Résistance Supply.
+ *
+ * ─── RÈGLE 3 : Intégrité Unmitigated (dans validerZoneShvedPourSweep) ──────────
+ *  • La zone ne doit JAMAIS avoir été clôturée au-delà avant le Doji actuel.
+ *
+ * ─── RÈGLE 4 : Récence & Fraîcheur (dans validerZoneShvedPourSweep) ────────────
+ *  • La zone doit se situer dans les `lookbackMaxBars` dernières bougies (défaut: 40).
+ * ==============================================================================
+ */
 
 /**
  * Options de configuration pour l'indicateur combiné :
@@ -145,14 +176,99 @@ interface InfoZoneShvedCandidate {
   scorePertinence: number;
 }
 
+// ─── 🎯 FONCTION CENTRALE DE VALIDATION DE LA ZONE SHVED (POUR LE DÉVELOPPEUR) ───
+
+/**
+ * Paramètres pour tester si une zone Shved candidate est éligible au balayage par le Doji.
+ */
+export interface ParametresValidationZoneSweep {
+  zone: ZoneShved;
+  direction: 'ACHAT' | 'VENTE';
+  prixExtreme: number;
+  indexSetup: number;
+  bougies: Bougie[];
+  forceMin?: string;
+  minRetests?: number;
+  prixReferenceHaut?: number;
+  prixReferenceBas?: number;
+  lookbackMaxBars?: number;
+  exigerZoneIntacte?: boolean;
+}
+
+/**
+ * ==============================================================================
+ * 🎯 FONCTION CENTRALE DE VALIDATION DE LA ZONE SHVED (POUR LE DÉVELOPPEUR DÉBUTANT)
+ * ==============================================================================
+ * Rassemble en UN SEUL BLOC toutes les conditions pour qu'une zone Shved
+ * soit considérée comme balayée et valide pour le setup institutionnel (Wyckoff).
+ *
+ * 💡 COMMENT L'AJUSTER OU LA MODIFIER ?
+ *  • Pour désactiver l'exigence de non-consommation : commentez la CONDITION 5.
+ *  • Pour accepter les zones anciennes : augmentez `lookbackMaxBars`.
+ *  • Pour accepter les zones sans retest : mettez `minRetests: 0`.
+ *
+ * @returns {boolean} true si la zone respecte TOUTES les conditions, false sinon
+ */
+export function validerZoneShvedPourSweep(params: ParametresValidationZoneSweep): boolean {
+  const {
+    zone,
+    direction,
+    prixExtreme,
+    indexSetup,
+    bougies,
+    forceMin = 'TOUTES',
+    minRetests = 0,
+    prixReferenceHaut = Infinity,
+    prixReferenceBas = -Infinity,
+    lookbackMaxBars = 40,
+    exigerZoneIntacte = true,
+  } = params;
+
+  // ─── 🔍 CONDITION 1 : Antériorité de la zone ───────────────────────────────
+  // La zone doit exister AVANT les deux bougies du Doji
+  if (zone.indexOrigine >= indexSetup - 1) return false;
+
+  // ─── 🔍 CONDITION 2 : Fraîcheur & Fenêtre récente (Lookback) ───────────────
+  // Évite d'aller chercher de vieux niveaux obsolètes
+  const ecartBougies = indexSetup - zone.indexOrigine;
+  if (ecartBougies > lookbackMaxBars) return false;
+
+  // ─── 🔍 CONDITION 3 : Retests minimaux et force institutionnelle ───────────
+  if (zone.retests < minRetests) return false;
+  if (!respecteForceMinimale(zone.force, forceMin)) return false;
+
+  // ─── 🔍 CONDITION 4 : Balayage effectif par la mèche du chandelier ──────────
+  if (direction === 'ACHAT') {
+    if (zone.type !== 'SUPPORT') return false;
+    const estBalayee = prixExtreme <= zone.prixHaut && zone.prixBas <= prixReferenceHaut;
+    if (!estBalayee) return false;
+  } else {
+    if (zone.type !== 'RESISTANCE') return false;
+    const estBalayee = prixExtreme >= zone.prixBas && zone.prixHaut >= prixReferenceBas;
+    if (!estBalayee) return false;
+  }
+
+  // ─── 🔍 CONDITION 5 : Intégrité (Unmitigated / Zone non consommée) ──────────
+  // Aucune bougie entre la création de la zone et le setup ne doit avoir clôturé au-delà
+  if (exigerZoneIntacte) {
+    const indexFinControle = Math.max(zone.indexOrigine + 1, indexSetup - 2);
+    for (let k = zone.indexOrigine + 1; k < indexFinControle; k++) {
+      if (bougies[k]) {
+        if (direction === 'ACHAT' && bougies[k].close < zone.prixBas) return false;
+        if (direction === 'VENTE' && bougies[k].close > zone.prixHaut) return false;
+      }
+    }
+  }
+
+  // ✅ Toutes les conditions de la zone sont satisfaites
+  return true;
+}
+
 /**
  * Recherche parmi les zones Shved la zone la plus pertinente balayée par le point extrême :
  * 1. Proximité temporelle (récente dans les N dernières bougies)
  * 2. Non-consommée (Unmitigated) : aucune clôture antérieure n'a traversé la zone
  * 3. Détection de la double liquidation : si une mèche récente a déjà effleuré la zone
- * 
- * Exemple :
- * const res = identifierZoneShvedLaPlusAdaptee(supports, 'ACHAT', prixExtreme, indexSetup, bougies, options);
  */
 function identifierZoneShvedLaPlusAdaptee(
   zones: ZoneShved[],
@@ -182,59 +298,42 @@ function identifierZoneShvedLaPlusAdaptee(
   } = options;
 
   for (const zone of zones) {
-    // 1️⃣ La zone doit être née avant les 2 bougies du setup
-    if (zone.indexOrigine >= indexSetup - 1) continue;
+    // ─── 🎯 VÉRIFICATION DES CONDITIONS DE LA ZONE CANDIDATE ───
+    const zoneValide = validerZoneShvedPourSweep({
+      zone,
+      direction,
+      prixExtreme,
+      indexSetup,
+      bougies,
+      forceMin,
+      minRetests,
+      prixReferenceHaut,
+      prixReferenceBas,
+      lookbackMaxBars,
+      exigerZoneIntacte,
+    });
 
-    // 2️⃣ Éviter de chercher trop loin dans le passé : respecter la fenêtre récente
+    if (!zoneValide) continue;
+
     const ecartBougies = indexSetup - zone.indexOrigine;
-    if (ecartBougies > lookbackMaxBars) continue;
+    let estDoubleLiq = false;
+    let prixPremLiq: number | undefined = undefined;
 
-    // 3️⃣ Filtres de retests et de force
-    if (zone.retests < minRetests) continue;
-    if (!respecteForceMinimale(zone.force, forceMin)) continue;
+    // Détection de la Double Liquidation (Re-Sweep de Confirmation)
+    if (detecterDoubleLiquidation) {
+      const b1 = bougies[indexSetup - 1];
+      const b2 = bougies[indexSetup];
 
-    if (direction === 'ACHAT' && zone.type === 'SUPPORT') {
-      // 🟢 En Achat : Le creux extrême a percé sous la zone (ou sous son prix haut/médian)
-      // et le haut de référence reste au-dessus
-      const estBalayee = prixExtreme <= zone.prixHaut && zone.prixBas <= prixReferenceHaut;
-      if (!estBalayee) continue;
-
-      // 4️⃣ Vérification de Non-Consommation (Unmitigated / Zone Intacte) :
-      // Aucune bougie entre la naissance de la zone et l'avant-dernière bougie ne doit avoir clôturé SOUS la zone
-      if (exigerZoneIntacte) {
-        let estConsommee = false;
-        const indexFinControle = Math.max(zone.indexOrigine + 1, indexSetup - 2);
-        for (let k = zone.indexOrigine + 1; k < indexFinControle; k++) {
-          if (bougies[k] && bougies[k].close < zone.prixBas) {
-            estConsommee = true;
-            break;
-          }
-        }
-        if (estConsommee) continue; // Zone déjà morte / liquidée depuis longtemps
-      }
-
-      // 5️⃣ Détection de la Double Liquidation (Re-Sweep de Confirmation) :
-      // On regarde si dans les 1 à 6 bougies précédant le setup, une bougie a déjà touché la zone,
-      // et que notre setup actuel fait un creux encore plus bas (purge finale des derniers stops)
-      let estDoubleLiq = false;
-      let prixPremLiq: number | undefined = undefined;
-
-      if (detecterDoubleLiquidation) {
-        // Cas 1 : La bougie 1 du setup a percé la zone et la bougie 2 (doji) perfore encore plus bas
-        const b1 = bougies[indexSetup - 1];
-        const b2 = bougies[indexSetup];
+      if (direction === 'ACHAT') {
         if (b1 && b2 && b2.low < b1.low && b1.low <= zone.prixHaut) {
           estDoubleLiq = true;
           prixPremLiq = b1.low;
         } else {
-          // Cas 2 : Une bougie récente (1 à 6 bougies avant) a déjà fait une 1ère liquidation
           const indexDebutRecent = Math.max(0, indexSetup - 6);
           let minRecent = Infinity;
           for (let m = indexDebutRecent; m <= indexSetup - 2; m++) {
             if (bougies[m] && bougies[m].low <= zone.prixHaut) {
-              if (bougies[m].low < minRecent) {
-                minRecent = bougies[m].low;
-              }
+              if (bougies[m].low < minRecent) minRecent = bougies[m].low;
             }
           }
           if (minRecent < Infinity && prixExtreme < minRecent) {
@@ -242,62 +341,16 @@ function identifierZoneShvedLaPlusAdaptee(
             prixPremLiq = minRecent;
           }
         }
-      }
-
-      // 6️⃣ Calcul du score de pertinence :
-      // Plus la zone est récente et proche, plus son score est élevé (Spring Wyckoff immédiat)
-      const scoreRecence = Math.max(0, 100 - ecartBougies * 2);
-      const bonusRetests = Math.min(zone.retests, 5) * 8;
-      const bonusDoubleLiq = estDoubleLiq ? 35 : 0;
-      const scorePertinence = scoreRecence + bonusRetests + bonusDoubleLiq;
-
-      const profondeur = Math.max(0, zone.prixBas - prixExtreme);
-      candidates.push({
-        zone,
-        profondeur,
-        estDoubleLiquidation: estDoubleLiq,
-        prixPremiereLiquidation: prixPremLiq,
-        scorePertinence,
-      });
-
-    } else if (direction === 'VENTE' && zone.type === 'RESISTANCE') {
-      // 🔴 En Vente : Le sommet extrême a percé au-dessus de la zone
-      const estBalayee = prixExtreme >= zone.prixBas && zone.prixHaut >= prixReferenceBas;
-      if (!estBalayee) continue;
-
-      // 4️⃣ Vérification de Non-Consommation (Unmitigated) :
-      if (exigerZoneIntacte) {
-        let estConsommee = false;
-        const indexFinControle = Math.max(zone.indexOrigine + 1, indexSetup - 2);
-        for (let k = zone.indexOrigine + 1; k < indexFinControle; k++) {
-          if (bougies[k] && bougies[k].close > zone.prixHaut) {
-            estConsommee = true;
-            break;
-          }
-        }
-        if (estConsommee) continue;
-      }
-
-      // 5️⃣ Détection de la Double Liquidation (Re-Sweep de Confirmation) :
-      let estDoubleLiq = false;
-      let prixPremLiq: number | undefined = undefined;
-
-      if (detecterDoubleLiquidation) {
-        // Cas 1 : La bougie 1 a percé la zone et la bougie 2 monte encore plus haut
-        const b1 = bougies[indexSetup - 1];
-        const b2 = bougies[indexSetup];
+      } else {
         if (b1 && b2 && b2.high > b1.high && b1.high >= zone.prixBas) {
           estDoubleLiq = true;
           prixPremLiq = b1.high;
         } else {
-          // Cas 2 : Une bougie dans les bougies récentes
           const indexDebutRecent = Math.max(0, indexSetup - 6);
           let maxRecent = -Infinity;
           for (let m = indexDebutRecent; m <= indexSetup - 2; m++) {
             if (bougies[m] && bougies[m].high >= zone.prixBas) {
-              if (bougies[m].high > maxRecent) {
-                maxRecent = bougies[m].high;
-              }
+              if (bougies[m].high > maxRecent) maxRecent = bougies[m].high;
             }
           }
           if (maxRecent > -Infinity && prixExtreme > maxRecent) {
@@ -306,21 +359,24 @@ function identifierZoneShvedLaPlusAdaptee(
           }
         }
       }
-
-      const scoreRecence = Math.max(0, 100 - ecartBougies * 2);
-      const bonusRetests = Math.min(zone.retests, 5) * 8;
-      const bonusDoubleLiq = estDoubleLiq ? 35 : 0;
-      const scorePertinence = scoreRecence + bonusRetests + bonusDoubleLiq;
-
-      const profondeur = Math.max(0, prixExtreme - zone.prixHaut);
-      candidates.push({
-        zone,
-        profondeur,
-        estDoubleLiquidation: estDoubleLiq,
-        prixPremiereLiquidation: prixPremLiq,
-        scorePertinence,
-      });
     }
+
+    const scoreRecence = Math.max(0, 100 - ecartBougies * 2);
+    const bonusRetests = Math.min(zone.retests, 5) * 8;
+    const bonusDoubleLiq = estDoubleLiq ? 35 : 0;
+    const scorePertinence = scoreRecence + bonusRetests + bonusDoubleLiq;
+
+    const profondeur = direction === 'ACHAT'
+      ? Math.max(0, zone.prixBas - prixExtreme)
+      : Math.max(0, prixExtreme - zone.prixHaut);
+
+    candidates.push({
+      zone,
+      profondeur,
+      estDoubleLiquidation: estDoubleLiq,
+      prixPremiereLiquidation: prixPremLiq,
+      scorePertinence,
+    });
   }
 
   if (candidates.length === 0) return null;
@@ -430,51 +486,13 @@ export function calculerLiquidationSweepShved(
     const b1 = bougies[i - 1];
     const b2 = bougies[i];
 
-    const range1 = b1.high - b1.low;
-    const range2 = b2.high - b2.low;
-    const corps2 = Math.abs(b2.open - b2.close);
-    const hauteurMoyenne = (range1 + range2) / 2;
-    if (hauteurMoyenne <= 0) continue;
-
-    const idxTrend = Math.max(0, i - trendBars);
-    const openTrend = bougies[idxTrend].open;
-    const tendanceHausse = !activerFiltreTendance || openTrend < b2.open;
-    const tendanceBaisse = !activerFiltreTendance || openTrend > b2.open;
-
-    const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
-    const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
-    if (!estCandidatAchat && !estCandidatVente) continue;
-
-    const ecartPrix = Math.abs(b1.open - b2.close);
-    const ratioEcart = ecartPrix / hauteurMoyenne;
-    let situationCloture: 'DEPASSEMENT' | 'RETRAIT' = 'RETRAIT';
-    let estValideProximite = false;
-
-    if (estCandidatAchat) {
-      if (b2.close >= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    } else if (estCandidatVente) {
-      if (b2.close <= b1.open) {
-        situationCloture = 'DEPASSEMENT';
-        estValideProximite = ratioEcart <= toleranceDepassement;
-      } else {
-        situationCloture = 'RETRAIT';
-        estValideProximite = ratioEcart <= toleranceDeficit;
-      }
-    }
-    if (!estValideProximite) continue;
-
-    // Filtre de taille / momentum sur les bougies récentes
+    // Moyennes historiques pour le Doji
+    let moyRange = 0;
+    let moyCorps = 0;
     if (activerFiltreTaille) {
       const indexFinHist = i - 2;
       const indexDebutHist = Math.max(0, i - 1 - periodeHistorique);
       const nbBougiesHist = indexFinHist - indexDebutHist + 1;
-
       if (nbBougiesHist >= 3) {
         let sommeRanges = 0;
         let sommeCorps = 0;
@@ -482,13 +500,40 @@ export function calculerLiquidationSweepShved(
           sommeRanges += (bougies[k].high - bougies[k].low);
           sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
         }
-        const moyRange = sommeRanges / nbBougiesHist;
-        const moyCorps = sommeCorps / nbBougiesHist;
-        if (range1 < multiplicateurBougie1 * moyRange || corps2 < multiplicateurCorps2 * moyCorps) {
-          continue;
-        }
+        moyRange = sommeRanges / nbBougiesHist;
+        moyCorps = sommeCorps / nbBougiesHist;
       }
     }
+
+    const idxTrend = Math.max(0, i - trendBars);
+    const openTrend = bougies[idxTrend].open;
+
+    // ─── 🎯 VÉRIFICATION CENTRALISÉE DU DOJI ───
+    const valDoji = validerDojiPersonnalise({
+      b1,
+      b2,
+      moyRangeHist: moyRange,
+      moyCorpsHist: moyCorps,
+      openTendance: openTrend,
+      activerAchat,
+      activerVente,
+      activerFiltreTaille,
+      activerFiltreTendance,
+      toleranceDeficit,
+      toleranceDepassement,
+      multiplicateurBougie1,
+      multiplicateurCorps2,
+    });
+
+    if (!valDoji.estValide) continue;
+
+    const estCandidatAchat = valDoji.type === 'ACHAT';
+    const estCandidatVente = valDoji.type === 'VENTE';
+    const situationCloture = valDoji.situationCloture;
+    const ecartPrix = valDoji.ecartPrix;
+    const ratioEcart = valDoji.ratioEcart;
+    const range1 = valDoji.rangeBougie1;
+    const corps2 = valDoji.corpsBougie2;
 
     let prixExtreme = 0;
     let bougieExtreme: 1 | 2 = 1;
