@@ -22,42 +22,53 @@ import type { VisualPrimitives, VisualLabel } from '@/types/indicatorScript';
  * ─── CONDITION 2 : Précision du Retournement (Close2 vs Open1) ────────────────
  *  • La Bougie 2 doit ramener le prix au point de départ (Open1) :
  *    - Dépassement favorable (au-dessus pour Achat, en dessous pour Vente) :
- *      autorisé jusqu'à `toleranceDepassement` (défaut: 100% de la hauteur moyenne).
+ *      autorisé jusqu'à `toleranceDepassement` (défaut: 200% de la hauteur moyenne).
  *    - Retrait / Déficit (la clôture n'atteint pas tout à fait Open1) :
- *      autorisé jusqu'à `toleranceDeficit` (défaut: 15% de la hauteur moyenne).
+ *      autorisé jusqu'à `toleranceDeficit` (défaut: 30% de la hauteur moyenne).
  *
  * ─── CONDITION 3 : Impulsion de la Bougie 1 (Liquidation) ─────────────────────
  *  • La hauteur totale de la Bougie 1 (High1 - Low1) doit être >= `multiplicateurBougie1`
- *    fois la moyenne des hauteurs des 10 dernières bougies (défaut: 1.1x).
- *  👉 Pour détecter plus de signaux : baisser à 1.2x ou 1.3x.
+ *    fois la moyenne des hauteurs des 10 dernières bougies (défaut: 1.0x).
  *
  * ─── CONDITION 4 : Puissance du Corps de la Bougie 2 (Réintégration) ──────────
  *  • Le corps réel de la Bougie 2 (|Open2 - Close2|) doit être >= `multiplicateurCorps2`
- *    fois la moyenne des corps des 10 dernières bougies (défaut: 1.1x).
- *  👉 Pour détecter plus de signaux : baisser à 1.2x ou 1.3x.
+ *    fois la moyenne des corps des 10 dernières bougies (défaut: 1.2x).
+ *
+ * ─── CONDITION 5 : Filtre Pic ZigZag (Creux / Sommet Extrême) ──────────────────
+ *  • Achat (Spring) : Le creux du pattern (Low de B1 ou B2) doit être le point le plus bas
+ *    par rapport aux N bougies précédentes (défaut: 5 bougies).
+ *  • Vente (UTAD)   : Le sommet du pattern (High de B1 ou B2) doit être le point le plus haut
+ *    par rapport aux N bougies précédentes (défaut: 5 bougies).
+ *  👉 Si le marché a fait un plus bas/haut plus extrême juste avant, le setup est rejeté !
  * ==============================================================================
  */
 
 /**
  * Options de configuration complètes pour l'indicateur Liquidation & Réintégration.
- * Entièrement modulable pour affiner les filtres de volume, taille et proximité.
+ * Entièrement modulable pour affiner les filtres de volume, taille, proximité et ZigZag.
  */
 export interface ParametresLiquidationReintegration {
-  // Tolérance d'écart quand la réintégration reste en retrait d'Open(1) (déficit) (défaut: 0.15 = 15% de la hauteur moyenne)
+  // Tolérance d'écart quand la réintégration reste en retrait d'Open(1) (déficit) (défaut: 0.30 = 30% de la hauteur moyenne)
   toleranceDeficit?: number;
-  // Tolérance d'approximation symétrique (utilisée si toleranceDeficit n'est pas spécifié) (défaut: 0.15 = 15%)
+  // Tolérance d'approximation symétrique (utilisée si toleranceDeficit n'est pas spécifié) (défaut: 0.30 = 30%)
   toleranceProximite?: number;
-  // Tolérance élargie quand la réintégration dépasse Open(1) dans le sens favorable (dépassement) (défaut: 1.0 = 100%)
+  // Tolérance élargie quand la réintégration dépasse Open(1) dans le sens favorable (dépassement) (défaut: 2.0 = 200%)
   toleranceDepassement?: number;
 
   // Active le filtre de taille relative sur l'historique récent (défaut: true)
   activerFiltreTaille?: boolean;
   // Nombre de bougies précédentes servant de référence pour la moyenne (défaut: 10)
   periodeHistorique?: number;
-  // Multiplicateur requis pour la Bougie 1 entière (corps + mèches) (défaut: 1.1x)
+  // Multiplicateur requis pour la Bougie 1 entière (corps + mèches) (défaut: 1.0x)
   multiplicateurBougie1?: number;
-  // Multiplicateur requis pour le corps de la Bougie 2 sans mèches (défaut: 1.1x)
+  // Multiplicateur requis pour le corps de la Bougie 2 sans mèches (défaut: 1.2x)
   multiplicateurCorps2?: number;
+
+  // ─── 📐 Filtre Pic ZigZag (Creux pour Achat, Sommet pour Vente) ──────────────
+  // Exige que le Doji se forme sur un vrai pic ZigZag extrême (défaut: true)
+  activerFiltreZigzag?: boolean;
+  // Nombre de bougies précédentes devant être dépassées pour valider le pic (défaut: 5)
+  profondeurZigzag?: number;
 
   // Filtre optionnel de tendance globale sur les barres antérieures (défaut: false)
   activerFiltreTendance?: boolean;
@@ -143,6 +154,10 @@ export interface ParametresValidationDoji {
   toleranceDepassement?: number;
   multiplicateurBougie1?: number;
   multiplicateurCorps2?: number;
+  // ─── 📐 Filtre Pic ZigZag ───
+  activerFiltreZigzag?: boolean;
+  plusBasPrecedent?: number;
+  plusHautPrecedent?: number;
 }
 
 /**
@@ -167,8 +182,9 @@ export interface ResultatValidationDoji {
  *
  * 💡 COMMENT L'AJUSTER OU LA MODIFIER ?
  *  • Pour désactiver une condition : commentez simplement son bloc `if (...) return { ... estValide: false }`.
- *  • Pour assouplir les tailles : réduisez `multiplicateurBougie1` ou `multiplicateurCorps2` (ex: 1.2 au lieu de 1.75).
+ *  • Pour assouplir les tailles : réduisez `multiplicateurBougie1` ou `multiplicateurCorps2` (ex: 1.0 et 1.2).
  *  • Pour assouplir la précision de réintégration : augmentez `toleranceDepassement` ou `toleranceDeficit`.
+ *  • Pour désactiver le filtre ZigZag : passez `activerFiltreZigzag: false`.
  *
  * @returns {ResultatValidationDoji} { estValide: true/false, type, situationCloture, ... }
  */
@@ -183,10 +199,13 @@ export function validerDojiPersonnalise(params: ParametresValidationDoji): Resul
     activerVente = true,
     activerFiltreTaille = true,
     activerFiltreTendance = false,
-    toleranceDeficit = 0.15,
-    toleranceDepassement = 1.0,
-    multiplicateurBougie1 = 1.1,
-    multiplicateurCorps2 = 1.1,
+    toleranceDeficit = 0.3,
+    toleranceDepassement = 2.0,
+    multiplicateurBougie1 = 1.0,
+    multiplicateurCorps2 = 1.2,
+    activerFiltreZigzag = true,
+    plusBasPrecedent,
+    plusHautPrecedent,
   } = params;
 
   const range1 = b1.high - b1.low;
@@ -272,6 +291,25 @@ export function validerDojiPersonnalise(params: ParametresValidationDoji): Resul
     }
   }
 
+  // ─── 🔍 CONDITION 5 : Filtre Pic ZigZag (Creux pour Achat, Sommet pour Vente) ─
+  // Le Doji acheteur doit impérativement marquer le creux le plus bas récent (Swing Low)
+  // Le Doji vendeur doit impérativement marquer le sommet le plus haut récent (Swing High)
+  if (activerFiltreZigzag && plusBasPrecedent !== undefined && plusHautPrecedent !== undefined) {
+    if (typeSignal === 'ACHAT') {
+      const creuxSetup = Math.min(b1.low, b2.low);
+      if (creuxSetup > plusBasPrecedent) {
+        // ❌ Échoué : Une bougie précédente était plus basse, ce n'est pas un pic bas ZigZag
+        return { ...resultatEchec, situationCloture, ecartPrix, ratioEcart };
+      }
+    } else if (typeSignal === 'VENTE') {
+      const sommetSetup = Math.max(b1.high, b2.high);
+      if (sommetSetup < plusHautPrecedent) {
+        // ❌ Échoué : Une bougie précédente était plus haute, ce n'est pas un pic haut ZigZag
+        return { ...resultatEchec, situationCloture, ecartPrix, ratioEcart };
+      }
+    }
+  }
+
   // ✅ TOUTES les conditions sont satisfaites : Doji validé !
   return {
     estValide: true,
@@ -319,20 +357,24 @@ export function calculerLiquidationReintegration(
 
   // 2️⃣ Extraction et sécurisation des paramètres avec valeurs par défaut
   const params = options || {};
-  // Tolérance stricte quand la bougie reste en deçà d'Open1 (déficit de réintégration)
+  // Tolérance stricte quand la bougie reste en deçà d'Open1 (déficit de réintégration) (défaut: 30%)
   const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : params.toleranceProximite;
   const toleranceDeficit = valDeficit !== undefined
     ? (valDeficit > 1 ? valDeficit / 100 : valDeficit)
-    : 0.15;
+    : 0.3;
 
-  // Tolérance élargie quand la bougie dépasse Open1 dans le sens favorable (dépassement avec plus de marge)
-  const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 1.0;
+  // Tolérance élargie quand la bougie dépasse Open1 dans le sens favorable (dépassement avec plus de marge) (défaut: 200%)
+  const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 2.0;
   const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;
 
   const activerFiltreTaille = params.activerFiltreTaille !== false;
   const periodeHistorique = Math.max(3, Number(params.periodeHistorique !== undefined ? params.periodeHistorique : 10));
-  const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 !== undefined ? params.multiplicateurBougie1 : 1.1));
-  const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 !== undefined ? params.multiplicateurCorps2 : 1.1));
+  const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 !== undefined ? params.multiplicateurBougie1 : 1.0));
+  const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 !== undefined ? params.multiplicateurCorps2 : 1.2));
+
+  // ─── 📐 Filtre Pic ZigZag ───
+  const activerFiltreZigzag = params.activerFiltreZigzag !== false;
+  const profondeurZigzag = Math.max(2, Number(params.profondeurZigzag !== undefined ? params.profondeurZigzag : 5));
 
   const activerFiltreTendance = Boolean(params.activerFiltreTendance);
   const trendBars = Math.max(1, Number(params.trendBars !== undefined ? params.trendBars : 5));
@@ -377,6 +419,24 @@ export function calculerLiquidationReintegration(
       }
     }
 
+    // Calcul des extrêmes locaux pour le filtre Pic ZigZag (sur les profondeurZigzag bougies antérieures)
+    let plusBasPrecedent = Infinity;
+    let plusHautPrecedent = -Infinity;
+    if (activerFiltreZigzag) {
+      const indexFinZigzag = i - 2;
+      const indexDebutZigzag = Math.max(0, i - 1 - profondeurZigzag);
+      if (indexFinZigzag >= indexDebutZigzag) {
+        for (let k = indexDebutZigzag; k <= indexFinZigzag; k++) {
+          const bPrev = bougies[k];
+          if (bPrev.low < plusBasPrecedent) plusBasPrecedent = bPrev.low;
+          if (bPrev.high > plusHautPrecedent) plusHautPrecedent = bPrev.high;
+        }
+      } else {
+        plusBasPrecedent = b1.low;
+        plusHautPrecedent = b1.high;
+      }
+    }
+
     const indexTendance = Math.max(0, i - trendBars);
     const openTendance = bougies[indexTendance].open;
 
@@ -395,6 +455,9 @@ export function calculerLiquidationReintegration(
       toleranceDepassement,
       multiplicateurBougie1,
       multiplicateurCorps2,
+      activerFiltreZigzag,
+      plusBasPrecedent,
+      plusHautPrecedent,
     });
 
     if (!validation.estValide) {
@@ -519,16 +582,20 @@ function analyserPaireBougies(
   indexB2: number,
   params: ParametresLiquidationReintegration
 ): RapportDiagnosticDoji {
-  const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : (params.toleranceProximite ?? 0.15);
+  const valDeficit = params.toleranceDeficit !== undefined ? params.toleranceDeficit : (params.toleranceProximite ?? 0.3);
   const toleranceDeficit = valDeficit > 1 ? valDeficit / 100 : valDeficit;
 
-  const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 1.0;
+  const valDepassement = params.toleranceDepassement !== undefined ? params.toleranceDepassement : 2.0;
   const toleranceDepassement = valDepassement > 1 ? valDepassement / 100 : valDepassement;
 
   const activerFiltreTaille = params.activerFiltreTaille !== false;
   const periodeHistorique = Math.max(3, Number(params.periodeHistorique ?? 10));
-  const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 ?? 1.1));
-  const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 ?? 1.1));
+  const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 ?? 1.0));
+  const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 ?? 1.2));
+
+  // ─── 📐 Filtre Pic ZigZag ───
+  const activerFiltreZigzag = params.activerFiltreZigzag !== false;
+  const profondeurZigzag = Math.max(2, Number(params.profondeurZigzag !== undefined ? params.profondeurZigzag : 5));
 
   const activerAchat = params.activerAchat !== false;
   const activerVente = params.activerVente !== false;
@@ -560,6 +627,24 @@ function analyserPaireBougies(
     }
     moyRangeHist = sommeRanges / nbBougiesHist;
     moyCorpsHist = sommeCorps / nbBougiesHist;
+  }
+
+  // Calcul des extrêmes locaux pour le filtre Pic ZigZag
+  let plusBasPrecedent = Infinity;
+  let plusHautPrecedent = -Infinity;
+  if (activerFiltreZigzag) {
+    const indexFinZigzag = indexB2 - 2;
+    const indexDebutZigzag = Math.max(0, indexB2 - 1 - profondeurZigzag);
+    if (indexFinZigzag >= indexDebutZigzag) {
+      for (let k = indexDebutZigzag; k <= indexFinZigzag; k++) {
+        const bPrev = bougies[k];
+        if (bPrev.low < plusBasPrecedent) plusBasPrecedent = bPrev.low;
+        if (bPrev.high > plusHautPrecedent) plusHautPrecedent = bPrev.high;
+      }
+    } else {
+      plusBasPrecedent = b1.low;
+      plusHautPrecedent = b1.high;
+    }
   }
 
   // Tendance
@@ -672,8 +757,46 @@ function analyserPaireBougies(
       : `Corps de B2 trop petit : ${ratioCorpsB2Txt}x < ${multiplicateurCorps2}x (il manque ${(multiplicateurCorps2 - ratioCorpsB2).toFixed(2)}x)`,
   });
 
+  // Condition 6 : Pic ZigZag (Creux pour Achat, Sommet pour Vente)
+  let condZigzagValide = true;
+  let valMesureeZigzag = '';
+  let valRequiseZigzag = '';
+  let expZigzag = '';
+
+  if (typeCandidat === 'ACHAT') {
+    const creuxSetup = Math.min(b1.low, b2.low);
+    const estPicBas = creuxSetup <= plusBasPrecedent;
+    condZigzagValide = !activerFiltreZigzag || estPicBas;
+    valMesureeZigzag = `Creux setup: ${creuxSetup.toFixed(4)} vs plus bas des ${profondeurZigzag} barres: ${plusBasPrecedent.toFixed(4)}`;
+    valRequiseZigzag = `Creux <= ${plusBasPrecedent.toFixed(4)} (Pic bas ZigZag)`;
+    expZigzag = condZigzagValide
+      ? `Le Doji acheteur est bien positionné sur un creux / pic bas ZigZag (${creuxSetup.toFixed(4)} <= ${plusBasPrecedent.toFixed(4)})`
+      : `Rejeté par le ZigZag : la bougie précédente était plus basse (${plusBasPrecedent.toFixed(4)} < ${creuxSetup.toFixed(4)})`;
+  } else if (typeCandidat === 'VENTE') {
+    const sommetSetup = Math.max(b1.high, b2.high);
+    const estPicHaut = sommetSetup >= plusHautPrecedent;
+    condZigzagValide = !activerFiltreZigzag || estPicHaut;
+    valMesureeZigzag = `Sommet setup: ${sommetSetup.toFixed(4)} vs plus haut des ${profondeurZigzag} barres: ${plusHautPrecedent.toFixed(4)}`;
+    valRequiseZigzag = `Sommet >= ${plusHautPrecedent.toFixed(4)} (Pic haut ZigZag)`;
+    expZigzag = condZigzagValide
+      ? `Le Doji vendeur est bien positionné sur un sommet / pic haut ZigZag (${sommetSetup.toFixed(4)} >= ${plusHautPrecedent.toFixed(4)})`
+      : `Rejeté par le ZigZag : la bougie précédente était plus haute (${plusHautPrecedent.toFixed(4)} > ${sommetSetup.toFixed(4)})`;
+  } else {
+    valMesureeZigzag = 'En attente d\'un sens opposé';
+    valRequiseZigzag = `Doit marquer un extrême parmi les ${profondeurZigzag} barres`;
+    expZigzag = 'Aucun retournement candidat';
+  }
+
+  conditions.push({
+    titre: `6. Pic ZigZag (Extrême sur ${profondeurZigzag} barres)`,
+    valide: condZigzagValide,
+    valeurMesuree: valMesureeZigzag,
+    valeurRequise: valRequiseZigzag,
+    explication: expZigzag,
+  });
+
   // Verdict global
-  const estValideGlobal = condSensValide && condDirectionValide && condProximiteValide && condTailleB1Valide && condCorpsB2Valide;
+  const estValideGlobal = condSensValide && condDirectionValide && condProximiteValide && condTailleB1Valide && condCorpsB2Valide && condZigzagValide;
 
   let verdict = '';
   if (estValideGlobal) {
@@ -685,6 +808,7 @@ function analyserPaireBougies(
     if (!condProximiteValide) motifsRejet.push(`écart clôture trop grand (${ratioEcartPct}% > ${tolPct}%)`);
     if (!condTailleB1Valide) motifsRejet.push(`B1 trop petite (${ratioTailleB1Txt}x < ${multiplicateurBougie1}x)`);
     if (!condCorpsB2Valide) motifsRejet.push(`corps B2 trop petit (${ratioCorpsB2Txt}x < ${multiplicateurCorps2}x)`);
+    if (!condZigzagValide) motifsRejet.push(`pas sur un pic ZigZag (${typeCandidat === 'ACHAT' ? 'pas le plus bas' : 'pas le plus haut'})`);
     verdict = `❌ REJETÉ : ${motifsRejet.join(', ')}`;
   }
 

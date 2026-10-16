@@ -242,7 +242,7 @@ describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', ()
     expect(resExec?.donnees?.signaux[0]?.situationCloture).toBe('DEPASSEMENT');
   });
 
-  it('utilise bien les nouvelles valeurs par défaut plus permissives (1.1x, 15% déficit, 100% dépassement)', () => {
+  it('utilise bien les nouvelles valeurs par défaut (1.0x, 1.2x corps, 30% déficit, 200% dépassement, ZigZag 5 barres)', () => {
     // Moyenne range hist = 10, moyenne corps hist = 5
     const bougies: Bougie[] = [
       creerBougie(1000, 100, 105, 95, 100),
@@ -250,9 +250,9 @@ describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', ()
       creerBougie(3000, 100, 105, 95, 100),
       creerBougie(4000, 100, 105, 95, 100),
       creerBougie(5000, 100, 105, 95, 100),
-      // B1 : Range = 11.5 (>= 1.1 * 10 = 11), Vendeuse (105 -> 95)
+      // B1 : Range = 11.5 (>= 1.0 * 10 = 10), Vendeuse (105 -> 95), Low = 93.5 (plus bas que 95, donc pic bas)
       creerBougie(6000, 105, 105, 93.5, 95),
-      // B2 : Corps = 6 (>= 1.1 * 5 = 5.5), Acheteuse (95 -> 104) avec déficit de 1.0 (1.0 / 11 = 9% <= 15% déficit par défaut)
+      // B2 : Corps = 6 (>= 1.2 * 5 = 6.0), Acheteuse (95 -> 104) avec déficit de 1.0 (1.0 / 11 = 9% <= 30% déficit par défaut)
       creerBougie(7000, 95, 105, 94, 104),
     ];
 
@@ -262,17 +262,66 @@ describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', ()
     expect(resDefaut.signaux[0].type).toBe('ACHAT');
   });
 
+  it('valide un Doji acheteur si son creux est le plus bas des 5 bougies (Pic bas ZigZag)', () => {
+    const bougies: Bougie[] = [
+      creerBougie(1000, 100, 102, 98, 100),
+      creerBougie(2000, 100, 102, 98, 100),
+      creerBougie(3000, 100, 102, 98, 100),
+      creerBougie(4000, 100, 102, 98, 100),
+      creerBougie(5000, 100, 102, 98, 100), // Plus bas des 5 barres = 98
+      // B1 : Low = 93 (< 98, nouveau plus bas !)
+      creerBougie(6000, 105, 105, 93, 95),
+      // B2 : Clôture réintégration
+      creerBougie(7000, 95, 106, 94, 105),
+    ];
+
+    const resultat = calculerLiquidationReintegration(bougies, {
+      activerFiltreZigzag: true,
+      profondeurZigzag: 5,
+    });
+
+    expect(resultat.signaux.length).toBe(1);
+    expect(resultat.signaux[0].type).toBe('ACHAT');
+  });
+
+  it('rejette un Doji acheteur si une bougie antérieure était plus basse (pas sur un pic bas ZigZag)', () => {
+    const bougies: Bougie[] = [
+      creerBougie(1000, 100, 102, 98, 100),
+      creerBougie(2000, 100, 102, 88, 100), // ⚠️ Cette bougie est descendue à 88 (plus bas que le Doji !)
+      creerBougie(3000, 100, 102, 98, 100),
+      creerBougie(4000, 100, 102, 98, 100),
+      creerBougie(5000, 100, 102, 98, 100),
+      // B1 : Low = 93 (93 > 88, donc ce n'est PAS le point le plus bas / pic ZigZag !)
+      creerBougie(6000, 105, 105, 93, 95),
+      creerBougie(7000, 95, 106, 94, 105),
+    ];
+
+    const resultat = calculerLiquidationReintegration(bougies, {
+      activerFiltreZigzag: true,
+      profondeurZigzag: 5,
+    });
+
+    // Doit être rejeté car 93 n'est pas le plus bas parmi les 5 dernières bougies
+    expect(resultat.signaux.length).toBe(0);
+
+    // Mais si on désactive le filtre ZigZag, le setup réapparaît
+    const sansZigzag = calculerLiquidationReintegration(bougies, {
+      activerFiltreZigzag: false,
+    });
+    expect(sansZigzag.signaux.length).toBe(1);
+  });
+
   it('produit un diagnostic complet et pédagogique expliquant pourquoi une bougie est acceptée ou rejetée', () => {
-    // Bougie 1 : Range = 10, Corps = 8 (100 -> 92)
-    // Bougie 2 : Range = 10, Corps = 8 (92 -> 99) -> Clôture à 99 vs Open1 100 -> Retrait de 1 / 10 = 10%
+    // Bougie 1 : Range = 12, Corps = 8 (100 -> 92), Low = 90 (plus bas que 95 -> pic ZigZag valide)
+    // Bougie 2 : Range = 10, Corps = 7 (92 -> 99) -> Clôture à 99 vs Open1 100 -> Retrait de 1 / 11 = 9.09%
     const bougies: Bougie[] = [
       creerBougie(1000, 100, 105, 95, 103),
       creerBougie(2000, 100, 105, 95, 103),
       creerBougie(3000, 100, 105, 95, 103),
       creerBougie(4000, 100, 105, 95, 103),
       creerBougie(5000, 100, 105, 95, 103),
-      creerBougie(6000, 100, 102, 90, 92), // B1 : Range = 12 (12/10 = 1.2x >= 1.1x)
-      creerBougie(7000, 92, 101, 91, 99),  // B2 : Corps = 7 (7/3 = 2.33x >= 1.1x), Close 99 vs Open1 100 -> Retrait de 1 / 11 = 9.09%
+      creerBougie(6000, 100, 102, 90, 92), // B1 : Low = 90 (< 95)
+      creerBougie(7000, 92, 101, 91, 99),  // B2 : Corps = 7
     ];
 
     // Test avec tolérance de retrait stricte (5%) : doit être rejeté pour retrait trop grand
@@ -283,10 +332,11 @@ describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', ()
     expect(diagRejete?.verdict).toContain('REJETÉ');
     expect(diagRejete?.conditions.find((c) => c.titre.includes('Clôture'))?.valide).toBe(false);
 
-    // Test avec tolérance de retrait plus large (15%) : doit être validé !
-    const diagAccepte = diagnostiquerBougieDoji(bougies, 6, { toleranceDeficit: 0.15 });
+    // Test avec tolérance de retrait par défaut (30%) : doit être validé à 100% !
+    const diagAccepte = diagnostiquerBougieDoji(bougies, 6, { toleranceDeficit: 0.30 });
     expect(diagAccepte?.estValide).toBe(true);
     expect(diagAccepte?.verdict).toContain('VALIDÉ À 100%');
     expect(diagAccepte?.conditions.every((c) => c.valide)).toBe(true);
+    expect(diagAccepte?.conditions.some((c) => c.titre.includes('Pic ZigZag'))).toBe(true);
   });
 });
