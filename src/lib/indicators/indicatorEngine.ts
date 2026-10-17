@@ -36,7 +36,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.21.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.22.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -3130,13 +3130,13 @@ return {
       multiplicateurCorps2: 1.2,
       activerFiltreZigzag: true,
       profondeurZigzag: 5,
+      afficherZigzag: false,
+      couleurZigzag: '#06b6d4',
       activerAchat: true,
       activerVente: true,
       bullColor: '#00E676',
       bearColor: '#F23645',
       texteLabel: 'Liq\\nReint',
-      activerFiltreTendance: false,
-      trendBars: 5,
     },
     definitionsVariables: [
       {
@@ -3222,6 +3222,22 @@ return {
         groupe: 'Filtre de Structure ZigZag',
       },
       {
+        cle: 'afficherZigzag',
+        label: 'Afficher Tracé ZigZag',
+        description: 'Affiche visuellement les vagues et segments du ZigZag sur le graphique',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Filtre de Structure ZigZag',
+      },
+      {
+        cle: 'couleurZigzag',
+        label: 'Couleur Tracé ZigZag',
+        description: 'Couleur des segments reliant les creux et sommets ZigZag',
+        type: 'string',
+        valeurParDefaut: '#06b6d4',
+        groupe: 'Filtre de Structure ZigZag',
+      },
+      {
         cle: 'activerAchat',
         label: 'Activer Signaux d\'Achat (Long)',
         description: 'Affiche les signaux de réintégration haussière après liquidation vendeuse',
@@ -3260,25 +3276,6 @@ return {
         type: 'string',
         valeurParDefaut: 'Liq\\nReint',
         groupe: 'Couleurs & Style',
-      },
-      {
-        cle: 'activerFiltreTendance',
-        label: 'Activer Filtre de Tendance Globale',
-        description: 'Exige que le signal aille dans le sens opposé à la tendance des barres précédentes',
-        type: 'boolean',
-        valeurParDefaut: false,
-        groupe: 'Directions & Filtres',
-      },
-      {
-        cle: 'trendBars',
-        label: 'Barres d\'Estimation de Tendance',
-        description: 'Nombre de bougies pour estimer la tendance préalable',
-        type: 'number',
-        valeurParDefaut: 5,
-        min: 1,
-        max: 50,
-        step: 1,
-        groupe: 'Directions & Filtres',
       },
     ],
     creeLe: '2026-10-11T00:00:00.000Z',

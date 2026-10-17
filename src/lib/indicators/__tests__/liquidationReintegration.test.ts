@@ -339,4 +339,34 @@ describe('Indicateur Autonome : Liquidation & Réintégration (Liq / Reint)', ()
     expect(diagAccepte?.conditions.every((c) => c.valide)).toBe(true);
     expect(diagAccepte?.conditions.some((c) => c.titre.includes('Pic ZigZag'))).toBe(true);
   });
+
+  it('génère les lignes visuelles du ZigZag sur le graphique lorsque afficherZigzag est activé', () => {
+    // Création d'une série de bougies avec des vagues nettes pour créer des pivots ZigZag
+    const bougies: Bougie[] = [
+      creerBougie(1000, 100, 110, 95, 108),
+      creerBougie(2000, 108, 120, 105, 118),
+      creerBougie(3000, 118, 125, 115, 122), // Sommet 125
+      creerBougie(4000, 122, 123, 110, 112),
+      creerBougie(5000, 112, 115, 100, 102),
+      creerBougie(6000, 102, 104, 90, 92),   // Creux 90
+      creerBougie(7000, 92, 105, 91, 102),   // Rebond
+    ];
+
+    // Sans afficherZigzag (ou false) : pas de lignes ZigZag
+    const resSansZigzag = calculerLiquidationReintegration(bougies, { afficherZigzag: false });
+    expect(resSansZigzag.primitives.lignes?.length || 0).toBe(0);
+
+    // Avec afficherZigzag: true : des segments de lignes visuelles sont générés
+    const resAvecZigzag = calculerLiquidationReintegration(bougies, {
+      afficherZigzag: true,
+      couleurZigzag: '#ff00aa',
+      profondeurZigzag: 2,
+    });
+
+    expect(resAvecZigzag.primitives.lignes).toBeDefined();
+    expect(resAvecZigzag.primitives.lignes!.length).toBeGreaterThan(0);
+    // Vérifie que la couleur personnalisée demandée est appliquée aux segments
+    expect(resAvecZigzag.primitives.lignes![0].couleur).toBe('#ff00aa');
+  });
 });
+

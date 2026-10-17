@@ -1,12 +1,13 @@
 import type { Bougie } from '@/lib/chartDataHelper';
-import type { VisualPrimitives, VisualLabel } from '@/types/indicatorScript';
+import type { VisualPrimitives, VisualLabel, VisualLine } from '@/types/indicatorScript';
+import { calculerZigZag } from './zigzag';
 
 /**
  * ==============================================================================
  * 📋 GUIDE DU DÉVELOPPEUR : CONDITIONS DU SETUP & RÈGLES DE MODIFICATION
  * ==============================================================================
  * Détecte les retournements impulsifs de chandelier (Spring haussier & UTAD baissier)
- * articulés autour de 2 bougies consécutives de sens opposé.
+ * articulés autour de 2 bougies consécutives de sens opposé, couplé au ZigZag.
  *
  * 🎯 OÙ TROUVER ET MODIFIER LE CODE DES CONDITIONS DU DOJI ?
  *  👉 TOUTES les conditions du Doji sont rassemblées dans une seule fonction :
@@ -69,15 +70,18 @@ export interface ParametresLiquidationReintegration {
   activerFiltreZigzag?: boolean;
   // Nombre de bougies précédentes devant être dépassées pour valider le pic (défaut: 5)
   profondeurZigzag?: number;
-
-  // Filtre optionnel de tendance globale sur les barres antérieures (défaut: false)
-  activerFiltreTendance?: boolean;
-  // Nombre de barres pour évaluer la tendance si le filtre est actif (défaut: 5)
-  trendBars?: number;
+  // Affiche visuellement le tracé des segments du ZigZag sur le graphique (défaut: false)
+  afficherZigzag?: boolean;
+  // Couleur personnalisée des lignes du ZigZag (défaut: '#06b6d4')
+  couleurZigzag?: string;
 
   // Sélecteurs de direction
   activerAchat?: boolean;
   activerVente?: boolean;
+
+  // Paramètres dépréciés conservés pour compatibilité descendante
+  activerFiltreTendance?: boolean;
+  trendBars?: number;
 
   // Couleurs et style d'affichage
   bullColor?: string;
@@ -145,11 +149,9 @@ export interface ParametresValidationDoji {
   b2: Bougie;
   moyRangeHist: number;
   moyCorpsHist: number;
-  openTendance: number;
   activerAchat?: boolean;
   activerVente?: boolean;
   activerFiltreTaille?: boolean;
-  activerFiltreTendance?: boolean;
   toleranceDeficit?: number;
   toleranceDepassement?: number;
   multiplicateurBougie1?: number;
@@ -158,6 +160,9 @@ export interface ParametresValidationDoji {
   activerFiltreZigzag?: boolean;
   plusBasPrecedent?: number;
   plusHautPrecedent?: number;
+  // Propriétés dépréciées conservées pour compatibilité avec d'autres modules
+  openTendance?: number;
+  activerFiltreTendance?: boolean;
 }
 
 /**
@@ -194,11 +199,9 @@ export function validerDojiPersonnalise(params: ParametresValidationDoji): Resul
     b2,
     moyRangeHist,
     moyCorpsHist,
-    openTendance,
     activerAchat = true,
     activerVente = true,
     activerFiltreTaille = true,
-    activerFiltreTendance = false,
     toleranceDeficit = 0.3,
     toleranceDepassement = 2.0,
     multiplicateurBougie1 = 1.0,
@@ -229,11 +232,8 @@ export function validerDojiPersonnalise(params: ParametresValidationDoji): Resul
   // ─── 🔍 CONDITION 1 : Direction et alternance des 2 bougies ─────────────────
   // • Achat (Spring) : Bougie 1 Baissière (rouge) + Bougie 2 Haussière (verte)
   // • Vente (UTAD)   : Bougie 1 Haussière (verte) + Bougie 2 Baissière (rouge)
-  const tendanceHausse = !activerFiltreTendance || openTendance < b2.open;
-  const tendanceBaisse = !activerFiltreTendance || openTendance > b2.open;
-
-  const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open) && tendanceBaisse;
-  const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open) && tendanceHausse;
+  const estCandidatAchat = activerAchat && (b1.close < b1.open) && (b2.close > b2.open);
+  const estCandidatVente = activerVente && (b1.close > b1.open) && (b2.close < b2.open);
 
   if (!estCandidatAchat && !estCandidatVente) {
     // ❌ Échoué : Les sens des deux bougies ne forment pas un retournement
@@ -372,12 +372,11 @@ export function calculerLiquidationReintegration(
   const multiplicateurBougie1 = Math.max(0.5, Number(params.multiplicateurBougie1 !== undefined ? params.multiplicateurBougie1 : 1.0));
   const multiplicateurCorps2 = Math.max(0.5, Number(params.multiplicateurCorps2 !== undefined ? params.multiplicateurCorps2 : 1.2));
 
-  // ─── 📐 Filtre Pic ZigZag ───
+  // ─── 📐 Filtre et Tracé Visuel ZigZag ───
   const activerFiltreZigzag = params.activerFiltreZigzag !== false;
   const profondeurZigzag = Math.max(2, Number(params.profondeurZigzag !== undefined ? params.profondeurZigzag : 5));
-
-  const activerFiltreTendance = Boolean(params.activerFiltreTendance);
-  const trendBars = Math.max(1, Number(params.trendBars !== undefined ? params.trendBars : 5));
+  const afficherZigzag = Boolean(params.afficherZigzag);
+  const couleurZigzag = params.couleurZigzag || '#06b6d4';
 
   const activerAchat = params.activerAchat !== false;
   const activerVente = params.activerVente !== false;
@@ -388,6 +387,28 @@ export function calculerLiquidationReintegration(
 
   const signauxDetectes: SignalLiquidationReintegration[] = [];
   const labelsVisuels: VisualLabel[] = [];
+  const lignesVisuelles: VisualLine[] = [];
+
+  // Tracé des segments ZigZag sur le graphique si demandé par l'utilisateur
+  if (afficherZigzag && bougies.length >= profondeurZigzag * 2) {
+    const resZigzag = calculerZigZag(bougies, { depth: profondeurZigzag });
+    if (resZigzag.pivots && resZigzag.pivots.length >= 2) {
+      for (let k = 1; k < resZigzag.pivots.length; k++) {
+        const p1 = resZigzag.pivots[k - 1];
+        const p2 = resZigzag.pivots[k];
+        lignesVisuelles.push({
+          id: `liq-zigzag-line-${k}`,
+          prix: p1.prix,
+          prixFin: p2.prix,
+          dateDebut: p1.temps,
+          dateFin: p2.temps,
+          couleur: couleurZigzag,
+          epaisseur: 2,
+          style: 'solid',
+        });
+      }
+    }
+  }
 
   let countAchats = 0;
   let countVentes = 0;
@@ -437,20 +458,15 @@ export function calculerLiquidationReintegration(
       }
     }
 
-    const indexTendance = Math.max(0, i - trendBars);
-    const openTendance = bougies[indexTendance].open;
-
     // ─── 🎯 VÉRIFICATION DES CONDITIONS DU DOJI (FONCTION UNIQUE ET CENTRALISÉE) ───
     const validation = validerDojiPersonnalise({
       b1,
       b2,
       moyRangeHist,
       moyCorpsHist,
-      openTendance,
       activerAchat,
       activerVente,
       activerFiltreTaille,
-      activerFiltreTendance,
       toleranceDeficit,
       toleranceDepassement,
       multiplicateurBougie1,
@@ -527,6 +543,7 @@ export function calculerLiquidationReintegration(
     signaux: signauxDetectes,
     primitives: {
       labels: labelsVisuels,
+      lignes: lignesVisuelles,
     },
     statistiques: {
       totalSignaux: signauxDetectes.length,
@@ -599,8 +616,6 @@ function analyserPaireBougies(
 
   const activerAchat = params.activerAchat !== false;
   const activerVente = params.activerVente !== false;
-  const activerFiltreTendance = Boolean(params.activerFiltreTendance);
-  const trendBars = Math.max(1, Number(params.trendBars ?? 5));
 
   const b1 = bougies[indexB1];
   const b2 = bougies[indexB2];
@@ -647,12 +662,6 @@ function analyserPaireBougies(
     }
   }
 
-  // Tendance
-  const indexTrend = Math.max(0, indexB2 - trendBars);
-  const openTrend = bougies[indexTrend].open;
-  const tendanceHausse = !activerFiltreTendance || openTrend < b2.open;
-  const tendanceBaisse = !activerFiltreTendance || openTrend > b2.open;
-
   // 1️⃣ Sens et alternance des 2 bougies
   const b1Baissiere = b1.close < b1.open;
   const b1Haussiere = b1.close > b1.open;
@@ -683,20 +692,20 @@ function analyserPaireBougies(
   // Condition 2 : Direction autorisée
   let condDirectionValide = true;
   if (typeCandidat === 'ACHAT') {
-    condDirectionValide = activerAchat && tendanceBaisse;
+    condDirectionValide = activerAchat;
   } else if (typeCandidat === 'VENTE') {
-    condDirectionValide = activerVente && tendanceHausse;
+    condDirectionValide = activerVente;
   }
   conditions.push({
-    titre: '2. Direction & Filtre Tendance',
+    titre: '2. Direction Autorisée',
     valide: condDirectionValide,
     valeurMesuree: typeCandidat === 'ACHAT'
-      ? `Achats: ${activerAchat ? 'ON' : 'OFF'} (Tendance baisse: ${tendanceBaisse ? 'Oui' : 'Non'})`
-      : `Ventes: ${activerVente ? 'ON' : 'OFF'} (Tendance hausse: ${tendanceHausse ? 'Oui' : 'Non'})`,
+      ? `Achats: ${activerAchat ? 'ON 🟢' : 'OFF 🔴'}`
+      : `Ventes: ${activerVente ? 'ON 🟢' : 'OFF 🔴'}`,
     valeurRequise: typeCandidat === 'ACHAT' ? 'Achat activé dans les réglages' : 'Vente activée dans les réglages',
     explication: condDirectionValide
       ? 'La direction est autorisée par vos réglages'
-      : 'La direction correspondante est désactivée ou bloquée par le filtre de tendance',
+      : 'La direction correspondante est désactivée dans vos réglages',
   });
 
   // Condition 3 : Précision du retournement (Close2 vs Open1)
