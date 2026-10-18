@@ -4,7 +4,7 @@ import type { ZoneShved } from '@/lib/bot/modules/01_liquidite/shvedSupplyDemand
 import {
   calculerSandboxDojiShvedPlage,
   calculerScoreZoneShved,
-} from '../sandboxDojiShvedPlage';
+} from '../favoris/sandboxDojiShvedPlage';
 
 function creerBougie(
   time: number,
@@ -284,6 +284,13 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
     );
     expect(lignesDuSignal.length).toBe(1);
     expect(lignesDuSignal[0].label).toContain('pts');
+  });
+
+  it('exporte avec succès les 3 indicateurs favoris depuis le dossier favoris', async () => {
+    const favoris = await import('../favoris');
+    expect(favoris.calculerSandboxDojiShvedPlage).toBeDefined();
+    expect(favoris.calculerMoneyManagementRules).toBeDefined();
+    expect(favoris.calculerUnmitigatedOverlapProfile).toBeDefined();
   });
 });
 

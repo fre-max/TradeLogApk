@@ -28,7 +28,7 @@ import { calculerOverMitigationHighway } from './overMitigationHighway';
 import { calculerProtectedSwings } from './protectedSwings';
 import { calculerShvedBrokenSRMTF } from './shvedBrokenSRMTF';
 import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort';
-import { calculerSandboxDojiShvedPlage } from './sandboxDojiShvedPlage';
+import { calculerSandboxDojiShvedPlage } from './favoris/sandboxDojiShvedPlage';
 import { calculerUnmitigatedVolumeProfile } from './unmitigatedVolumeProfile';
 import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
 import { calculerZigZag } from './zigzag';
