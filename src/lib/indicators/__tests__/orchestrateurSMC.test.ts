@@ -253,4 +253,28 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(res.prixTPOptimal).toBeLessThan(160);
     expect(res.prixTPOptimal).toBeGreaterThanOrEqual(120);
   });
+
+  it('permet de traverser tous les paliers si l\'utilisateur réduit le coût du péage externe', () => {
+    const tpsCandidats: any[] = [
+      { id: 'tp1', type: 'achat', prixCible: 120, ordre: 1, amplitudePoints: 20, tauxMoyenChevauchement: 5 },
+      { id: 'tp2', type: 'achat', prixCible: 160, ordre: 2, amplitudePoints: 60, tauxMoyenChevauchement: 2 },
+    ];
+
+    // Avec peagePalierUOP réduit à 10 pts au lieu de 100, les 160 pts de carburant suffisent largement !
+    const res = calculerPorteeDynamiqueUOP({
+      prixEntree: 100,
+      prixSL: 90,
+      direction: 'ACHAT',
+      carburantInitial: 160,
+      tpsCandidats,
+      hauteurMoyenne: 10,
+      peagePalierUOP: 10, // Réduction du péage par l'utilisateur
+      coutParATR: 10,     // Réduction de la friction
+    });
+
+    // Les 2 paliers sont maintenant tous les deux traversés !
+    expect(res.paliersTraverses).toBe(2);
+    expect(res.estLimiteParPalier).toBe(false);
+    expect(res.prixTPOptimal).toBeGreaterThanOrEqual(160);
+  });
 });

@@ -263,51 +263,47 @@ import {
  * 
  * 🔹 1. CALCUL DU CARBURANT INITIAL (ÉNERGIE CINÉTIQUE ENGRANGÉE)
  * • [COND-ENERGIE-01] Carburant de Base selon les Retests S/R (L_retests) :
- *     - Règle : Chaque rebond antérieur sur la zone S/R attire des traders particuliers
- *       qui entassent leurs Stop Loss juste derrière la ligne.
- *     - Barème progressif de points de carburant :
- *         • 1 retest antérieur  ➔ 100 points de carburant
- *         • 2 retests antérieurs ➔ 200 points de carburant
- *         • 3 retests antérieurs ➔ 300 points de carburant
- *         • 4 retests ou plus   ➔ 400 points de carburant (plafond maximal)
+ *     - Règle : Chaque rebond antérieur sur la zone S/R attire des ordres de liquidité.
+ *     - Variables Externes Réglables :
+ *         • `pointsParRetest: 100` (Points injectés par retest antérieur, défaut: 100)
+ *         • `plafondCarburantRetests: 400` (Plafond maximal de carburant attribuable, défaut: 400)
+ *     - Formule : `pointsRetests = Math.min(plafondCarburantRetests, nombreRetests * pointsParRetest)`
  * 
  * • [COND-ENERGIE-02] Multiplicateur de Mèche de Balayage (M_meche) :
- *     - Règle : Mesure la profondeur de pénétration de la mèche de liquidation au-delà
- *       du niveau S/R, comparée à la volatilité moyenne (ATR) :
- *         • Pénétration superficielle (< 0.5 x ATR) ➔ Multiplicateur = 1.0x (Balayage de surface)
- *         • Pénétration normale (0.5 à 1.2 x ATR)   ➔ Multiplicateur = 1.3x (Balayage classique)
- *         • Pénétration profonde (> 1.2 x ATR)      ➔ Multiplicateur = 1.6x (Chasse aux stops massive)
+ *     - Règle : Mesure la profondeur de pénétration de la mèche au-delà du S/R comparée à l'ATR :
+ *     - Variables Externes Réglables :
+ *         • `bonusMecheProfonde: 1.6` (Multiplicateur si mèche > 1.2 ATR, défaut: 1.6x)
+ *         • `bonusMecheNormale: 1.3` (Multiplicateur si mèche 0.5 à 1.2 ATR, défaut: 1.3x)
+ *         • Effleurement (< 0.5 ATR) ➔ Multiplicateur = 1.0x
  * 
  * • [COND-ENERGIE-03] Formule du Budget Total Initial (B0) :
- *     - Formule mathématique : `B0 = L_retests * M_meche`
- *     - Exemple chiffré : Support testé 3 fois (300 pts) avec mèche profonde (x 1.5)
- *       ➔ Budget Total Initial B0 = 300 * 1.5 = 450 points de carburant !
+ *     - Formule mathématique : `B0 = pointsRetests * multiplicateurMeche`
+ *     - Exemple chiffré : Support testé 3 fois (300 pts) avec mèche profonde (x 1.6)
+ *       ➔ Budget Total Initial B0 = 300 * 1.6 = 480 points de carburant !
  * 
  * 🔹 2. CONSOMMATION & FRICTION DE LA ROUTE (OVERLAP UOP)
  * • [COND-FRICTION-01] Grille de Consommation Continue selon le Taux d'Overlap :
- *     - Zone à Fort Overlap (>= 75%) :
- *         • Règle : Marché déjà retravaillé et négocié des deux côtés (Autoroute fluide).
- *         • Consommation : `0.5 point de carburant par pip` parcouru.
- *     - Zone à Overlap Moyen (35% à 74%) :
- *         • Règle : Terrain standard avec résistance modérée.
- *         • Consommation : `1.0 point de carburant par pip` parcouru.
- *     - Zone à Faible Overlap (< 35%) :
- *         • Règle : Terrain vierge ou déséquilibre d'ordres (FVG / Imbalance).
- *         • Consommation : `2.0 points de carburant par pip` parcouru.
+ *     - Variables Externes Réglables :
+ *         • `coutParATR: 50` (Consommation de base en points de carburant par unité d'ATR)
+ *         • `coutFrictionFortOverlap: 0.5` (Multiplicateur pour autoroute fluide, défaut: 0.5x)
+ *         • `coutFrictionMoyenOverlap: 1.0` (Multiplicateur pour terrain standard, défaut: 1.0x)
+ *         • `coutFrictionFaibleOverlap: 2.0` (Multiplicateur pour zone vierge / FVG, défaut: 2.0x)
+ *         • `seuilFortOverlap: 4.0` (Bougies de chevauchement pour qualifier l'autoroute, défaut: 4.0)
+ *         • `seuilFaibleOverlap: 2.0` (Seuil en dessous duquel le terrain est difficile, défaut: 2.0)
  * 
  * • [COND-FRICTION-02] Forfait Péage de Traversée d'un Palier Non-Mitigé UOP :
- *     - Règle : Chaque palier vierge non-mitigé UOP rencontré sur la trajectoire représente
- *       un ancien sommet ou creux institutionnel qui oppose un mur d'ordres contraires.
- *     - Forfait d'absorption exigé : `100 points de carburant` par palier.
+ *     - Règle : Chaque palier vierge non-mitigé UOP rencontré sur la trajectoire oppose un mur d'absorption.
+ *     - Variable Externe Réglable :
+ *         • `peagePalierUOP: 100` (Forfait en points pour traverser et percer un mur UOP, défaut: 100 pts)
  *     - Condition de percée :
- *         • Si Budget Restant >= 100 pts ➔ Le mur est PERCÉ ! On déduit 100 pts du budget et la hausse continue.
- *         • Si Budget Restant < 100 pts  ➔ Le mur est INFRANCHISSABLE ! Le marché calera net ici.
+ *         • Si Budget Restant >= peagePalierUOP ➔ Le mur est PERCÉ ! Déduction et poursuite.
+ *         • Si Budget Restant < peagePalierUOP  ➔ Le mur est INFRANCHISSABLE ! Arrêt immédiat.
  * 
  * • [COND-FRICTION-03] Ancrage Mathématique du Take Profit Optimal :
- *     - Si un palier UOP ne peut pas être percé : Le TP Optimal est placé immédiatement
- *       DEVANT ce palier (ex: 2 à 3 pips avant) pour garantir l'exécution sans subir le rejet.
- *     - Si tous les paliers sont franchis avec succès : Le TP Optimal continue d'avancer
- *       jusqu'au niveau exact où le budget de carburant tombe à zéro.
+ *     - Variable Externe Réglable :
+ *         • `margeSecuriteDevantPalier: 0.15` (Marge de sécurité en % d'ATR pour sortir avant le mur, défaut: 15%)
+ *     - Règle : Si un mur ne peut pas être franchi, le TP est ancré juste devant le palier pour garantir l'exécution.
+ *     - Si tous les paliers sont franchis, le TP continue d'avancer selon le carburant restant.
  * 
  * 🔹 3. EXEMPLE COMPLET SIMULÉ PAS-À-PAS :
  *     - Signal d'Achat : Entrée à 1.1000, Stop Loss à 1.0970 (Risque = 30 pips).
@@ -390,13 +386,23 @@ export interface ParametresOrchestrateurSMC {
   // ─── 🧹 Épuration Active : Masquage des Setups Passés (TP ou SL Touché) ───
   masquerSetupsTermines?: boolean;      // Masquer du graphique les setups dont le TP ou SL a déjà été touché (défaut: true)
 
-  // ─── 🎯 Cibles UOP & Proportionnalité ───
+  // ─── 🚀 Moteur d'Énergie & Coût des Péages UOP (Variables Externes Réglables) ───
   modeCalculTP?: 'STANDARD_SHVED' | 'ENERGIE_FRICTION'; // Méthode de calcul du TP optimal (défaut: 'ENERGIE_FRICTION')
-  seuilScoreGrandMouvement?: number;     // Score Shved pour viser TP2 au lieu de TP1 en mode STANDARD (défaut: 70)
+  peagePalierUOP?: number;               // [COND-FRICTION-02] Forfait en points de carburant pour franchir un palier UOP (défaut: 100)
+  coutParATR?: number;                   // [COND-FRICTION-01] Consommation de base en points de carburant par unité d'ATR parcourue (défaut: 50)
+  coutFrictionFortOverlap?: number;      // [COND-FRICTION-01] Multiplicateur de coût en zone à Fort Overlap / autoroute (défaut: 0.5)
+  coutFrictionMoyenOverlap?: number;     // [COND-FRICTION-01] Multiplicateur de coût en zone à Overlap Moyen (défaut: 1.0)
+  coutFrictionFaibleOverlap?: number;    // [COND-FRICTION-01] Multiplicateur de coût en zone à Faible Overlap / vide (défaut: 2.0)
+  seuilFortOverlap?: number;             // [COND-FRICTION-01] Seuil en bougies de chevauchement pour qualifier un Fort Overlap (défaut: 4.0)
+  seuilFaibleOverlap?: number;           // [COND-FRICTION-01] Seuil en bougies de chevauchement en dessous duquel c'est un Faible Overlap (défaut: 2.0)
+  margeSecuriteDevantPalier?: number;    // [COND-FRICTION-03] Marge de sécurité en % d'ATR pour ancrer le TP avant le mur (défaut: 0.15 = 15%)
+  pointsParRetest?: number;              // [COND-ENERGIE-01] Points de carburant attribués par retest du S/R (défaut: 100)
+  plafondCarburantRetests?: number;      // [COND-ENERGIE-01] Plafond maximal de carburant attribuable aux retests (défaut: 400)
+  bonusMecheProfonde?: number;           // [COND-ENERGIE-02] Multiplicateur si la mèche de balayage est profonde > 1.2 ATR (défaut: 1.6)
+  bonusMecheNormale?: number;            // [COND-ENERGIE-02] Multiplicateur si la mèche de balayage est normale 0.5 - 1.2 ATR (défaut: 1.3)
+  seuilScoreGrandMouvement?: number;     // Score Shved pour viser TP2 au lieu de TP1 en mode STANDARD historique (défaut: 70)
   zigzagDepth?: number;                  // Sensibilité ZigZag UOP (défaut: 8)
   nbVaguesSuperposees?: number;          // Nombre de vagues superposées UOP (défaut: 4)
-  peagePalierUOP?: number;               // Forfait en points de carburant pour percer un palier UOP (défaut: 100)
-  coutParATR?: number;                   // Consommation en points de carburant par unité d'ATR parcourue (défaut: 50)
 
   // ─── 🎨 Visuels Épurés & Minimalistes (Ergonomie Pro) ───
   modeVisuel?: 'EPURE' | 'COMPLET';      // 'EPURE' (point discret + micro-segments) ou 'COMPLET' (défaut: 'EPURE')
@@ -507,32 +513,39 @@ export function calculerCarburantLiquidation(options: {
   nombreRetests: number;
   profondeurMeche: number;
   hauteurMoyenne: number;
+  pointsParRetest?: number;
+  plafondCarburantRetests?: number;
+  bonusMecheProfonde?: number;
+  bonusMecheNormale?: number;
 }): ResultatCarburantLiquidation {
-  const { nombreRetests, profondeurMeche, hauteurMoyenne } = options;
+  const {
+    nombreRetests,
+    profondeurMeche,
+    hauteurMoyenne,
+    pointsParRetest = 100,
+    plafondCarburantRetests = 400,
+    bonusMecheProfonde = 1.6,
+    bonusMecheNormale = 1.3,
+  } = options;
 
-  // 1️⃣ Barème progressif des retests S/R ([COND-ENERGIE-01])
-  let pointsRetests = 100;
+  // 1️⃣ Barème configurable des retests S/R ([COND-ENERGIE-01])
+  let pointsRetests = pointsParRetest;
   if (nombreRetests <= 0) {
-    pointsRetests = 80;
-  } else if (nombreRetests === 1) {
-    pointsRetests = 100;
-  } else if (nombreRetests === 2) {
-    pointsRetests = 200;
-  } else if (nombreRetests === 3) {
-    pointsRetests = 300;
+    pointsRetests = Math.round(pointsParRetest * 0.8);
   } else {
-    pointsRetests = 400; // Plafond maximal pour 4 retests ou plus
+    // Calcul proportionnel au nombre de retests avec plafond paramétrable
+    pointsRetests = Math.min(plafondCarburantRetests, nombreRetests * pointsParRetest);
   }
 
-  // 2️⃣ Multiplicateur de pénétration de la mèche ([COND-ENERGIE-02])
+  // 2️⃣ Multiplicateur configurable de pénétration de la mèche ([COND-ENERGIE-02])
   const atrSecurise = Math.max(0.00001, hauteurMoyenne);
   const ratioMecheAtr = Math.max(0, profondeurMeche) / atrSecurise;
 
   let multiplicateurMeche = 1.0;
   if (ratioMecheAtr > 1.2) {
-    multiplicateurMeche = 1.6; // Pénétration profonde (chasse aux stops massive)
+    multiplicateurMeche = bonusMecheProfonde; // Pénétration profonde (chasse aux stops massive)
   } else if (ratioMecheAtr >= 0.5) {
-    multiplicateurMeche = 1.3; // Pénétration classique
+    multiplicateurMeche = bonusMecheNormale; // Pénétration classique
   } else {
     multiplicateurMeche = 1.0; // Effleurement superficiel
   }
@@ -582,6 +595,12 @@ export function calculerPorteeDynamiqueUOP(options: {
   hauteurMoyenne: number;
   peagePalierUOP?: number;
   coutParATR?: number;
+  coutFrictionFortOverlap?: number;
+  coutFrictionMoyenOverlap?: number;
+  coutFrictionFaibleOverlap?: number;
+  seuilFortOverlap?: number;
+  seuilFaibleOverlap?: number;
+  margeSecuriteDevantPalier?: number;
 }): ResultatPorteeDynamique {
   const {
     prixEntree,
@@ -592,6 +611,12 @@ export function calculerPorteeDynamiqueUOP(options: {
     hauteurMoyenne,
     peagePalierUOP = 100,
     coutParATR = 50,
+    coutFrictionFortOverlap = 0.5,
+    coutFrictionMoyenOverlap = 1.0,
+    coutFrictionFaibleOverlap = 2.0,
+    seuilFortOverlap = 4.0,
+    seuilFaibleOverlap = 2.0,
+    margeSecuriteDevantPalier = 0.15,
   } = options;
 
   const estAchat = direction === 'ACHAT';
@@ -634,11 +659,11 @@ export function calculerPorteeDynamiqueUOP(options: {
     const distancePalier = Math.abs(palier.prixCible - prixDernierPoint);
 
     // 1️⃣ Consommation continue selon la distance franchie (en unités ATR) ([COND-FRICTION-01])
-    let multiplicateurFriction = 1.0;
-    if (palier.tauxMoyenChevauchement >= 4.0) {
-      multiplicateurFriction = 0.5; // Autoroute fluide (fort overlap)
-    } else if (palier.tauxMoyenChevauchement < 2.0) {
-      multiplicateurFriction = 2.0; // Zone vierge (faible overlap)
+    let multiplicateurFriction = coutFrictionMoyenOverlap;
+    if (palier.tauxMoyenChevauchement >= seuilFortOverlap) {
+      multiplicateurFriction = coutFrictionFortOverlap; // Autoroute fluide (fort overlap)
+    } else if (palier.tauxMoyenChevauchement < seuilFaibleOverlap) {
+      multiplicateurFriction = coutFrictionFaibleOverlap; // Zone vierge (faible overlap)
     }
 
     const consommationDistance = (distancePalier / atrSecurise) * coutParATR * multiplicateurFriction;
@@ -664,7 +689,7 @@ export function calculerPorteeDynamiqueUOP(options: {
       ordreTP = i + 1;
     } else {
       // 🛑 Le mur est trop épais ! On ancre le TP juste devant le palier ([COND-FRICTION-03])
-      const margeSecurite = atrSecurise * 0.15;
+      const margeSecurite = atrSecurise * margeSecuriteDevantPalier;
       prixTPOptimal = estAchat
         ? Math.max(prixEntree, palier.prixCible - margeSecurite)
         : Math.min(prixEntree, palier.prixCible + margeSecurite);
@@ -755,8 +780,21 @@ export function calculerOrchestrateurSMC(
   const afficherSetupsAnnules = Boolean(parametres.afficherSetupsAnnules);
   const masquerSetupsTermines = parametres.masquerSetupsTermines !== false; // Actif par défaut !
   const modeCalculTP = parametres.modeCalculTP || 'ENERGIE_FRICTION'; // Moteur d'énergie actif par défaut !
-  const peagePalierUOP = Math.max(10, Number(parametres.peagePalierUOP ?? 100));
-  const coutParATR = Math.max(5, Number(parametres.coutParATR ?? 50));
+
+  // 🚀 Variables Externes du Moteur d'Énergie & Coût des Péages UOP
+  const peagePalierUOP = Math.max(0, Number(parametres.peagePalierUOP ?? 100));
+  const coutParATR = Math.max(1, Number(parametres.coutParATR ?? 50));
+  const coutFrictionFortOverlap = Math.max(0.01, Number(parametres.coutFrictionFortOverlap ?? 0.5));
+  const coutFrictionMoyenOverlap = Math.max(0.01, Number(parametres.coutFrictionMoyenOverlap ?? 1.0));
+  const coutFrictionFaibleOverlap = Math.max(0.01, Number(parametres.coutFrictionFaibleOverlap ?? 2.0));
+  const seuilFortOverlap = Math.max(0.1, Number(parametres.seuilFortOverlap ?? 4.0));
+  const seuilFaibleOverlap = Math.max(0.1, Number(parametres.seuilFaibleOverlap ?? 2.0));
+  const margeSecuriteDevantPalier = Math.max(0, Number(parametres.margeSecuriteDevantPalier ?? 0.15));
+  const pointsParRetest = Math.max(10, Number(parametres.pointsParRetest ?? 100));
+  const plafondCarburantRetests = Math.max(50, Number(parametres.plafondCarburantRetests ?? 400));
+  const bonusMecheProfonde = Math.max(1.0, Number(parametres.bonusMecheProfonde ?? 1.6));
+  const bonusMecheNormale = Math.max(1.0, Number(parametres.bonusMecheNormale ?? 1.3));
+
   const seuilScoreGrandMouvement = Math.max(10, Number(parametres.seuilScoreGrandMouvement ?? 70));
   const scoreMinimumShved = Math.max(0, Number(parametres.scoreMinimumShved ?? 0));
   const bullColor = parametres.bullColor || '#00E676';
@@ -921,6 +959,10 @@ export function calculerOrchestrateurSMC(
         nombreRetests,
         profondeurMeche,
         hauteurMoyenne: doji.moyenneHauteur,
+        pointsParRetest,
+        plafondCarburantRetests,
+        bonusMecheProfonde,
+        bonusMecheNormale,
       });
 
       carburantInitial = resCarburant.carburantTotal;
@@ -935,6 +977,12 @@ export function calculerOrchestrateurSMC(
         hauteurMoyenne: doji.moyenneHauteur,
         peagePalierUOP,
         coutParATR,
+        coutFrictionFortOverlap,
+        coutFrictionMoyenOverlap,
+        coutFrictionFaibleOverlap,
+        seuilFortOverlap,
+        seuilFaibleOverlap,
+        margeSecuriteDevantPalier,
       });
 
       prixTP = resPortee.prixTPOptimal;
