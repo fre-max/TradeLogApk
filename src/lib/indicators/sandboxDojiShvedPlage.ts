@@ -59,6 +59,14 @@ export interface ParametresSandboxDojiShvedPlage {
   // Filtrage strict par direction : Supports uniquement pour Achat, Résistances uniquement pour Vente (défaut: true)
   filtrerParDirectionSetup?: boolean;
 
+  // ─── 🏆 Score de Liquidité & Filtrage Top N (Demande Utilisateur) ───
+  // Affiche uniquement les N meilleurs S/R classés par score de liquidité (défaut: 3, 0 = tout afficher)
+  topNiveauxScore?: number;
+  // Score minimal de liquidité (0 à 100) pour qu'un niveau soit conservé (défaut: 0 = aucun seuil)
+  scoreMinimum?: number;
+  // Affiche le score sur la ligne de support/résistance (ex: "Sup [85 pts]") (défaut: true)
+  afficherScoreSurLigne?: boolean;
+
   // ─── 🎨 Visuels & Segments Continues / Discontinues ───
   // Style des lignes de Support ('dashed' = discontinu, 'solid' = continu)
   styleLignesSupport?: 'dashed' | 'solid';
@@ -75,6 +83,21 @@ export interface ParametresSandboxDojiShvedPlage {
 }
 
 /**
+ * Support ou Résistance Shved évalué avec son score de liquidité sur 100 points
+ */
+export interface ZoneShvedAvecScore {
+  zone: ZoneShved;
+  score: number;             // Score global sur 100 points
+  retestsAvant: number;      // Retests survenus strictement avant le Doji
+  rejetMoyen: number;        // Amplitude moyenne des rejets de la zone
+  ratioProportion: number;   // Ratio taille bougie 1 / rejet moyen
+  pointsRetests: number;     // Points attribués aux retests (max 35)
+  pointsRejets: number;      // Points attribués à la hauteur de la montagne (max 30)
+  pointsProportionnalite: number; // Points attribués à la proportionnalité (max 25)
+  pointsIntegrite: number;   // Points bonus intégrité (max 10)
+}
+
+/**
  * Signal détecté par la sandbox avec sa plage temporelle ciblée
  */
 export interface SignalSandboxPlage {
@@ -88,6 +111,8 @@ export interface SignalSandboxPlage {
   tempsDebutPlage: number | string;
   prixExtremePrecedent: number;
   nombreNiveauxDansPlage: number;
+  meilleurScore?: number;
+  scoresNiveauxDansPlage?: number[];
 }
 
 export interface ResultatSandboxDojiShvedPlage {
@@ -246,6 +271,131 @@ function trouverBougieExtremePrecedente(
   }
 }
 
+/**
+ * Compte les touches/retests d'une zone Shved survenus strictement avant un horodatage donné.
+ * 
+ * Exemple :
+ * const touches = compterRetestsAvant(zone, 1727200000000);
+ */
+function compterRetestsAvant(zone: ZoneShved, tempsDojiMs: number): number {
+  if (zone.datesTouches && zone.datesTouches.length > 0) {
+    let compteur = 0;
+    for (const t of zone.datesTouches) {
+      if (convertirTempsEnMs(t) < tempsDojiMs) {
+        compteur++;
+      }
+    }
+    return compteur;
+  }
+  return zone.retests;
+}
+
+/**
+ * 3️⃣ CALCUL DU SCORE DE LIQUIDITÉ D'UN NIVEAU SHVED (SUR 100 POINTS)
+ * 
+ * Cette fonction évalue la puissance institutionnelle d'un niveau Shved en 4 piliers :
+ *  1. Nombre de Retests (max 35 pts) :
+ *     - >= 3 retests : 35 pts (zone très liquide et chargée d'ordres)
+ *     - 2 retests    : 25 pts
+ *     - 1 retest     : 15 pts
+ *     - 0 retest     : 5 pts (zone fraîche)
+ * 
+ *  2. Hauteur de la Montagne / Amplitude des Rejets (max 30 pts) :
+ *     - Rejet moyen >= 2.5x la bougie moyenne : 30 pts (rejets massifs)
+ *     - Rejet moyen >= 1.0x la bougie moyenne : 20 pts (rejets nets)
+ *     - Rejet moyen < 1.0x la bougie moyenne  : 10 pts (faibles rejets)
+ * 
+ *  3. Proportionnalité de la Liquidation (max 25 pts) :
+ *     - Ratio (Taille Liquidation / Rejet Moyen) entre 0.20 et 0.80 : 25 pts (Sweet Spot idéal)
+ *     - Ratio entre 0.10 et 1.20 : 15 pts
+ *     - Hors zone : 5 pts
+ * 
+ *  4. Intégrité de la Zone (max 10 pts) :
+ *     - Zone intacte et non rompue avant le Doji : 10 pts
+ *     - Déjà franchie : 0 pt
+ * 
+ * Exemple d'utilisation :
+ * const evalScore = calculerScoreZoneShved(zone, bougies, indexB1, tempsB1, 2.5, 1.2);
+ * console.log('Score attribué :', evalScore.score); // ex: 85
+ */
+export function calculerScoreZoneShved(
+  zone: ZoneShved,
+  bougies: Bougie[],
+  indexBougie1: number,
+  tempsBougie1: number | string,
+  tailleLiquidation: number,
+  tailleMoyenneBougie: number
+): ZoneShvedAvecScore {
+  const tempsBougie1Ms = convertirTempsEnMs(tempsBougie1);
+
+  // 1️⃣ Retests survenus strictement avant le Doji
+  const retestsAvant = compterRetestsAvant(zone, tempsBougie1Ms);
+
+  let pointsRetests = 5;
+  if (retestsAvant >= 3) {
+    pointsRetests = 35;
+  } else if (retestsAvant === 2) {
+    pointsRetests = 25;
+  } else if (retestsAvant === 1) {
+    pointsRetests = 15;
+  }
+
+  // 2️⃣ Amplitude moyenne des rejets ("hauteur de la montagne")
+  const indexDepart = Math.max(0, zone.indexOrigine);
+  let sommetMax = zone.prixMedian;
+  let creuxMin = zone.prixMedian;
+
+  const finIndex = Math.min(bougies.length - 1, indexBougie1);
+  for (let j = indexDepart; j <= finIndex; j++) {
+    if (bougies[j].high > sommetMax) sommetMax = bougies[j].high;
+    if (bougies[j].low < creuxMin) creuxMin = bougies[j].low;
+  }
+
+  const hauteurTotaleRejet = zone.type === 'SUPPORT'
+    ? (sommetMax - zone.prixMedian)
+    : (zone.prixMedian - creuxMin);
+
+  // Rejet moyen par vague de retest
+  const rejetMoyen = Math.max(0.0001, hauteurTotaleRejet / Math.max(1, retestsAvant));
+  const ratioRejetMoyen = rejetMoyen / Math.max(0.0001, tailleMoyenneBougie);
+
+  let pointsRejets = 10;
+  if (ratioRejetMoyen >= 2.5) {
+    pointsRejets = 30;
+  } else if (ratioRejetMoyen >= 1.0) {
+    pointsRejets = 20;
+  }
+
+  // 3️⃣ Proportionnalité de la liquidation (Taille Bougie 1 vs Rejet Moyen)
+  const ratioProportion = tailleLiquidation / Math.max(0.0001, rejetMoyen);
+
+  let pointsProportionnalite = 5;
+  if (ratioProportion >= 0.20 && ratioProportion <= 0.80) {
+    pointsProportionnalite = 25;
+  } else if (ratioProportion >= 0.10 && ratioProportion <= 1.20) {
+    pointsProportionnalite = 15;
+  }
+
+  // 4️⃣ Intégrité de la zone (intacte avant le Doji)
+  const estIntacteAvant = !zone.estCassee || (zone.dateFin ? convertirTempsEnMs(zone.dateFin) >= tempsBougie1Ms : true);
+  const pointsIntegrite = estIntacteAvant ? 10 : 0;
+
+  // 5️⃣ Score total sur 100 points
+  const score = Math.min(100, Math.round(pointsRetests + pointsRejets + pointsProportionnalite + pointsIntegrite));
+
+  return {
+    zone,
+    score,
+    retestsAvant,
+    rejetMoyen,
+    ratioProportion,
+    pointsRetests,
+    pointsRejets,
+    pointsProportionnalite,
+    pointsIntegrite,
+  };
+}
+
 // ─── 🚀 Fonction Principale de l'Indicateur Sandbox ───────────────────────────
 
 /**
@@ -289,6 +439,10 @@ export function calculerSandboxDojiShvedPlage(
   const maxReculRecherche = Math.max(10, Number(parametres.maxReculRecherche ?? 100));
   const exigerDebutEtFinDansPlage = parametres.exigerDebutEtFinDansPlage !== false;
   const filtrerParDirectionSetup = parametres.filtrerParDirectionSetup !== false;
+  const topNiveauxScore = Math.max(0, Number(parametres.topNiveauxScore ?? 3));
+  const scoreMinimum = Math.max(0, Number(parametres.scoreMinimum ?? 0));
+  const afficherScoreSurLigne = parametres.afficherScoreSurLigne !== false;
+
   const styleLignesSupport = parametres.styleLignesSupport || 'dashed';
   const styleLignesResistance = parametres.styleLignesResistance || 'dashed';
   const epaisseurLignes = Number(parametres.epaisseurLignes ?? 2);
@@ -371,12 +525,17 @@ export function calculerSandboxDojiShvedPlage(
     const tempsDebutPlageMs = convertirTempsEnMs(extremePrecedent.temps);
     const tempsFinPlageMs = convertirTempsEnMs(b2.time);
 
-    // 5️⃣ Sélection et filtrage des supports/résistances Shved dans cette plage
-    const zonesDansPlage: ZoneShved[] = [];
+    // Taille de la liquidation (Bougie 1) pour l'évaluation de la proportionnalité
+    const tailleLiquidation = estAchat
+      ? Math.abs(b1.open - b1.low)
+      : Math.abs(b1.high - b1.open);
 
-    // 🎯 RÈGLE DE DIRECTION (Demandée par l'utilisateur) :
-    // - Setup ACHAT (Spring) -> On affiche UNIQUEMENT les SUPPORTS
-    // - Setup VENTE (UTAD)   -> On affiche UNIQUEMENT les RÉSISTANCES
+    // 5️⃣ Sélection et évaluation des supports/résistances Shved dans cette plage
+    const zonesDansPlage: ZoneShvedAvecScore[] = [];
+
+    // 🎯 RÈGLE DE DIRECTION :
+    // - Setup ACHAT (Spring) -> On sélectionne UNIQUEMENT les SUPPORTS
+    // - Setup VENTE (UTAD)   -> On sélectionne UNIQUEMENT les RÉSISTANCES
     const typeZoneCible = estAchat ? 'SUPPORT' : 'RESISTANCE';
 
     for (const zone of toutesLesZonesShved) {
@@ -401,39 +560,75 @@ export function calculerSandboxDojiShvedPlage(
         : (dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs);
 
       if (estDansPlage) {
-        zonesDansPlage.push(zone);
+        // 🏆 Calcul du score de liquidité sur 100 points
+        const evalScore = calculerScoreZoneShved(
+          zone,
+          bougies,
+          i - 1, // index Bougie 1
+          b1.time,
+          tailleLiquidation,
+          moyHauteur
+        );
 
-        // Tracé du segment Shved épuré (continu ou discontinu selon la préférence)
-        const estSupport = zone.type === 'SUPPORT';
-        const couleurLigne = estSupport ? bullColor : bearColor;
-        const styleChoisi = estSupport ? styleLignesSupport : styleLignesResistance;
-
-        // Si bornerALaPlage est activé, la ligne est bornée strictement dans la fenêtre
-        const dateDebutTracé = bornerALaPlage
-          ? (dateDebutZoneMs < tempsDebutPlageMs ? extremePrecedent.temps : zone.dateDebut)
-          : zone.dateDebut;
-
-        const dateFinTracé = bornerALaPlage
-          ? (dateFinZoneMs > tempsFinPlageMs ? b2.time : zone.dateFin)
-          : zone.dateFin;
-
-        lignes.push({
-          id: `sandbox-sr-${zone.id}-doji-${i}`,
-          prix: zone.prixMedian,
-          dateDebut: dateDebutTracé,
-          dateFin: dateFinTracé,
-          couleur: couleurLigne,
-          epaisseur: epaisseurLignes,
-          style: styleChoisi, // 'solid' ou 'dashed'
-        });
+        // Filtre de score minimal (si configuré)
+        if (evalScore.score >= scoreMinimum) {
+          zonesDansPlage.push(evalScore);
+        }
       }
+    }
+
+    // 🔄 Tri décroissant : les zones ayant le plus grand score de liquidité en premier
+    zonesDansPlage.sort((a, b) => b.score - a.score);
+
+    // 🎯 Filtrage Top N (Top 1, Top 3, Top 5, ou tous si 0)
+    const zonesSelectionnees = topNiveauxScore > 0
+      ? zonesDansPlage.slice(0, topNiveauxScore)
+      : zonesDansPlage;
+
+    // Tracé des segments Shved pour le Top sélectionné
+    for (const item of zonesSelectionnees) {
+      const zone = item.zone;
+      const estSupport = zone.type === 'SUPPORT';
+      const couleurLigne = estSupport ? bullColor : bearColor;
+      const styleChoisi = estSupport ? styleLignesSupport : styleLignesResistance;
+
+      const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
+      const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
+
+      // Si bornerALaPlage est activé, la ligne est bornée strictement dans la fenêtre
+      const dateDebutTracé = bornerALaPlage
+        ? (dateDebutZoneMs < tempsDebutPlageMs ? extremePrecedent.temps : zone.dateDebut)
+        : zone.dateDebut;
+
+      const dateFinTracé = bornerALaPlage
+        ? (dateFinZoneMs > tempsFinPlageMs ? b2.time : zone.dateFin)
+        : zone.dateFin;
+
+      // Badge du score sur la ligne (ex: "Sup [85 pts]")
+      const labelLigne = afficherScoreSurLigne
+        ? `${estSupport ? 'Sup' : 'Res'} [${item.score} pts]`
+        : undefined;
+
+      lignes.push({
+        id: `sandbox-sr-${zone.id}-doji-${i}`,
+        prix: zone.prixMedian,
+        dateDebut: dateDebutTracé,
+        dateFin: dateFinTracé,
+        couleur: couleurLigne,
+        epaisseur: epaisseurLignes,
+        style: styleChoisi, // 'solid' ou 'dashed'
+        label: labelLigne,
+      });
     }
 
     // 6️⃣ Étiquette épurée du Doji sur le graphique
     const couleurSignal = estAchat ? bullColor : bearColor;
     const typeSRAffiche = estAchat ? 'Sup' : 'Res';
-    const labelTexte = zonesDansPlage.length > 0
-      ? `${texteLabel}\n(${zonesDansPlage.length} ${typeSRAffiche})`
+    const meilleurScore = zonesSelectionnees.length > 0 ? zonesSelectionnees[0].score : undefined;
+    const texteScore = meilleurScore !== undefined ? ` • [Top: ${meilleurScore}pts]` : '';
+
+    const labelTexte = zonesSelectionnees.length > 0
+      ? `${texteLabel}\n(${zonesSelectionnees.length} ${typeSRAffiche}${texteScore})`
       : texteLabel;
 
     labels.push({
@@ -455,7 +650,9 @@ export function calculerSandboxDojiShvedPlage(
       indexDebutPlage: extremePrecedent.index,
       tempsDebutPlage: extremePrecedent.temps,
       prixExtremePrecedent: extremePrecedent.prix,
-      nombreNiveauxDansPlage: zonesDansPlage.length,
+      nombreNiveauxDansPlage: zonesSelectionnees.length,
+      meilleurScore,
+      scoresNiveauxDansPlage: zonesSelectionnees.map(z => z.score),
     });
   }
 

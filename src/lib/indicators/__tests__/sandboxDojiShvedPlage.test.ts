@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { Bougie } from '@/lib/chartDataHelper';
-import { calculerSandboxDojiShvedPlage } from '../sandboxDojiShvedPlage';
+import type { ZoneShved } from '@/lib/bot/modules/01_liquidite/shvedSupplyDemand';
+import {
+  calculerSandboxDojiShvedPlage,
+  calculerScoreZoneShved,
+} from '../sandboxDojiShvedPlage';
 
 function creerBougie(
   time: number,
@@ -194,6 +198,92 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
     for (const ligne of resAchat.primitives.lignes || []) {
       expect(ligne.couleur).toBe('#00E676'); // bullColor
     }
+  });
+
+  it('évalue avec exactitude le score sur 100 points pour un niveau Shved', () => {
+    const mockZone: ZoneShved = {
+      id: 'shved-sup-1',
+      type: 'SUPPORT',
+      prixHaut: 101,
+      prixBas: 99,
+      prixMedian: 100,
+      retests: 3,
+      force: 'PROVEN',
+      estFaible: false,
+      estCassee: false,
+      indexOrigine: 5,
+      dateDebut: 5000,
+      dateFin: 25000,
+      datesTouches: [10000, 15000, 18000],
+    };
+
+    const bougiesTest: Bougie[] = [];
+    for (let k = 0; k < 25; k++) {
+      bougiesTest.push(creerBougie(k * 1000, 100, 105, 95, 100));
+    }
+
+    const evalScore = calculerScoreZoneShved(
+      mockZone,
+      bougiesTest,
+      20,
+      20000,
+      2.0,
+      2.0
+    );
+
+    expect(evalScore.score).toBeGreaterThanOrEqual(50);
+    expect(evalScore.pointsRetests).toBe(35); // >=3 retests = 35 points
+    expect(evalScore.pointsIntegrite).toBe(10); // Intacte = 10 points
+  });
+
+  it('applique le tri par score de liquidité et le filtre Top N', () => {
+    const bougies: Bougie[] = [];
+
+    // 15 bougies d'initialisation pour l'ATR et les fractals
+    for (let k = 0; k < 15; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Creux de référence à 80.0 (index 15)
+    bougies.push(creerBougie(15000, 100, 101, 80.0, 90.0));
+
+    // Des oscillations pour former des fractals Shved dans la plage
+    bougies.push(creerBougie(16000, 90.0, 95.0, 89.0, 94.0));
+    bougies.push(creerBougie(17000, 94.0, 96.0, 91.0, 95.0));
+    bougies.push(creerBougie(18000, 95.0, 96.0, 84.0, 92.0)); // Creux fractal
+    bougies.push(creerBougie(19000, 92.0, 97.0, 90.0, 96.0));
+    bougies.push(creerBougie(20000, 96.0, 102.0, 95.0, 97.0));
+    bougies.push(creerBougie(21000, 97.0, 98.0, 92.0, 93.0));
+    bougies.push(creerBougie(22000, 93.0, 95.0, 86.0, 91.0)); // Creux fractal 2
+    bougies.push(creerBougie(23000, 91.0, 97.0, 90.0, 96.0));
+    bougies.push(creerBougie(24000, 96.0, 99.0, 93.0, 94.0));
+
+    // Doji Achat aux bougies 25-26
+    bougies.push(creerBougie(25000, 94.0, 94.0, 81.0, 82.0));
+    bougies.push(creerBougie(26000, 82.0, 94.0, 82.0, 93.5));
+
+    // Test avec Top 1 et affichage du score sur la ligne
+    const resTop1 = calculerSandboxDojiShvedPlage(bougies, {
+      activerFiltreTaille: false,
+      topNiveauxScore: 1,
+      afficherScoreSurLigne: true,
+      exigerDebutEtFinDansPlage: false,
+      timeframeSource: 'ACTUEL',
+    });
+
+    const signalTop1 = resTop1.signaux.find((s) => s.type === 'ACHAT');
+    expect(signalTop1).toBeDefined();
+
+    // Pour ce signal, exactement 1 seul niveau a été retenu grâce au Top 1
+    expect(signalTop1?.nombreNiveauxDansPlage).toBe(1);
+    expect(signalTop1?.meilleurScore).toBeGreaterThanOrEqual(10);
+
+    // Les lignes tracées pour ce signal spécifique sont limitées à 1
+    const lignesDuSignal = (resTop1.primitives.lignes || []).filter(
+      (l) => l.id?.endsWith(`-doji-${signalTop1!.indexBougie}`)
+    );
+    expect(lignesDuSignal.length).toBe(1);
+    expect(lignesDuSignal[0].label).toContain('pts');
   });
 });
 

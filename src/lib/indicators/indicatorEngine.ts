@@ -37,7 +37,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.26.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.27.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4831,6 +4831,9 @@ return {
       maxReculRecherche: 100,
       exigerDebutEtFinDansPlage: true,
       filtrerParDirectionSetup: true,
+      topNiveauxScore: 3,
+      scoreMinimum: 0,
+      afficherScoreSurLigne: true,
       styleLignesSupport: 'dashed',
       styleLignesResistance: 'dashed',
       epaisseurLignes: 2,
@@ -4848,6 +4851,36 @@ return {
       texteLabel: 'Liq/Reint',
     },
     definitionsVariables: [
+      {
+        cle: 'topNiveauxScore',
+        label: 'Filtre Top N Niveaux (Score Élevé)',
+        description: 'Affiche uniquement les N meilleurs supports ou résistances ayant le plus grand score (ex: 1, 3, 5, ou 0 pour tout afficher)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 0,
+        max: 10,
+        step: 1,
+        groupe: 'Score de Liquidité (Top N)',
+      },
+      {
+        cle: 'scoreMinimum',
+        label: 'Score Minimum Requis (0 à 100)',
+        description: 'Score minimal de liquidité pour qu\'un niveau soit conservé sur le graphique (0 = aucun seuil)',
+        type: 'number',
+        valeurParDefaut: 0,
+        min: 0,
+        max: 100,
+        step: 5,
+        groupe: 'Score de Liquidité (Top N)',
+      },
+      {
+        cle: 'afficherScoreSurLigne',
+        label: 'Afficher Score sur le Segment',
+        description: 'Affiche la valeur du score directement sur chaque ligne de support/résistance (ex: "Sup [85 pts]")',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Score de Liquidité (Top N)',
+      },
       {
         cle: 'styleLignesSupport',
         label: 'Style des Lignes de Support',
