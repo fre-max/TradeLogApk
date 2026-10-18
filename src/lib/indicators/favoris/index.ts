@@ -28,3 +28,5 @@
 export * from './sandboxDojiShvedPlage';
 export * from './moneyManagementDynamique';
 export * from './unmitigatedOverlapProfile';
+export * from './orchestrateurSMC';
+

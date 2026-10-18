@@ -29,6 +29,7 @@ import { calculerProtectedSwings } from './protectedSwings';
 import { calculerShvedBrokenSRMTF } from './shvedBrokenSRMTF';
 import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort';
 import { calculerSandboxDojiShvedPlage } from './favoris/sandboxDojiShvedPlage';
+import { calculerOrchestrateurSMC } from './favoris/orchestrateurSMC';
 import { calculerUnmitigatedVolumeProfile } from './unmitigatedVolumeProfile';
 import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
 import { calculerZigZag } from './zigzag';
@@ -37,7 +38,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.27.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.28.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -5069,6 +5070,141 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-orchestrateur-smc',
+    nom: "Chef d'Orchestre SMC (Doji + Shved + UOP)",
+    description: "Orchestre la stratégie complète : détection de Dojis personnalisés, score de liquidité Shved sur 100, validation par range de confirmation (3 bougies sans casser le SL) et Take Profit Optimal issu de l'Overlap Profile proportionnel au score.",
+    auteur: 'TradeLog Strategy',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      nbBougiesConfirmation: 3,
+      afficherSetupsAnnules: false,
+      seuilScoreGrandMouvement: 70,
+      scoreMinimumShved: 0,
+      afficherLignesSetup: true,
+      zigzagDepth: 8,
+      nbVaguesSuperposees: 4,
+      activerAchat: true,
+      activerVente: true,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.0,
+      multiplicateurCorps2: 1.2,
+      toleranceDeficit: 0.30,
+      toleranceDepassement: 2.0,
+      maxReculRecherche: 100,
+      timeframeSource: 'M15',
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+    },
+    definitionsVariables: [
+      {
+        cle: 'nbBougiesConfirmation',
+        label: 'Bougies de Confirmation (Range)',
+        description: 'Nombre de bougies consécutives observées après le Doji pour valider le setup (défaut: 3)',
+        type: 'number',
+        valeurParDefaut: 3,
+        min: 1,
+        max: 10,
+        step: 1,
+        groupe: 'Validation du Range (Confirmation)',
+      },
+      {
+        cle: 'afficherSetupsAnnules',
+        label: 'Afficher les Setups Annulés',
+        description: 'Affiche un badge discret ❌ sur les signaux invalidés par une sortie du range',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Validation du Range (Confirmation)',
+      },
+      {
+        cle: 'seuilScoreGrandMouvement',
+        label: 'Seuil Score pour Grand Mouvement (TP2)',
+        description: 'Score Shved à partir duquel on vise TP2 au lieu de TP1 grâce à la liquidité massive (défaut: 70 pts)',
+        type: 'number',
+        valeurParDefaut: 70,
+        min: 30,
+        max: 100,
+        step: 5,
+        groupe: 'Take Profit Optimal & Proportionnalité',
+      },
+      {
+        cle: 'scoreMinimumShved',
+        label: 'Score Shved Minimum Requis',
+        description: 'Seuil minimal de score pour autoriser le déclenchement d\'un setup (0 = tout accepter)',
+        type: 'number',
+        valeurParDefaut: 0,
+        min: 0,
+        max: 95,
+        step: 5,
+        groupe: 'Take Profit Optimal & Proportionnalité',
+      },
+      {
+        cle: 'afficherLignesSetup',
+        label: 'Tracer Lignes Entrée / SL / TP',
+        description: 'Affiche les niveaux horizontaux du Stop Loss, de l\'Entrée et du Take Profit avec le ratio R:R',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels & Niveaux',
+      },
+      {
+        cle: 'activerAchat',
+        label: 'Activer Setups Achat (Spring)',
+        description: 'Détecte les setups acheteurs',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions',
+      },
+      {
+        cle: 'activerVente',
+        label: 'Activer Setups Vente (UTAD)',
+        description: 'Détecte les setups vendeurs',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Achat / Support',
+        description: 'Couleur pour l\'achat et ses cibles',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Couleurs',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Vente / Résistance',
+        description: 'Couleur pour la vente et ses cibles',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Couleurs',
+      },
+    ],
+    creeLe: '2026-10-18T00:00:00.000Z',
+    misAJourLe: '2026-10-18T00:00:00.000Z',
+    code: `return {
+  calculer: function(contexte) {
+    const { bougies, parametres, donneesM1, timeframe } = contexte;
+    if (!bougies || bougies.length < 15) return { donnees: {}, primitives: {} };
+
+    const res = calculerOrchestrateurSMC(bougies, {
+      ...parametres,
+      donneesM1: donneesM1,
+      chartTimeframe: timeframe
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'orchestrateur-smc'
+    };
+  }
+};`
   }
 ];
 
@@ -5199,6 +5335,8 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSweepNiveauShvedLePlusFort(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerSandboxDojiShvedPlage')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSandboxDojiShvedPlage(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
+    } else if (js.includes('calculerOrchestrateurSMC')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerOrchestrateurSMC(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerShvedBrokenSRMTF')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerShvedBrokenSRMTF(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepCombo')) {
@@ -5474,6 +5612,7 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerShvedBrokenSRMTF',
       'calculerSweepNiveauShvedLePlusFort',
       'calculerSandboxDojiShvedPlage',
+      'calculerOrchestrateurSMC',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -5528,7 +5667,8 @@ export function evaluerIndicateurScript(
       calculerLiquidationSweepChevauchementMultiVagues,
       calculerShvedBrokenSRMTF,
       calculerSweepNiveauShvedLePlusFort,
-      calculerSandboxDojiShvedPlage
+      calculerSandboxDojiShvedPlage,
+      calculerOrchestrateurSMC
     );
 
     // 2️⃣ Si le script expose une méthode calculer()
