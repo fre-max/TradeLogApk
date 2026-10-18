@@ -17,7 +17,8 @@ import {
  *      - Il identifie le point le plus bas du Doji (min(Low1, Low2)).
  *      - Il recule dans le temps pour trouver la bougie précédente qui avait créé un plus bas encore plus extrême.
  *      - Cela définit une "Plage Temporelle Ciblée" entre cette bougie antérieure et notre Doji.
- *  3️⃣ N'affiche QUE les supports et résistances Shved qui ont existé à l'intérieur de cette plage !
+ *  3️⃣ Épuration totale : N'affiche QUE les supports et résistances Shved dont le début
+ *      ET la fin sont compris à l'intérieur de cette plage temporelle [Extrême Précédent -> Doji] !
  *      - Permet d'épurer complètement le graphique et d'ignorer tout le bruit environnant.
  *  4️⃣ Permet de choisir librement le style des segments : CONTINUS ('solid') ou DISCONTINUS ('dashed').
  *
@@ -48,9 +49,11 @@ export interface ParametresSandboxDojiShvedPlage {
   minRetests?: number;               // Nombre minimum de retests Shved (défaut: 0 = accepte tout)
   afficherNiveauxCasses?: boolean;   // Inclut aussi les niveaux déjà cassés (défaut: true)
 
-  // ─── 🎯 Plage Temporelle Ciblée (Recul vers le précédent extrême) ───
+  // ─── 🎯 Plage Temporelle Ciblée & Épuration Totale ───
   // Nombre maximum de bougies à scruter dans le passé pour trouver le creux/sommet précédent (défaut: 100)
   maxReculRecherche?: number;
+  // Épuration totale : exige que le début ET la fin du S/R soient STRICTEMENT compris dans la plage (défaut: true)
+  exigerDebutEtFinDansPlage?: boolean;
 
   // ─── 🎨 Visuels & Segments Continues / Discontinues ───
   // Style des lignes de Support ('dashed' = discontinu, 'solid' = continu)
@@ -280,6 +283,7 @@ export function calculerSandboxDojiShvedPlage(
   const activerVente = parametres.activerVente !== false;
 
   const maxReculRecherche = Math.max(10, Number(parametres.maxReculRecherche ?? 100));
+  const exigerDebutEtFinDansPlage = parametres.exigerDebutEtFinDansPlage !== false;
   const styleLignesSupport = parametres.styleLignesSupport || 'dashed';
   const styleLignesResistance = parametres.styleLignesResistance || 'dashed';
   const epaisseurLignes = Number(parametres.epaisseurLignes ?? 2);
@@ -371,10 +375,17 @@ export function calculerSandboxDojiShvedPlage(
       const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
       const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
 
-      // La zone doit avoir été active ou avoir existé à l'intérieur de [tempsDebutPlage, tempsFinPlage]
-      const chevauchePlage = dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs;
+      // 🧹 RÈGLE D'ÉPURATION TOTALE (Demandée par l'utilisateur) :
+      // Affichage des S/R Shved UNIQUEMENT si le début ET la fin du S/R sont compris
+      // à l'intérieur de la plage temporelle [tempsDebutPlage, tempsFinPlage].
+      const debutComprisDansPlage = dateDebutZoneMs >= tempsDebutPlageMs && dateDebutZoneMs <= tempsFinPlageMs;
+      const finCompriseDansPlage = dateFinZoneMs >= tempsDebutPlageMs && dateFinZoneMs <= tempsFinPlageMs;
 
-      if (chevauchePlage) {
+      const estDansPlage = exigerDebutEtFinDansPlage
+        ? (debutComprisDansPlage && finCompriseDansPlage)
+        : (dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs);
+
+      if (estDansPlage) {
         zonesDansPlage.push(zone);
 
         // Tracé du segment Shved épuré (continu ou discontinu selon la préférence)
@@ -382,12 +393,14 @@ export function calculerSandboxDojiShvedPlage(
         const couleurLigne = estSupport ? bullColor : bearColor;
         const styleChoisi = estSupport ? styleLignesSupport : styleLignesResistance;
 
-        // Si bornerALaPlage est activé, la ligne démarre au début de la plage ciblée
+        // Si bornerALaPlage est activé, la ligne est bornée strictement dans la fenêtre
         const dateDebutTracé = bornerALaPlage
           ? (dateDebutZoneMs < tempsDebutPlageMs ? extremePrecedent.temps : zone.dateDebut)
           : zone.dateDebut;
 
-        const dateFinTracé = bornerALaPlage ? b2.time : zone.dateFin;
+        const dateFinTracé = bornerALaPlage
+          ? (dateFinZoneMs > tempsFinPlageMs ? b2.time : zone.dateFin)
+          : zone.dateFin;
 
         lignes.push({
           id: `sandbox-sr-${zone.id}-doji-${i}`,

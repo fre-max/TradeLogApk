@@ -37,7 +37,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.24.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.25.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4829,6 +4829,7 @@ return {
       minRetests: 0,
       afficherNiveauxCasses: true,
       maxReculRecherche: 100,
+      exigerDebutEtFinDansPlage: true,
       styleLignesSupport: 'dashed',
       styleLignesResistance: 'dashed',
       epaisseurLignes: 2,
@@ -4880,6 +4881,14 @@ return {
         max: 5,
         step: 1,
         groupe: 'Style des Supports & Résistances',
+      },
+      {
+        cle: 'exigerDebutEtFinDansPlage',
+        label: 'Épuration Totale (Début et Fin dans Plage)',
+        description: 'Si activé, affiche UNIQUEMENT les S/R dont le début ET la fin sont compris à l\'intérieur de la plage temporelle ciblée',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Plage Temporelle Ciblée',
       },
       {
         cle: 'bornerALaPlage',
