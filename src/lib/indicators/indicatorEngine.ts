@@ -28,6 +28,7 @@ import { calculerOverMitigationHighway } from './overMitigationHighway';
 import { calculerProtectedSwings } from './protectedSwings';
 import { calculerShvedBrokenSRMTF } from './shvedBrokenSRMTF';
 import { calculerSweepNiveauShvedLePlusFort } from './sweepNiveauShvedLePlusFort';
+import { calculerSandboxDojiShvedPlage } from './sandboxDojiShvedPlage';
 import { calculerUnmitigatedVolumeProfile } from './unmitigatedVolumeProfile';
 import { calculerWyckoffPointAndFigure } from './wyckoffPointFigure';
 import { calculerZigZag } from './zigzag';
@@ -36,7 +37,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.23.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.24.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4810,6 +4811,213 @@ return {
     };
   }
 };`
+  },
+  {
+    id: 'script-sandbox-doji-shved-plage',
+    nom: 'Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)',
+    description: 'Version bac à sable épurée et pas à pas : reproduit le Doji personnalisé en direct et n\'affiche QUE les supports/résistances Shved existant dans la plage reliant le creux/sommet antérieur au Doji. Choix libre entre segments continus (solid) ou discontinus (dashed).',
+    auteur: 'TradeLog Sandbox',
+    version: '1.0.0',
+    type: 'overlay',
+    actif: true,
+    visibleSurGraphique: true,
+    collecteActive: true,
+    parametres: {
+      timeframeSource: 'M15',
+      periodeATR: 15,
+      zoneFuzzFactor: 0.1,
+      minRetests: 0,
+      afficherNiveauxCasses: true,
+      maxReculRecherche: 100,
+      styleLignesSupport: 'dashed',
+      styleLignesResistance: 'dashed',
+      epaisseurLignes: 2,
+      bornerALaPlage: true,
+      toleranceDeficit: 0.30,
+      toleranceDepassement: 2.0,
+      activerFiltreTaille: true,
+      periodeHistorique: 10,
+      multiplicateurBougie1: 1.0,
+      multiplicateurCorps2: 1.2,
+      activerAchat: true,
+      activerVente: true,
+      bullColor: '#00E676',
+      bearColor: '#F23645',
+      texteLabel: 'Liq/Reint',
+    },
+    definitionsVariables: [
+      {
+        cle: 'styleLignesSupport',
+        label: 'Style des Lignes de Support',
+        description: 'Style de tracé des supports Shved : discontinu (dashed) ou continu (solid)',
+        type: 'select',
+        valeurParDefaut: 'dashed',
+        options: [
+          { label: 'Discontinu (Pointillés)', value: 'dashed' },
+          { label: 'Continu (Plein)', value: 'solid' },
+        ],
+        groupe: 'Style des Supports & Résistances',
+      },
+      {
+        cle: 'styleLignesResistance',
+        label: 'Style des Lignes de Résistance',
+        description: 'Style de tracé des résistances Shved : discontinu (dashed) ou continu (solid)',
+        type: 'select',
+        valeurParDefaut: 'dashed',
+        options: [
+          { label: 'Discontinu (Pointillés)', value: 'dashed' },
+          { label: 'Continu (Plein)', value: 'solid' },
+        ],
+        groupe: 'Style des Supports & Résistances',
+      },
+      {
+        cle: 'epaisseurLignes',
+        label: 'Épaisseur des Lignes',
+        description: 'Épaisseur des segments de support et résistance sur le graphique',
+        type: 'number',
+        valeurParDefaut: 2,
+        min: 1,
+        max: 5,
+        step: 1,
+        groupe: 'Style des Supports & Résistances',
+      },
+      {
+        cle: 'bornerALaPlage',
+        label: 'Borner à la Plage Ciblée',
+        description: 'Si activé, les segments démarrent exactement à la bougie du creux/sommet précédent et s\'arrêtent au Doji',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Plage Temporelle Ciblée',
+      },
+      {
+        cle: 'maxReculRecherche',
+        label: 'Recul Max Extrême Précédent (Bougies)',
+        description: 'Nombre maximal de bougies antérieures pour trouver le creux ou sommet précédent créant la plage',
+        type: 'number',
+        valeurParDefaut: 100,
+        min: 10,
+        max: 300,
+        step: 10,
+        groupe: 'Plage Temporelle Ciblée',
+      },
+      {
+        cle: 'timeframeSource',
+        label: 'Unité de Temps Shved (MTF)',
+        description: 'Timeframe sur lequel les supports/résistances Shved sont détectés',
+        type: 'select',
+        valeurParDefaut: 'M15',
+        options: [
+          { label: 'Graphique Actuel', value: 'ACTUEL' },
+          { label: 'M5 (5 minutes)', value: 'M5' },
+          { label: 'M15 (15 minutes)', value: 'M15' },
+          { label: 'M30 (30 minutes)', value: 'M30' },
+          { label: 'H1 (1 heure)', value: 'H1' },
+          { label: 'H4 (4 heures)', value: 'H4' },
+        ],
+        groupe: 'Supports & Résistances Shved',
+      },
+      {
+        cle: 'afficherNiveauxCasses',
+        label: 'Afficher Niveaux Shved Cassés',
+        description: 'Affiche également les niveaux Shved rompus s\'ils ont existé dans la plage',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Supports & Résistances Shved',
+      },
+      {
+        cle: 'minRetests',
+        label: 'Retests Minima Shved',
+        description: 'Nombre de touches minimales pour retenir un niveau (0 = zones vierges acceptées)',
+        type: 'number',
+        valeurParDefaut: 0,
+        min: 0,
+        max: 10,
+        step: 1,
+        groupe: 'Supports & Résistances Shved',
+      },
+      {
+        cle: 'toleranceDeficit',
+        label: 'Tolérance Retrait Doji (Déficit)',
+        description: 'Tolérance si la réintégration reste un peu courte sous Open1 (0.30 = 30%)',
+        type: 'number',
+        valeurParDefaut: 0.30,
+        min: 0.01,
+        max: 0.50,
+        step: 0.01,
+        groupe: 'Doji Personnalisé (Liq / Reint)',
+      },
+      {
+        cle: 'toleranceDepassement',
+        label: 'Tolérance Dépassement Favorable',
+        description: 'Tolérance si la réintégration dépasse Open1 dans le sens favorable (2.0 = 200%)',
+        type: 'number',
+        valeurParDefaut: 2.0,
+        min: 0.1,
+        max: 3.0,
+        step: 0.1,
+        groupe: 'Doji Personnalisé (Liq / Reint)',
+      },
+      {
+        cle: 'activerAchat',
+        label: 'Activer Achat (Spring)',
+        description: 'Détecte les setups acheteurs',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions',
+      },
+      {
+        cle: 'activerVente',
+        label: 'Activer Vente (UTAD)',
+        description: 'Détecte les setups vendeurs',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Directions',
+      },
+      {
+        cle: 'bullColor',
+        label: 'Couleur Achat / Support',
+        description: 'Couleur pour le Spring et les supports',
+        type: 'string',
+        valeurParDefaut: '#00E676',
+        groupe: 'Couleurs',
+      },
+      {
+        cle: 'bearColor',
+        label: 'Couleur Vente / Résistance',
+        description: 'Couleur pour l\'UTAD et les résistances',
+        type: 'string',
+        valeurParDefaut: '#F23645',
+        groupe: 'Couleurs',
+      },
+      {
+        cle: 'texteLabel',
+        label: 'Texte Affiché',
+        description: 'Texte principal de l\'étiquette sur le graphique',
+        type: 'string',
+        valeurParDefaut: 'Liq/Reint',
+        groupe: 'Couleurs',
+      },
+    ],
+    creeLe: '2026-10-18T00:00:00.000Z',
+    misAJourLe: '2026-10-18T00:00:00.000Z',
+    code: `return {
+  calculer: function(contexte) {
+    const { bougies, parametres, donneesM1, timeframe } = contexte;
+    if (!bougies || bougies.length < 10) return { donnees: {}, primitives: {} };
+
+    const res = calculerSandboxDojiShvedPlage(bougies, {
+      ...parametres,
+      donneesM1: donneesM1,
+      chartTimeframe: timeframe
+    });
+
+    return {
+      donnees: res,
+      primitives: res.primitives,
+      typeSpecial: 'sandbox-doji-shved-plage'
+    };
+  }
+};`
   }
 ];
 
@@ -4938,6 +5146,8 @@ export function convertirScriptTypeScriptEnJavaScript(codeTS: string): string {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerLiquidationSweepChevauchementMultiVagues(contexte.bougies, contexte.parametres);\n  }\n};\n`;
     } else if (js.includes('calculerSweepNiveauShvedLePlusFort')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSweepNiveauShvedLePlusFort(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
+    } else if (js.includes('calculerSandboxDojiShvedPlage')) {
+      js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerSandboxDojiShvedPlage(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerShvedBrokenSRMTF')) {
       js += `\n\n// Enveloppe automatique générée pour le sandbox\nreturn {\n  calculer: function(contexte) {\n    return calculerShvedBrokenSRMTF(contexte.bougies, { ...contexte.parametres, donneesM1: contexte.donneesM1, chartTimeframe: contexte.timeframe });\n  }\n};\n`;
     } else if (js.includes('calculerLiquidationSweepCombo')) {
@@ -5212,6 +5422,7 @@ function recupererConstructeurScript(codeScript: string): Function {
       'calculerLiquidationSweepChevauchementMultiVagues',
       'calculerShvedBrokenSRMTF',
       'calculerSweepNiveauShvedLePlusFort',
+      'calculerSandboxDojiShvedPlage',
       codeScript
     );
     cacheFonctionsScripts.set(codeScript, fn);
@@ -5265,7 +5476,8 @@ export function evaluerIndicateurScript(
       calculerLiquidationSweepChevauchementVagueOpposee,
       calculerLiquidationSweepChevauchementMultiVagues,
       calculerShvedBrokenSRMTF,
-      calculerSweepNiveauShvedLePlusFort
+      calculerSweepNiveauShvedLePlusFort,
+      calculerSandboxDojiShvedPlage
     );
 
     // 2️⃣ Si le script expose une méthode calculer()
