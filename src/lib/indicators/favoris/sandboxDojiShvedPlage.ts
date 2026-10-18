@@ -7,29 +7,27 @@ import {
 
 /**
  * ==============================================================================
- * 🧪 SANDBOX DÉVELOPPEUR : DOJI LIQ/REINT + SUPPORTS/RÉSISTANCES SHVED (PLAGE CIBLÉE)
+ * 🌟 SANDBOX MODULAIRE : DOJI LIQ/REINT + S/R SHVED (PLAGE CIBLÉE)
  * ==============================================================================
- * Cet indicateur sert de bac à sable simplifié, pas à pas et facile à déboguer.
+ * Cet indicateur est structuré en DEUX BLOCS AUTONOMES ET ÉTANCHES :
  * 
- * 🎯 CE QUE FAIT CET INDICATEUR :
- *  1️⃣ Détecte notre Doji personnalisé (Liquidation B1 + Réintégration B2) de manière directe.
- *  2️⃣ Dès qu'un Doji est trouvé (ex: Achat / Spring) :
- *      - Il identifie le point le plus bas du Doji (min(Low1, Low2)).
- *      - Il recule dans le temps pour trouver la bougie précédente qui avait créé un plus bas encore plus extrême.
- *      - Cela définit une "Plage Temporelle Ciblée" entre cette bougie antérieure et notre Doji.
- *  3️⃣ Épuration totale :
- *      - Pour un setup ACHAT (Spring) : N'affiche UNIQUEMENT que les SUPPORTS !
- *      - Pour un setup VENTE (UTAD)   : N'affiche UNIQUEMENT que les RÉSISTANCES !
- *      - Ne garde que les niveaux dont le début ET la fin sont compris dans la plage [Extrême Précédent -> Doji].
- *      - Permet d'épurer complètement le graphique et d'ignorer tout le bruit environnant.
- *  4️⃣ Permet de choisir librement le style des segments : CONTINUS ('solid') ou DISCONTINUS ('dashed').
- *
- * 💡 COMMENT MODIFIER LE CODE DU DOJI ?
- *  La logique du Doji est écrite directement ci-dessous dans la fonction `verifierDojiSimple()`.
+ * 🧩 BLOC 1 : MOTEUR DOJI PERSONNALISÉ & PLAGE CIBLÉE
+ *    - Détecte les retournements de liquidation (Spring à l'Achat / UTAD à la Vente).
+ *    - Détermine la fenêtre temporelle ciblée vers l'extrême précédent.
+ *    - Peut être utilisé seul ou par le Chef d'Orchestre !
+ * 
+ * 🧩 BLOC 2 : MOTEUR S/R SHVED & SCORING DE LIQUIDITÉ
+ *    - Épuration totale : filtre par sens (Supports pour Achat, Résistances pour Vente).
+ *    - Vérifie que les niveaux débutent et se terminent strictement dans la plage.
+ *    - Calcule le score de liquidité sur 100 points (Retests, Rejets, Proportion).
+ *    - Filtre le Top N (Top 1, Top 3, Top 5...).
+ * 
+ * 🔗 BLOC 3 : ORCHESTRATEUR DE LA SANDBOX
+ *    - Connecte simplement le Bloc 1 au Bloc 2 et trace les visuels (segments & labels).
  * ==============================================================================
  */
 
-// ─── 📊 Types et Options de Configuration ─────────────────────────────────────
+// ─── 📊 Types et Interfaces de Configuration ──────────────────────────────────
 
 export interface ParametresSandboxDojiShvedPlage {
   // ─── 🕯️ Réglages du Doji Personnalisé (Liq / Reint) ───
@@ -52,30 +50,20 @@ export interface ParametresSandboxDojiShvedPlage {
   afficherNiveauxCasses?: boolean;   // Inclut aussi les niveaux déjà cassés (défaut: true)
 
   // ─── 🎯 Plage Temporelle Ciblée & Épuration Totale ───
-  // Nombre maximum de bougies à scruter dans le passé pour trouver le creux/sommet précédent (défaut: 100)
-  maxReculRecherche?: number;
-  // Épuration totale : exige que le début ET la fin du S/R soient STRICTEMENT compris dans la plage (défaut: true)
-  exigerDebutEtFinDansPlage?: boolean;
-  // Filtrage strict par direction : Supports uniquement pour Achat, Résistances uniquement pour Vente (défaut: true)
-  filtrerParDirectionSetup?: boolean;
+  maxReculRecherche?: number;        // Nombre max de bougies de recul pour trouver l'extrême précédent (défaut: 100)
+  exigerDebutEtFinDansPlage?: boolean; // Épuration totale : début ET fin du S/R dans la plage (défaut: true)
+  filtrerParDirectionSetup?: boolean; // Supports pour Achat, Résistances pour Vente (défaut: true)
 
-  // ─── 🏆 Score de Liquidité & Filtrage Top N (Demande Utilisateur) ───
-  // Affiche uniquement les N meilleurs S/R classés par score de liquidité (défaut: 3, 0 = tout afficher)
-  topNiveauxScore?: number;
-  // Score minimal de liquidité (0 à 100) pour qu'un niveau soit conservé (défaut: 0 = aucun seuil)
-  scoreMinimum?: number;
-  // Affiche le score sur la ligne de support/résistance (ex: "Sup [85 pts]") (défaut: true)
-  afficherScoreSurLigne?: boolean;
+  // ─── 🏆 Score de Liquidité & Filtrage Top N ───
+  topNiveauxScore?: number;          // Nombre max de S/R à afficher selon le score (défaut: 3, 0 = tout afficher)
+  scoreMinimum?: number;             // Seuil minimal de score (0 à 100) (défaut: 0)
+  afficherScoreSurLigne?: boolean;   // Affiche le score sur le segment (ex: "Sup [85 pts]") (défaut: true)
 
   // ─── 🎨 Visuels & Segments Continues / Discontinues ───
-  // Style des lignes de Support ('dashed' = discontinu, 'solid' = continu)
-  styleLignesSupport?: 'dashed' | 'solid';
-  // Style des lignes de Résistance ('dashed' = discontinu, 'solid' = continu)
-  styleLignesResistance?: 'dashed' | 'solid';
-  // Épaisseur des traits de support/résistance (défaut: 2)
-  epaisseurLignes?: number;
-  // Borner les segments Shved strictement à l'intérieur de la plage temporelle (défaut: true)
-  bornerALaPlage?: boolean;
+  styleLignesSupport?: 'dashed' | 'solid';    // Style des lignes de Support (défaut: 'dashed')
+  styleLignesResistance?: 'dashed' | 'solid'; // Style des lignes de Résistance (défaut: 'dashed')
+  epaisseurLignes?: number;                   // Épaisseur des segments (défaut: 2)
+  bornerALaPlage?: boolean;                   // Limiter la ligne aux bornes temporelles de la plage (défaut: true)
 
   bullColor?: string;                // Couleur Achat / Support (défaut: '#00E676')
   bearColor?: string;                // Couleur Vente / Résistance (défaut: '#F23645')
@@ -83,7 +71,24 @@ export interface ParametresSandboxDojiShvedPlage {
 }
 
 /**
- * Support ou Résistance Shved évalué avec son score de liquidité sur 100 points
+ * Signal brut produit par le BLOC 1 (Moteur Doji Personnalisé & Plage Ciblée)
+ */
+export interface SignalDojiAvecPlage {
+  type: 'ACHAT' | 'VENTE';
+  indexBougie: number;
+  temps: number | string;
+  prixExtreme: number;
+  open1: number;
+  close2: number;
+  tailleLiquidation: number;
+  indexDebutPlage: number;
+  tempsDebutPlage: number | string;
+  prixExtremePrecedent: number;
+  moyenneHauteur: number;
+}
+
+/**
+ * Zone Shved évaluée et scorée par le BLOC 2 (Moteur Shved S/R)
  */
 export interface ZoneShvedAvecScore {
   zone: ZoneShved;
@@ -98,7 +103,7 @@ export interface ZoneShvedAvecScore {
 }
 
 /**
- * Signal détecté par la sandbox avec sa plage temporelle ciblée
+ * Signal combiné complet de la Sandbox avec les niveaux Shved associés
  */
 export interface SignalSandboxPlage {
   type: 'ACHAT' | 'VENTE';
@@ -113,6 +118,7 @@ export interface SignalSandboxPlage {
   nombreNiveauxDansPlage: number;
   meilleurScore?: number;
   scoresNiveauxDansPlage?: number[];
+  niveauxShved?: ZoneShvedAvecScore[];
 }
 
 export interface ResultatSandboxDojiShvedPlage {
@@ -125,29 +131,33 @@ export interface ResultatSandboxDojiShvedPlage {
   };
 }
 
-// ─── 🛠️ Fonctions Utilitaires ─────────────────────────────────────────────────
+// ─── 🛠️ Fonctions Utilitaires Temporelles ──────────────────────────────────────
 
 /**
- * Convertit un timestamp (nombre ou string ISO) en millisecondes pour comparaison
- * Exemple : convertirTemps(1727200000) -> 1727200000000
+ * Convertit un timestamp (nombre ou string ISO) en millisecondes pour comparaison linéaire
+ * Exemple : convertirTempsEnMs(1727200000) -> 1727200000000
  */
-function convertirTempsEnMs(temps: number | string): number {
+export function convertirTempsEnMs(temps: number | string): number {
   if (typeof temps === 'number') {
-    // Si déjà en millisecondes (> 10^11) ou en secondes (< 10^11)
     return temps > 10000000000 ? temps : temps * 1000;
   }
   return new Date(temps).getTime();
 }
 
+// ==============================================================================
+// 🧩 BLOC 1 : MOTEUR DOJI PERSONNALISÉ & PLAGE CIBLÉE
+// ==============================================================================
+
 /**
- * 1️⃣ VÉRIFICATION DIRECTE DU DOJI PERSONNALISÉ (LIQ / REINT)
- * Cette fonction vérifie de façon linéaire si deux bougies consécutives forment un retournement valide.
+ * Vérifie de façon linéaire si deux bougies consécutives forment un Doji personnalisé valide.
+ * - Bougie 1 : Impulsion de liquidation (mèche / prise de liquidité)
+ * - Bougie 2 : Réintégration du niveau d'ouverture de Bougie 1
  * 
  * Exemple :
- * const res = verifierDojiSimple(b1, b2, 2.5, 1.2, options);
- * if (res.estValide) { ... }
+ * const verif = verifierDojiSimple(b1, b2, 2.5, 1.2, options);
+ * if (verif.estValide) console.log('Doji détecté :', verif.type);
  */
-function verifierDojiSimple(
+export function verifierDojiSimple(
   b1: Bougie,
   b2: Bougie,
   moyenneHauteur: number,
@@ -168,11 +178,10 @@ function verifierDojiSimple(
   const corps2 = Math.abs(b2.open - b2.close);
   const hauteurMoyenneDoji = (range1 + range2) / 2;
 
-  // Par défaut : échec
   const echec = { estValide: false, type: 'ACHAT' as const, prixExtreme: 0 };
   if (hauteurMoyenneDoji <= 0) return echec;
 
-  // 1. Sens opposés des bougies
+  // 1. Sens opposés des deux bougies
   // Achat (Spring) : B1 baissière (rouge) + B2 haussière (verte)
   const estCandidatAchat = options.activerAchat && (b1.close < b1.open) && (b2.close > b2.open);
   // Vente (UTAD)   : B1 haussière (verte) + B2 baissière (rouge)
@@ -181,29 +190,25 @@ function verifierDojiSimple(
   if (!estCandidatAchat && !estCandidatVente) return echec;
   const typeSignal: 'ACHAT' | 'VENTE' = estCandidatAchat ? 'ACHAT' : 'VENTE';
 
-  // 2. Précision du retournement (Close2 revient au niveau d'Open1)
+  // 2. Précision de la réintégration (Close2 rejoint le cours d'Open1)
   const ecartPrix = Math.abs(b1.open - b2.close);
   const ratioEcart = ecartPrix / hauteurMoyenneDoji;
 
   if (typeSignal === 'ACHAT') {
     if (b2.close >= b1.open) {
-      // Dépassement favorable au-dessus d'Open1
       if (ratioEcart > options.toleranceDepassement) return echec;
     } else {
-      // Retrait (déficit) sous Open1
       if (ratioEcart > options.toleranceDeficit) return echec;
     }
   } else {
     if (b2.close <= b1.open) {
-      // Dépassement favorable en dessous d'Open1
       if (ratioEcart > options.toleranceDepassement) return echec;
     } else {
-      // Retrait (déficit) au-dessus d'Open1
       if (ratioEcart > options.toleranceDeficit) return echec;
     }
   }
 
-  // 3. Filtre de taille relative (Impulsion de Liquidation & Réintégration)
+  // 3. Filtre de taille par rapport à la moyenne récente
   if (options.activerFiltreTaille) {
     if (range1 < options.multiplicateurBougie1 * moyenneHauteur) return echec;
     if (corps2 < options.multiplicateurCorps2 * moyenneCorps) return echec;
@@ -217,31 +222,30 @@ function verifierDojiSimple(
 }
 
 /**
- * 2️⃣ TROUVER LA BOUGIE PRÉCÉDENTE CRÉANT UN PLUS BAS (ACHAT) OU PLUS HAUT (VENTE)
- * Recule dans le temps depuis le Doji pour localiser la bougie de référence.
+ * Recherche dans le passé la bougie ayant créé le plus bas (Achat) ou le plus haut (Vente)
+ * précédent, marquant ainsi le début de la "Plage Temporelle Ciblée".
  * 
  * Exemple :
- * const indexCreux = trouverBougieExtremePrecedente(bougies, indexDoji, 'ACHAT', prixPlusBas);
+ * const repere = trouverBougieExtremePrecedente(bougies, indexDoji, 'ACHAT', prixPlusBas, 80);
  */
-function trouverBougieExtremePrecedente(
+export function trouverBougieExtremePrecedente(
   bougies: Bougie[],
   indexDoji: number,
   typeSignal: 'ACHAT' | 'VENTE',
   prixExtremeDoji: number,
   maxRecul: number
 ): { index: number; temps: number | string; prix: number } {
-  // On commence la recherche juste avant la bougie 1 du Doji
   const debutScan = Math.max(0, indexDoji - 2);
   const finScan = Math.max(0, indexDoji - 2 - maxRecul);
 
   if (typeSignal === 'ACHAT') {
-    // En Achat : on cherche la bougie précédente dont le Low est <= au Low du Doji
+    // Achat : on cherche la bougie antérieure dont le Low <= Low du Doji
     for (let k = debutScan; k >= finScan; k--) {
       if (bougies[k].low <= prixExtremeDoji) {
         return { index: k, temps: bougies[k].time, prix: bougies[k].low };
       }
     }
-    // Si aucune bougie n'est plus basse, on prend la bougie ayant le plus bas de toute la fenêtre
+    // Sinon, on prend le plus bas de la fenêtre scrutée
     let plusBasIndex = debutScan;
     let plusBasPrix = bougies[debutScan]?.low ?? prixExtremeDoji;
     for (let k = debutScan; k >= finScan; k--) {
@@ -252,13 +256,13 @@ function trouverBougieExtremePrecedente(
     }
     return { index: plusBasIndex, temps: bougies[plusBasIndex].time, prix: plusBasPrix };
   } else {
-    // En Vente : on cherche la bougie précédente dont le High est >= au High du Doji
+    // Vente : on cherche la bougie antérieure dont le High >= High du Doji
     for (let k = debutScan; k >= finScan; k--) {
       if (bougies[k].high >= prixExtremeDoji) {
         return { index: k, temps: bougies[k].time, prix: bougies[k].high };
       }
     }
-    // Si aucune bougie n'est plus haute, on prend le plus haut de la fenêtre
+    // Sinon, on prend le plus haut de la fenêtre scrutée
     let plusHautIndex = debutScan;
     let plusHautPrix = bougies[debutScan]?.high ?? prixExtremeDoji;
     for (let k = debutScan; k >= finScan; k--) {
@@ -272,12 +276,110 @@ function trouverBougieExtremePrecedente(
 }
 
 /**
- * Compte les touches/retests d'une zone Shved survenus strictement avant un horodatage donné.
+ * 🌟 FONCTION PRINCIPALE DU BLOC 1 : Détecte tous les Dojis et calcule leur plage temporelle.
+ * Cette fonction est 100% autonome et peut être appelée directement par le Chef d'Orchestre !
  * 
  * Exemple :
- * const touches = compterRetestsAvant(zone, 1727200000000);
+ * const dojis = detecterDojisAvecPlage(bougies, { maxReculRecherche: 100 });
+ * console.log('Nombre de Dojis trouvés :', dojis.length);
  */
-function compterRetestsAvant(zone: ZoneShved, tempsDojiMs: number): number {
+export function detecterDojisAvecPlage(
+  bougies: Bougie[],
+  options: {
+    activerAchat?: boolean;
+    activerVente?: boolean;
+    activerFiltreTaille?: boolean;
+    periodeHistorique?: number;
+    multiplicateurBougie1?: number;
+    multiplicateurCorps2?: number;
+    toleranceDeficit?: number;
+    toleranceDepassement?: number;
+    maxReculRecherche?: number;
+  } = {}
+): SignalDojiAvecPlage[] {
+  const resultats: SignalDojiAvecPlage[] = [];
+  if (!bougies || bougies.length < 10) return resultats;
+
+  const activerAchat = options.activerAchat !== false;
+  const activerVente = options.activerVente !== false;
+  const activerFiltreTaille = options.activerFiltreTaille !== false;
+  const periodeHistorique = Math.max(3, Number(options.periodeHistorique ?? 10));
+  const multiplicateurBougie1 = Number(options.multiplicateurBougie1 ?? 1.0);
+  const multiplicateurCorps2 = Number(options.multiplicateurCorps2 ?? 1.2);
+  const toleranceDeficit = Number(options.toleranceDeficit ?? 0.30);
+  const toleranceDepassement = Number(options.toleranceDepassement ?? 2.0);
+  const maxReculRecherche = Math.max(10, Number(options.maxReculRecherche ?? 100));
+
+  for (let i = 2; i < bougies.length; i++) {
+    const b1 = bougies[i - 1];
+    const b2 = bougies[i];
+
+    // Calcul de la taille moyenne des bougies sur l'historique récent
+    const indexDebutRef = Math.max(0, i - 1 - periodeHistorique);
+    let sommeHauteurs = 0;
+    let sommeCorps = 0;
+    let countRef = 0;
+    for (let k = indexDebutRef; k < i - 1; k++) {
+      sommeHauteurs += (bougies[k].high - bougies[k].low);
+      sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
+      countRef++;
+    }
+    const moyHauteur = countRef > 0 ? (sommeHauteurs / countRef) : (b1.high - b1.low);
+    const moyCorps = countRef > 0 ? (sommeCorps / countRef) : Math.abs(b1.open - b1.close);
+
+    // Vérification du Doji
+    const verification = verifierDojiSimple(b1, b2, moyHauteur, moyCorps, {
+      activerAchat,
+      activerVente,
+      activerFiltreTaille,
+      multiplicateurBougie1,
+      multiplicateurCorps2,
+      toleranceDeficit,
+      toleranceDepassement,
+    });
+
+    if (!verification.estValide) continue;
+
+    // Détermination de la bougie extrême précédente (début de la plage ciblée)
+    const extremePrecedent = trouverBougieExtremePrecedente(
+      bougies,
+      i,
+      verification.type,
+      verification.prixExtreme,
+      maxReculRecherche
+    );
+
+    // Taille de la liquidation (Bougie 1)
+    const tailleLiquidation = verification.type === 'ACHAT'
+      ? Math.abs(b1.open - b1.low)
+      : Math.abs(b1.high - b1.open);
+
+    resultats.push({
+      type: verification.type,
+      indexBougie: i,
+      temps: b2.time,
+      prixExtreme: verification.prixExtreme,
+      open1: b1.open,
+      close2: b2.close,
+      tailleLiquidation,
+      indexDebutPlage: extremePrecedent.index,
+      tempsDebutPlage: extremePrecedent.temps,
+      prixExtremePrecedent: extremePrecedent.prix,
+      moyenneHauteur: moyHauteur,
+    });
+  }
+
+  return resultats;
+}
+
+// ==============================================================================
+// 🧩 BLOC 2 : MOTEUR S/R SHVED & SCORING DE LIQUIDITÉ DANS LA PLAGE
+// ==============================================================================
+
+/**
+ * Compte les retests d'une zone Shved survenus strictement avant une date donnée.
+ */
+export function compterRetestsAvant(zone: ZoneShved, tempsDojiMs: number): number {
   if (zone.datesTouches && zone.datesTouches.length > 0) {
     let compteur = 0;
     for (const t of zone.datesTouches) {
@@ -291,32 +393,15 @@ function compterRetestsAvant(zone: ZoneShved, tempsDojiMs: number): number {
 }
 
 /**
- * 3️⃣ CALCUL DU SCORE DE LIQUIDITÉ D'UN NIVEAU SHVED (SUR 100 POINTS)
+ * Calcule le score de liquidité institutionnelle sur 100 points pour un niveau Shved.
+ *  1. Retests (max 35 pts)
+ *  2. Rejets / Hauteur de la montagne (max 30 pts)
+ *  3. Proportionnalité liquidation Doji / rejet (max 25 pts)
+ *  4. Intégrité de la zone (max 10 pts)
  * 
- * Cette fonction évalue la puissance institutionnelle d'un niveau Shved en 4 piliers :
- *  1. Nombre de Retests (max 35 pts) :
- *     - >= 3 retests : 35 pts (zone très liquide et chargée d'ordres)
- *     - 2 retests    : 25 pts
- *     - 1 retest     : 15 pts
- *     - 0 retest     : 5 pts (zone fraîche)
- * 
- *  2. Hauteur de la Montagne / Amplitude des Rejets (max 30 pts) :
- *     - Rejet moyen >= 2.5x la bougie moyenne : 30 pts (rejets massifs)
- *     - Rejet moyen >= 1.0x la bougie moyenne : 20 pts (rejets nets)
- *     - Rejet moyen < 1.0x la bougie moyenne  : 10 pts (faibles rejets)
- * 
- *  3. Proportionnalité de la Liquidation (max 25 pts) :
- *     - Ratio (Taille Liquidation / Rejet Moyen) entre 0.20 et 0.80 : 25 pts (Sweet Spot idéal)
- *     - Ratio entre 0.10 et 1.20 : 15 pts
- *     - Hors zone : 5 pts
- * 
- *  4. Intégrité de la Zone (max 10 pts) :
- *     - Zone intacte et non rompue avant le Doji : 10 pts
- *     - Déjà franchie : 0 pt
- * 
- * Exemple d'utilisation :
- * const evalScore = calculerScoreZoneShved(zone, bougies, indexB1, tempsB1, 2.5, 1.2);
- * console.log('Score attribué :', evalScore.score); // ex: 85
+ * Exemple :
+ * const scoreZone = calculerScoreZoneShved(zone, bougies, indexB1, tempsB1, tailleLiq, moyHauteur);
+ * console.log('Score :', scoreZone.score);
  */
 export function calculerScoreZoneShved(
   zone: ZoneShved,
@@ -355,7 +440,6 @@ export function calculerScoreZoneShved(
     ? (sommetMax - zone.prixMedian)
     : (zone.prixMedian - creuxMin);
 
-  // Rejet moyen par vague de retest
   const rejetMoyen = Math.max(0.0001, hauteurTotaleRejet / Math.max(1, retestsAvant));
   const ratioRejetMoyen = rejetMoyen / Math.max(0.0001, tailleMoyenneBougie);
 
@@ -396,20 +480,98 @@ export function calculerScoreZoneShved(
   };
 }
 
-// ─── 🚀 Fonction Principale de l'Indicateur Sandbox ───────────────────────────
+/**
+ * 🌟 FONCTION PRINCIPALE DU BLOC 2 : Évalue, filtre et classe les zones Shved
+ * strictement dans la plage temporelle d'un signal Doji donné.
+ * 
+ * Cette fonction est 100% autonome et peut être appelée directement par le Chef d'Orchestre !
+ * 
+ * Exemple :
+ * const zonesScorees = evaluerNiveauxShvedDansPlage(toutesLesZones, signalDoji, bougies, { topN: 3 });
+ */
+export function evaluerNiveauxShvedDansPlage(
+  toutesLesZonesShved: ZoneShved[],
+  signalDoji: SignalDojiAvecPlage,
+  bougies: Bougie[],
+  options: {
+    filtrerParDirectionSetup?: boolean;
+    exigerDebutEtFinDansPlage?: boolean;
+    afficherNiveauxCasses?: boolean;
+    scoreMinimum?: number;
+    topNiveauxScore?: number;
+  } = {}
+): ZoneShvedAvecScore[] {
+  const filtrerParDirectionSetup = options.filtrerParDirectionSetup !== false;
+  const exigerDebutEtFinDansPlage = options.exigerDebutEtFinDansPlage !== false;
+  const afficherNiveauxCasses = options.afficherNiveauxCasses !== false;
+  const scoreMinimum = Math.max(0, Number(options.scoreMinimum ?? 0));
+  const topNiveauxScore = Math.max(0, Number(options.topNiveauxScore ?? 3));
+
+  const tempsDebutPlageMs = convertirTempsEnMs(signalDoji.tempsDebutPlage);
+  const tempsFinPlageMs = convertirTempsEnMs(signalDoji.temps);
+
+  // 🎯 Règle directionnelle : Supports pour Achat, Résistances pour Vente
+  const typeZoneCible = signalDoji.type === 'ACHAT' ? 'SUPPORT' : 'RESISTANCE';
+
+  const zonesDansPlage: ZoneShvedAvecScore[] = [];
+
+  for (const zone of toutesLesZonesShved) {
+    // 1. Filtrage strict par sens
+    if (filtrerParDirectionSetup && zone.type !== typeZoneCible) {
+      continue;
+    }
+
+    // 2. Gestion des zones cassées
+    if (zone.estCassee && !afficherNiveauxCasses) continue;
+
+    const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
+    const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
+
+    // 3. Épuration totale : début ET fin compris dans la plage temporelle
+    const debutComprisDansPlage = dateDebutZoneMs >= tempsDebutPlageMs && dateDebutZoneMs <= tempsFinPlageMs;
+    const finCompriseDansPlage = dateFinZoneMs >= tempsDebutPlageMs && dateFinZoneMs <= tempsFinPlageMs;
+
+    const estDansPlage = exigerDebutEtFinDansPlage
+      ? (debutComprisDansPlage && finCompriseDansPlage)
+      : (dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs);
+
+    if (estDansPlage) {
+      // 4. Calcul du score de liquidité sur 100 points
+      const indexBougie1 = signalDoji.indexBougie - 1;
+      const evalScore = calculerScoreZoneShved(
+        zone,
+        bougies,
+        indexBougie1,
+        bougies[indexBougie1].time,
+        signalDoji.tailleLiquidation,
+        signalDoji.moyenneHauteur
+      );
+
+      if (evalScore.score >= scoreMinimum) {
+        zonesDansPlage.push(evalScore);
+      }
+    }
+  }
+
+  // 5. Tri décroissant par score (les zones institutionnelles les plus solides en premier)
+  zonesDansPlage.sort((a, b) => b.score - a.score);
+
+  // 6. Filtrage Top N (Top 1, Top 3, etc.)
+  return topNiveauxScore > 0 ? zonesDansPlage.slice(0, topNiveauxScore) : zonesDansPlage;
+}
+
+// ==============================================================================
+// 🔗 BLOC 3 : ORCHESTRATEUR DE LA SANDBOX (ASSEMBLAGE & VISUELS)
+// ==============================================================================
 
 /**
- * Exécute la Sandbox Doji Liq/Reint + S/R Shved (Plage Ciblée).
+ * Fonction maîtresse qui assemble les deux briques :
+ *  1️⃣ Appelle le BLOC 1 pour détecter les Dojis et calculer les plages.
+ *  2️⃣ Appelle le BLOC 2 pour filtrer et scorer les niveaux Shved dans chaque plage.
+ *  3️⃣ Génère les segments graphiques (continus / pointillés) et les étiquettes.
  * 
  * Exemple d'utilisation :
- * ```typescript
- * const resultat = calculerSandboxDojiShvedPlage(bougies, {
- *   styleLignesSupport: 'dashed',
- *   styleLignesResistance: 'solid',
- *   maxReculRecherche: 80,
- * });
- * console.log('Nombre de signaux :', resultat.signaux.length);
- * ```
+ * const res = calculerSandboxDojiShvedPlage(bougies, { topNiveauxScore: 3 });
  */
 export function calculerSandboxDojiShvedPlage(
   bougies: Bougie[],
@@ -426,33 +588,17 @@ export function calculerSandboxDojiShvedPlage(
 
   if (!bougies || bougies.length < 10) return resultatVide;
 
-  // 1️⃣ Extraction des paramètres
-  const toleranceDeficit = Number(parametres.toleranceDeficit ?? 0.30);
-  const toleranceDepassement = Number(parametres.toleranceDepassement ?? 2.0);
-  const activerFiltreTaille = parametres.activerFiltreTaille !== false;
-  const periodeHistorique = Math.max(3, Number(parametres.periodeHistorique ?? 10));
-  const multiplicateurBougie1 = Number(parametres.multiplicateurBougie1 ?? 1.0);
-  const multiplicateurCorps2 = Number(parametres.multiplicateurCorps2 ?? 1.2);
-  const activerAchat = parametres.activerAchat !== false;
-  const activerVente = parametres.activerVente !== false;
-
-  const maxReculRecherche = Math.max(10, Number(parametres.maxReculRecherche ?? 100));
-  const exigerDebutEtFinDansPlage = parametres.exigerDebutEtFinDansPlage !== false;
-  const filtrerParDirectionSetup = parametres.filtrerParDirectionSetup !== false;
-  const topNiveauxScore = Math.max(0, Number(parametres.topNiveauxScore ?? 3));
-  const scoreMinimum = Math.max(0, Number(parametres.scoreMinimum ?? 0));
-  const afficherScoreSurLigne = parametres.afficherScoreSurLigne !== false;
-
+  // Options visuelles
+  const bullColor = parametres.bullColor || '#00E676';
+  const bearColor = parametres.bearColor || '#F23645';
+  const texteLabel = parametres.texteLabel || 'Liq/Reint';
   const styleLignesSupport = parametres.styleLignesSupport || 'dashed';
   const styleLignesResistance = parametres.styleLignesResistance || 'dashed';
   const epaisseurLignes = Number(parametres.epaisseurLignes ?? 2);
   const bornerALaPlage = parametres.bornerALaPlage !== false;
+  const afficherScoreSurLigne = parametres.afficherScoreSurLigne !== false;
 
-  const bullColor = parametres.bullColor || '#00E676';
-  const bearColor = parametres.bearColor || '#F23645';
-  const texteLabel = parametres.texteLabel || 'Liq/Reint';
-
-  // 2️⃣ Calcul des Niveaux Shved Supply & Demand
+  // 1️⃣ Calcul des Niveaux Shved sur l'historique
   const resultatShved = calculerShvedSupplyDemand(bougies, {
     timeframeSource: parametres.timeframeSource || 'M15',
     donneesM1: parametres.donneesM1,
@@ -474,118 +620,31 @@ export function calculerSandboxDojiShvedPlage(
     ...resultatShved.resistances,
   ];
 
-  const signaux: SignalSandboxPlage[] = [];
+  // 2️⃣ Exécution du BLOC 1 : Détection des Dojis et des plages temporelles
+  const signauxDojis = detecterDojisAvecPlage(bougies, parametres);
+
+  const signauxComplets: SignalSandboxPlage[] = [];
   let totalAchats = 0;
   let totalVentes = 0;
 
-  // 3️⃣ Parcours des bougies pour détecter les Dojis personnalisés
-  for (let i = 2; i < bougies.length; i++) {
-    const b1 = bougies[i - 1];
-    const b2 = bougies[i];
-
-    // Calcul de la taille moyenne des bougies sur l'historique récent
-    const indexDebutRef = Math.max(0, i - 1 - periodeHistorique);
-    let sommeHauteurs = 0;
-    let sommeCorps = 0;
-    let countRef = 0;
-    for (let k = indexDebutRef; k < i - 1; k++) {
-      sommeHauteurs += (bougies[k].high - bougies[k].low);
-      sommeCorps += Math.abs(bougies[k].open - bougies[k].close);
-      countRef++;
-    }
-    const moyHauteur = countRef > 0 ? (sommeHauteurs / countRef) : (b1.high - b1.low);
-    const moyCorps = countRef > 0 ? (sommeCorps / countRef) : Math.abs(b1.open - b1.close);
-
-    // Détection du Doji personnalisé
-    const resultatDoji = verifierDojiSimple(b1, b2, moyHauteur, moyCorps, {
-      activerAchat,
-      activerVente,
-      activerFiltreTaille,
-      multiplicateurBougie1,
-      multiplicateurCorps2,
-      toleranceDeficit,
-      toleranceDepassement,
-    });
-
-    if (!resultatDoji.estValide) continue;
-
-    const estAchat = resultatDoji.type === 'ACHAT';
+  // 3️⃣ Exécution du BLOC 2 pour chaque signal détecté
+  for (const signalDoji of signauxDojis) {
+    const estAchat = signalDoji.type === 'ACHAT';
     if (estAchat) totalAchats++;
     else totalVentes++;
 
-    // 4️⃣ Recherche de la bougie précédente créant le plus bas / plus haut
-    const extremePrecedent = trouverBougieExtremePrecedente(
+    // Évaluation des zones Shved dans la plage du Doji
+    const zonesSelectionnees = evaluerNiveauxShvedDansPlage(
+      toutesLesZonesShved,
+      signalDoji,
       bougies,
-      i,
-      resultatDoji.type,
-      resultatDoji.prixExtreme,
-      maxReculRecherche
+      parametres
     );
 
-    const tempsDebutPlageMs = convertirTempsEnMs(extremePrecedent.temps);
-    const tempsFinPlageMs = convertirTempsEnMs(b2.time);
+    const tempsDebutPlageMs = convertirTempsEnMs(signalDoji.tempsDebutPlage);
+    const tempsFinPlageMs = convertirTempsEnMs(signalDoji.temps);
 
-    // Taille de la liquidation (Bougie 1) pour l'évaluation de la proportionnalité
-    const tailleLiquidation = estAchat
-      ? Math.abs(b1.open - b1.low)
-      : Math.abs(b1.high - b1.open);
-
-    // 5️⃣ Sélection et évaluation des supports/résistances Shved dans cette plage
-    const zonesDansPlage: ZoneShvedAvecScore[] = [];
-
-    // 🎯 RÈGLE DE DIRECTION :
-    // - Setup ACHAT (Spring) -> On sélectionne UNIQUEMENT les SUPPORTS
-    // - Setup VENTE (UTAD)   -> On sélectionne UNIQUEMENT les RÉSISTANCES
-    const typeZoneCible = estAchat ? 'SUPPORT' : 'RESISTANCE';
-
-    for (const zone of toutesLesZonesShved) {
-      // Filtrage par sens : ignore les résistances pour un achat, et les supports pour une vente
-      if (filtrerParDirectionSetup && zone.type !== typeZoneCible) {
-        continue;
-      }
-
-      if (zone.estCassee && parametres.afficherNiveauxCasses === false) continue;
-
-      const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
-      const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
-
-      // 🧹 RÈGLE D'ÉPURATION TOTALE :
-      // Affichage des S/R Shved UNIQUEMENT si le début ET la fin du S/R sont compris
-      // à l'intérieur de la plage temporelle [tempsDebutPlage, tempsFinPlage].
-      const debutComprisDansPlage = dateDebutZoneMs >= tempsDebutPlageMs && dateDebutZoneMs <= tempsFinPlageMs;
-      const finCompriseDansPlage = dateFinZoneMs >= tempsDebutPlageMs && dateFinZoneMs <= tempsFinPlageMs;
-
-      const estDansPlage = exigerDebutEtFinDansPlage
-        ? (debutComprisDansPlage && finCompriseDansPlage)
-        : (dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs);
-
-      if (estDansPlage) {
-        // 🏆 Calcul du score de liquidité sur 100 points
-        const evalScore = calculerScoreZoneShved(
-          zone,
-          bougies,
-          i - 1, // index Bougie 1
-          b1.time,
-          tailleLiquidation,
-          moyHauteur
-        );
-
-        // Filtre de score minimal (si configuré)
-        if (evalScore.score >= scoreMinimum) {
-          zonesDansPlage.push(evalScore);
-        }
-      }
-    }
-
-    // 🔄 Tri décroissant : les zones ayant le plus grand score de liquidité en premier
-    zonesDansPlage.sort((a, b) => b.score - a.score);
-
-    // 🎯 Filtrage Top N (Top 1, Top 3, Top 5, ou tous si 0)
-    const zonesSelectionnees = topNiveauxScore > 0
-      ? zonesDansPlage.slice(0, topNiveauxScore)
-      : zonesDansPlage;
-
-    // Tracé des segments Shved pour le Top sélectionné
+    // Tracé des segments Shved pour le Top retenu
     for (const item of zonesSelectionnees) {
       const zone = item.zone;
       const estSupport = zone.type === 'SUPPORT';
@@ -595,33 +654,32 @@ export function calculerSandboxDojiShvedPlage(
       const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
       const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
 
-      // Si bornerALaPlage est activé, la ligne est bornée strictement dans la fenêtre
+      // Borner le segment dans la fenêtre temporelle ciblée
       const dateDebutTracé = bornerALaPlage
-        ? (dateDebutZoneMs < tempsDebutPlageMs ? extremePrecedent.temps : zone.dateDebut)
+        ? (dateDebutZoneMs < tempsDebutPlageMs ? signalDoji.tempsDebutPlage : zone.dateDebut)
         : zone.dateDebut;
 
       const dateFinTracé = bornerALaPlage
-        ? (dateFinZoneMs > tempsFinPlageMs ? b2.time : zone.dateFin)
+        ? (dateFinZoneMs > tempsFinPlageMs ? signalDoji.temps : zone.dateFin)
         : zone.dateFin;
 
-      // Badge du score sur la ligne (ex: "Sup [85 pts]")
       const labelLigne = afficherScoreSurLigne
         ? `${estSupport ? 'Sup' : 'Res'} [${item.score} pts]`
         : undefined;
 
       lignes.push({
-        id: `sandbox-sr-${zone.id}-doji-${i}`,
+        id: `sandbox-sr-${zone.id}-doji-${signalDoji.indexBougie}`,
         prix: zone.prixMedian,
         dateDebut: dateDebutTracé,
         dateFin: dateFinTracé,
         couleur: couleurLigne,
         epaisseur: epaisseurLignes,
-        style: styleChoisi, // 'solid' ou 'dashed'
+        style: styleChoisi,
         label: labelLigne,
       });
     }
 
-    // 6️⃣ Étiquette épurée du Doji sur le graphique
+    // Étiquette du Doji avec le meilleur score
     const couleurSignal = estAchat ? bullColor : bearColor;
     const typeSRAffiche = estAchat ? 'Sup' : 'Res';
     const meilleurScore = zonesSelectionnees.length > 0 ? zonesSelectionnees[0].score : undefined;
@@ -632,35 +690,36 @@ export function calculerSandboxDojiShvedPlage(
       : texteLabel;
 
     labels.push({
-      id: `sandbox-doji-lbl-${i}`,
-      prix: resultatDoji.prixExtreme,
-      date: b2.time,
+      id: `sandbox-doji-lbl-${signalDoji.indexBougie}`,
+      prix: signalDoji.prixExtreme,
+      date: signalDoji.temps,
       texte: labelTexte,
       couleur: couleurSignal,
       position: estAchat ? 'below' : 'above',
     });
 
-    signaux.push({
-      type: resultatDoji.type,
-      indexBougie: i,
-      temps: b2.time,
-      prixExtreme: resultatDoji.prixExtreme,
-      open1: b1.open,
-      close2: b2.close,
-      indexDebutPlage: extremePrecedent.index,
-      tempsDebutPlage: extremePrecedent.temps,
-      prixExtremePrecedent: extremePrecedent.prix,
+    signauxComplets.push({
+      type: signalDoji.type,
+      indexBougie: signalDoji.indexBougie,
+      temps: signalDoji.temps,
+      prixExtreme: signalDoji.prixExtreme,
+      open1: signalDoji.open1,
+      close2: signalDoji.close2,
+      indexDebutPlage: signalDoji.indexDebutPlage,
+      tempsDebutPlage: signalDoji.tempsDebutPlage,
+      prixExtremePrecedent: signalDoji.prixExtremePrecedent,
       nombreNiveauxDansPlage: zonesSelectionnees.length,
       meilleurScore,
       scoresNiveauxDansPlage: zonesSelectionnees.map(z => z.score),
+      niveauxShved: zonesSelectionnees,
     });
   }
 
   return {
-    signaux,
+    signaux: signauxComplets,
     primitives: { labels, lignes, boites: [], points: [] },
     statistiques: {
-      totalSignaux: signaux.length,
+      totalSignaux: signauxComplets.length,
       totalAchats,
       totalVentes,
     },

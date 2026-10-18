@@ -4,6 +4,7 @@ import type { ZoneShved } from '@/lib/bot/modules/01_liquidite/shvedSupplyDemand
 import {
   calculerSandboxDojiShvedPlage,
   calculerScoreZoneShved,
+  detecterDojisAvecPlage,
 } from '../favoris/sandboxDojiShvedPlage';
 
 function creerBougie(
@@ -291,6 +292,25 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
     expect(favoris.calculerSandboxDojiShvedPlage).toBeDefined();
     expect(favoris.calculerMoneyManagementRules).toBeDefined();
     expect(favoris.calculerUnmitigatedOverlapProfile).toBeDefined();
+    // Vérification de la modularité des Blocs 1 et 2
+    expect(favoris.detecterDojisAvecPlage).toBeDefined();
+    expect(favoris.evaluerNiveauxShvedDansPlage).toBeDefined();
+  });
+
+  it('permet au Bloc 1 de détecter les Dojis de façon totalement indépendante', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 15; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+    // Doji Achat
+    bougies.push(creerBougie(15000, 99.0, 99.0, 85.0, 86.0));
+    bougies.push(creerBougie(16000, 86.0, 99.0, 86.0, 98.8));
+
+    const dojis = detecterDojisAvecPlage(bougies, { activerFiltreTaille: false });
+    expect(dojis.length).toBeGreaterThanOrEqual(1);
+    expect(dojis[0].type).toBe('ACHAT');
+    expect(dojis[0].tailleLiquidation).toBeGreaterThan(0);
+    expect(dojis[0].tempsDebutPlage).toBeDefined();
   });
 });
 
