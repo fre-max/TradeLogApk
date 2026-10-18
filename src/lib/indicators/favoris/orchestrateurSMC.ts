@@ -1,8 +1,9 @@
 import type { Bougie } from '@/lib/chartDataHelper';
-import type { VisualPrimitives, VisualLabel, VisualLine, VisualBox } from '@/types/indicatorScript';
+import type { VisualPrimitives, VisualLabel, VisualLine, VisualBox, VisualPoint } from '@/types/indicatorScript';
 import {
   detecterDojisAvecPlage,
   evaluerNiveauxShvedDansPlage,
+  convertirTempsEnMs,
   type SignalDojiAvecPlage,
   type ZoneShvedAvecScore,
 } from './sandboxDojiShvedPlage';
@@ -39,6 +40,11 @@ import {
  *        • Score Élevé (>= 70 pts) : liquidité massive récupérée -> on vise un TP plus ambitieux (TP2).
  *        • Score Modéré (< 70 pts) : on vise le TP1 conservateur.
  *    - Calcule le Ratio Risque/Rendement (R:R).
+ * 
+ * 4️⃣ AFFICHAGE ÉPURÉ CHIRURGICAL (Zéro Surcharge Graphique)
+ *    - Un point discret (VisualPoint) placé sous/sur le Doji pour repérer l'extrême.
+ *    - Un segment en tirets discontinus fins pour le Support / Résistance balayé.
+ *    - Des micro-segments horizontaux courts pour le SL (rouge) et le TP (vert).
  * ==============================================================================
  */
 
@@ -71,8 +77,13 @@ export interface ParametresOrchestrateurSMC {
   zigzagDepth?: number;                  // Sensibilité ZigZag UOP (défaut: 8)
   nbVaguesSuperposees?: number;          // Nombre de vagues superposées UOP (défaut: 4)
 
-  // ─── 🎨 Visuels Graphiques ───
-  afficherLignesSetup?: boolean;         // Afficher les lignes Entrée / SL / TP (défaut: true)
+  // ─── 🎨 Visuels Épurés & Minimalistes (Ergonomie Pro) ───
+  modeVisuel?: 'EPURE' | 'COMPLET';      // 'EPURE' (point discret + micro-segments) ou 'COMPLET' (défaut: 'EPURE')
+  afficherPointDoji?: boolean;           // Point discret sur la mèche du Doji (défaut: true)
+  afficherSegmentSR?: boolean;           // Segment discontinu du S/R Shved balayé (défaut: true)
+  afficherSegmentSL?: boolean;           // Micro-segment court pour le Stop Loss (défaut: true)
+  afficherSegmentTP?: boolean;           // Micro-segment court pour le Take Profit (défaut: true)
+  dureeSegmentsCibles?: number;          // Nombre de bougies de longueur pour les segments SL/TP (défaut: 3)
   bullColor?: string;                    // Couleur Achat / Support (défaut: '#00E676')
   bearColor?: string;                    // Couleur Vente / Résistance (défaut: '#F23645')
 }
@@ -135,13 +146,13 @@ export interface ResultatOrchestrateurSMC {
  * 2. Récupère le score de liquidité Shved de la zone balayée.
  * 3. Valide le Range de confirmation des 3 bougies consécutives.
  * 4. Calcule le TP Optimal UOP proportionnel au score de liquidité.
- * 5. Génère les visuels épurés pour le graphique.
+ * 5. Génère les visuels épurés pour le graphique (point discret + micro-segments courts).
  * 
  * Exemple d'utilisation :
  * ```typescript
  * const res = calculerOrchestrateurSMC(bougies, {
- *   nbBougiesConfirmation: 3,
- *   seuilScoreGrandMouvement: 70
+ *   modeVisuel: 'EPURE',
+ *   nbBougiesConfirmation: 3
  * });
  * console.log('Setups confirmés :', res.statistiques.totalConfirmes);
  * ```
@@ -153,10 +164,11 @@ export function calculerOrchestrateurSMC(
   const labels: VisualLabel[] = [];
   const lignes: VisualLine[] = [];
   const boites: VisualBox[] = [];
+  const points: VisualPoint[] = [];
 
   const resultatVide: ResultatOrchestrateurSMC = {
     setups: [],
-    primitives: { labels, lignes, boites, points: [] },
+    primitives: { labels, lignes, boites, points },
     statistiques: {
       totalDetectes: 0,
       totalConfirmes: 0,
@@ -175,9 +187,16 @@ export function calculerOrchestrateurSMC(
   const afficherSetupsAnnules = Boolean(parametres.afficherSetupsAnnules);
   const seuilScoreGrandMouvement = Math.max(10, Number(parametres.seuilScoreGrandMouvement ?? 70));
   const scoreMinimumShved = Math.max(0, Number(parametres.scoreMinimumShved ?? 0));
-  const afficherLignesSetup = parametres.afficherLignesSetup !== false;
   const bullColor = parametres.bullColor || '#00E676';
   const bearColor = parametres.bearColor || '#F23645';
+
+  // 🎨 Options Visuelles Épurées
+  const modeVisuel = parametres.modeVisuel || 'EPURE';
+  const afficherPointDoji = parametres.afficherPointDoji !== false;
+  const afficherSegmentSR = parametres.afficherSegmentSR !== false;
+  const afficherSegmentSL = parametres.afficherSegmentSL !== false;
+  const afficherSegmentTP = parametres.afficherSegmentTP !== false;
+  const dureeSegmentsCibles = Math.max(1, Number(parametres.dureeSegmentsCibles ?? nbBougiesConfirmation));
 
   // 2️⃣ Extraction des Niveaux Shved Supply & Demand
   const resultatShved = calculerShvedSupplyDemand(bougies, {
@@ -312,17 +331,15 @@ export function calculerOrchestrateurSMC(
 
     if (tpsCandidats.length > 0) {
       if (viserGrandMouvement && tpsCandidats.length >= 2) {
-        // Grand mouvement attendu -> Cible TP2
         tpSelectionne = tpsCandidats[1];
         ordreTP = 2;
       } else {
-        // Mouvement standard ou conservateur -> Cible TP1
         tpSelectionne = tpsCandidats[0];
         ordreTP = 1;
       }
       prixTP = tpSelectionne.prixCible;
     } else {
-      // Si aucun palier UOP n'a été trouvé, on applique un TP proportionnel au score (R:R par défaut basé sur le score)
+      // Si aucun palier UOP n'a été trouvé, on applique un TP proportionnel au score
       const multiplicateurSecours = viserGrandMouvement ? 2.5 : 1.5;
       prixTP = estAchat
         ? prixEntree + distanceSL * multiplicateurSecours
@@ -360,83 +377,104 @@ export function calculerOrchestrateurSMC(
 
     setups.push(setup);
 
-    // ─── 🎨 Génération des Primitives Visuelles ───
+    // ─── 🎨 Génération des Primitives Visuelles Épurées ───
     const couleurPrincipale = estAchat ? bullColor : bearColor;
     const dateDoji = doji.temps;
-    const indexBougieFinRange = Math.min(bougies.length - 1, indexDoji + nbBougiesConfirmation);
-    const dateFinRange = bougies[indexBougieFinRange].time;
 
-    // 1. SETUP CONFIRMÉ ✅
-    if (statut === 'CONFIRME') {
-      labels.push({
-        id: `orchestre-lbl-${indexDoji}`,
-        prix: prixSL,
-        date: dateDoji,
-        texte: `✅ SMC ${estAchat ? 'ACHAT' : 'VENTE'}\nScore: ${scoreShved} pts | TP${ordreTP} (R:R 1:${ratioRR})`,
+    // Largeur temporelle des micro-segments SL / TP (courte pour ne pas surcharger)
+    const indexBougieFinCible = Math.min(bougies.length - 1, indexDoji + dureeSegmentsCibles);
+    const dateFinCible = bougies[indexBougieFinCible].time;
+
+    // 1️⃣ Point Discret sur le Doji (au niveau de la mèche extrême)
+    if (afficherPointDoji) {
+      const couleurPoint = statut === 'CONFIRME'
+        ? couleurPrincipale
+        : (statut === 'EN_COURS' ? '#FFD600' : '#8E8E93');
+
+      // Le point est tracé pour les confirmés, ou en cours, ou annulés si l'option est activée
+      if (statut === 'CONFIRME' || statut === 'EN_COURS' || afficherSetupsAnnules) {
+        points.push({
+          id: `orchestre-pt-${indexDoji}`,
+          prix: prixSL,
+          date: dateDoji,
+          couleur: couleurPoint,
+          rayon: 4,
+          style: 'plein',
+        });
+      }
+    }
+
+    // 2️⃣ Segment Discontinu du Support ou Résistance Shved balayé
+    if (afficherSegmentSR && meilleureZone && (statut === 'CONFIRME' || statut === 'EN_COURS')) {
+      const zoneSR = meilleureZone.zone;
+      const dateDebutZoneMs = convertirTempsEnMs(zoneSR.dateDebut);
+      const dateDebutPlageMs = convertirTempsEnMs(doji.tempsDebutPlage);
+
+      // Borner le tracé dans la plage ciblée
+      const dateDebutLigne = dateDebutZoneMs < dateDebutPlageMs ? doji.tempsDebutPlage : zoneSR.dateDebut;
+
+      lignes.push({
+        id: `orchestre-sr-${zoneSR.id}-${indexDoji}`,
+        prix: zoneSR.prixMedian,
+        dateDebut: dateDebutLigne,
+        dateFin: dateDoji,
         couleur: couleurPrincipale,
-        position: estAchat ? 'below' : 'above',
+        epaisseur: 1.5,
+        style: 'dashed',
+        label: `${estAchat ? 'Sup' : 'Res'} [${scoreShved} pts]`,
       });
+    }
 
-      if (afficherLignesSetup) {
-        // Ligne de Stop Loss (Rouge pointillés)
+    // 3️⃣ Micro-segments SL et TP pour les Setups Confirmés ✅
+    if (statut === 'CONFIRME') {
+      // Micro-segment court du Stop Loss (Rouge en tirets discrets)
+      if (afficherSegmentSL) {
         lignes.push({
           id: `orchestre-sl-${indexDoji}`,
           prix: prixSL,
           dateDebut: dateDoji,
-          dateFin: dateFinRange,
+          dateFin: dateFinCible,
           couleur: '#FF3B30',
-          epaisseur: 2,
+          epaisseur: 1.5,
           style: 'dashed',
-          label: `SL [${prixSL.toFixed(2)}]`,
+          label: 'SL',
         });
+      }
 
-        // Ligne d'Entrée (Bleue)
+      // Micro-segment court du Take Profit Optimal (Vert continu)
+      if (afficherSegmentTP && prixTP !== undefined) {
         lignes.push({
-          id: `orchestre-entree-${indexDoji}`,
-          prix: prixEntree,
+          id: `orchestre-tp-${indexDoji}`,
+          prix: prixTP,
           dateDebut: dateDoji,
-          dateFin: dateFinRange,
-          couleur: '#00B0FF',
-          epaisseur: 1,
+          dateFin: dateFinCible,
+          couleur: '#00E676',
+          epaisseur: 1.5,
           style: 'solid',
-          label: `Entrée [${prixEntree.toFixed(2)}]`,
+          label: `TP (${ratioRR}R)`,
         });
+      }
 
-        // Ligne de Take Profit Optimal (Verte continue)
-        if (prixTP !== undefined) {
-          lignes.push({
-            id: `orchestre-tp-${indexDoji}`,
-            prix: prixTP,
-            dateDebut: dateDoji,
-            dateFin: dateFinRange,
-            couleur: '#00E676',
-            epaisseur: 2,
-            style: 'solid',
-            label: `TP${ordreTP} Optimal [${prixTP.toFixed(2)}] (R:R 1:${ratioRR})`,
-          });
-        }
+      // Si le trader a choisi le mode 'COMPLET', on ajoute également l'étiquette détaillée
+      if (modeVisuel === 'COMPLET') {
+        labels.push({
+          id: `orchestre-lbl-${indexDoji}`,
+          prix: prixSL,
+          date: dateDoji,
+          texte: `✅ SMC ${estAchat ? 'ACHAT' : 'VENTE'} (Score: ${scoreShved} | R:R ${ratioRR})`,
+          couleur: couleurPrincipale,
+          position: estAchat ? 'below' : 'above',
+        });
       }
     }
 
-    // 2. SETUP EN COURS DE CONFIRMATION ⏳
-    else if (statut === 'EN_COURS') {
-      labels.push({
-        id: `orchestre-lbl-encours-${indexDoji}`,
-        prix: prixSL,
-        date: dateDoji,
-        texte: `⏳ SMC ${estAchat ? 'Achat' : 'Vente'} (En cours ${bougiesObservees}/${nbBougiesConfirmation})\nScore: ${scoreShved} pts`,
-        couleur: '#FFD600',
-        position: estAchat ? 'below' : 'above',
-      });
-    }
-
-    // 3. SETUP ANNULÉ PAR LE RANGE ❌ (si activé dans les paramètres)
-    else if (statut === 'ANNULE' && afficherSetupsAnnules) {
+    // 4️⃣ Si Setup Annulé et affichage demandé en mode complet
+    else if (statut === 'ANNULE' && afficherSetupsAnnules && modeVisuel === 'COMPLET') {
       labels.push({
         id: `orchestre-lbl-annule-${indexDoji}`,
         prix: prixSL,
         date: dateDoji,
-        texte: `❌ Annulé (Sortie Range B+${bougiesObservees})`,
+        texte: `❌ Annulé (Sortie Range)`,
         couleur: '#8E8E93',
         position: estAchat ? 'below' : 'above',
       });
@@ -449,7 +487,7 @@ export function calculerOrchestrateurSMC(
 
   return {
     setups,
-    primitives: { labels, lignes, boites, points: [] },
+    primitives: { labels, lignes, boites, points },
     statistiques: {
       totalDetectes,
       totalConfirmes,

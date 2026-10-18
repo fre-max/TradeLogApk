@@ -47,17 +47,28 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(setupAchat?.prixTP).toBeGreaterThan(98.8);
     expect(setupAchat?.ratioRR).toBeGreaterThan(0);
 
-    // Vérification des primitives visuelles
-    const labelsConfirmes = (resultat.primitives.labels || []).filter((l) =>
-      l.texte.includes('SMC ACHAT')
+    // 🎨 Vérification du rendu épuré : point discret sur la mèche basse du Doji
+    const pointsDoji = (resultat.primitives.points || []).filter((p) =>
+      p.id?.includes('orchestre-pt-')
     );
-    expect(labelsConfirmes.length).toBeGreaterThanOrEqual(1);
+    expect(pointsDoji.length).toBeGreaterThanOrEqual(1);
+    expect(pointsDoji[0].prix).toBe(85.0);
+    expect(pointsDoji[0].rayon).toBe(4);
 
+    // Micro-segment SL court avec étiquette 'SL'
     const lignesSL = (resultat.primitives.lignes || []).filter((l) =>
       l.id?.includes('orchestre-sl-')
     );
     expect(lignesSL.length).toBeGreaterThanOrEqual(1);
     expect(lignesSL[0].prix).toBe(85.0);
+    expect(lignesSL[0].label).toBe('SL');
+
+    // Micro-segment TP court
+    const lignesTP = (resultat.primitives.lignes || []).filter((l) =>
+      l.id?.includes('orchestre-tp-')
+    );
+    expect(lignesTP.length).toBeGreaterThanOrEqual(1);
+    expect(lignesTP[0].label).toContain('TP');
   });
 
   it('annule un setup Achat si l\'une des 3 bougies casse le Stop Loss', () => {
