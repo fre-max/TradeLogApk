@@ -19,32 +19,269 @@ import {
 
 /**
  * ==============================================================================
- * 🎼 CHEF D'ORCHESTRE SMC (DOJI + SHVED + UOP + RANGE CONFIRMATION)
+ * 🎼 CHEF D'ORCHESTRE STRATÉGIQUE SMC (SMART MONEY CONCEPTS)
  * ==============================================================================
- * Cet indicateur est le chef d'orchestre stratégique. Il unifie 3 piliers :
+ * Cet indicateur est le CENTRE DE COMMANDEMENT de toute notre stratégie de trading.
+ * Son rôle n'est pas de tout recalculer de zéro, mais d'ORCHESTRER intelligemment
+ * nos indicateurs favoris spécialisés, de filtrer les faux signaux et de piloter
+ * la décision finale d'entrée, de sortie et de tracé visuel sur le graphique.
  * 
- * 1️⃣ DÉCLENCHEUR : DOJI LIQ/REINT & SCORE SHVED (Bac à sable)
- *    - Détecte l'impulsion de liquidation + réintégration.
- *    - Isole la plage temporelle vers l'extrême précédent.
- *    - Calcule le score de liquidité institutionnelle sur 100 points de la zone Shved balayée.
+ * ------------------------------------------------------------------------------
+ * 🧭 TABLE DES MATIÈRES DE CE REGISTRE DOCUMENTAIRE :
+ * ------------------------------------------------------------------------------
+ * 1️⃣ VUE GLOBALE : CE QUE FAIT CHAQUE INDICATEUR SPÉCIALISÉ
+ * 2️⃣ FLUX D'ÉCHANGE DE DONNÉES (QUI ENVOIE QUOI À QUI ?)
+ * 3️⃣ CHRONOLOGIE COMPLÈTE POUR OBTENIR UN SETUP VALIDE
+ * 4️⃣ 📋 REGISTRE EXHAUSTIF DES CONDITIONS & PARAMÈTRES RÉGLABLES
+ *     -> Pour tout ajustement futur, il suffit de désigner le code [COND-XX] !
+ * 5️⃣ RENDU VISUEL ÉPURÉ & RÈGLE DE MASQUAGE DES SETUPS PASSÉS
+ * 6️⃣ INTÉGRATION FUTURE DU MONEY MANAGEMENT DYNAMIQUE
+ * ==============================================================================
  * 
- * 2️⃣ FILTRE DU RANGE DE CONFIRMATION (3 BOUGIES)
- *    - Le niveau de Stop Loss (SL) est fixé au prix extrême du Doji (Low en Achat, High en Vente).
- *    - On observe les 3 bougies formées juste après le Doji :
- *        ❌ Si une seule bougie casse le SL -> SETUP ANNULÉ (fausse sortie).
- *        ✅ Si les 3 bougies se maintiennent sans briser le SL -> SETUP CONFIRMÉ !
  * 
- * 3️⃣ CIBLE TP OPTIMAL & PROPORTIONNALITÉ (Overlap Profile UOP)
- *    - Récupère les Take Profits optimaux calculés par superposition des vagues UOP.
- *    - Proportionnalité au score Shved :
- *        • Score Élevé (>= 70 pts) : liquidité massive récupérée -> on vise un TP plus ambitieux (TP2).
- *        • Score Modéré (< 70 pts) : on vise le TP1 conservateur.
- *    - Calcule le Ratio Risque/Rendement (R:R).
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 1️⃣ VUE GLOBALE : CE QUE FAIT CHAQUE INDICATEUR SPÉCIALISÉ
+ * ──────────────────────────────────────────────────────────────────────────────
  * 
- * 4️⃣ SUIVI ACTIF DU CYCLE DE VIE & ÉPURATION DU GRAPHIQUE
- *    - Identifie quand un setup confirmé a touché son TP ou son SL dans les bougies suivantes.
- *    - 🧹 Masquage automatique des setups passés/terminés (TP ou SL touché) pour ne garder
- *        sur le graphique UNIQUEMENT les setups en cours ou actifs récents !
+ * 🔹 A. SANDBOX BLOC 1 : DÉTECTION DU DOJI PERSONNALISÉ & PLAGE CIBLÉE
+ *    • Fichier source : `sandboxDojiShvedPlage.ts` (Fonction: detecterDojisAvecPlage)
+ *    • Rôle : C'est le DÉCLENCHEUR INITIAL du marché (l'étincelle).
+ *      Il repère les manipulations institutionnelles de fausse cassure :
+ *      - À l'ACHAT (Spring de Wyckoff) : Une bougie 1 plonge pour liquider les stops
+ *        vendeurs/acheteurs, puis la bougie 2 réintègre immédiatement vers le haut.
+ *      - À la VENTE (UTAD de Wyckoff) : Une bougie 1 explose à la hausse pour balayer
+ *        la liquidité, puis la bougie 2 réintègre violemment vers le bas.
+ *      - Il identifie également le point extrême opposé antérieur pour délimiter la
+ *        "Plage Temporelle Ciblée" [Début de la plage ➔ Moment du Doji].
+ * 
+ * 🔹 B. SANDBOX BLOC 2 : MOTEUR S/R SHVED & SCORE DE LIQUIDITÉ (SUR 100 PTS)
+ *    • Fichier source : `shvedSupplyDemand.ts` + `sandboxDojiShvedPlage.ts` (Fonction: evaluerNiveauxShvedDansPlage)
+ *    • Rôle : C'est le FILTRE DE QUALITÉ INSTITUTIONNELLE.
+ *      Il isole les zones de Support / Résistance Shved formées en multi-timeframe (ex: M15) :
+ *      - Épuration par direction : Ne conserve QUE les Supports pour un Achat, et QUE les
+ *        Résistances pour une Vente.
+ *      - Épuration temporelle : Ne garde QUE les zones nées et terminées strictement à l'intérieur
+ *        de la plage temporelle ciblée.
+ *      - Calcule un Score sur 100 points mesurant la robustesse de la liquidité balayée
+ *        (Retests passés, hauteur du rejet/montagne, proportionnalité, intégrité).
+ * 
+ * 🔹 C. RANGE DE CONFIRMATION (3 BOUGIES CONSÉCUTIVES)
+ *    • Fichier source : `orchestrateurSMC.ts` (Intégré nativement dans la boucle de décision)
+ *    • Rôle : C'est le FILTRE ANTI-FAUSSE SORTIE & CONFIRMATION DE MARCHÉ.
+ *      Le niveau de Stop Loss (SL) est fixé au plus bas (Achat) ou plus haut (Vente) de la mèche du Doji.
+ *      On observe impérativement les 3 bougies suivant le Doji :
+ *      - Si une seule bougie brise le SL ➔ Le setup est immédiatement ANNULÉ.
+ *      - Si les 3 bougies consécutives tiennent au-dessus du SL (Achat) ou en-dessous (Vente) ➔ Le setup est CONFIRMÉ !
+ * 
+ * 🔹 D. PROFIL DE CHEVAUCHEMENT NON-MITIGÉ (UOP - UNMITIGATED OVERLAP PROFILE)
+ *    • Fichier source : `unmitigatedOverlapProfile.ts` (Fonction: calculerUnmitigatedOverlapProfile)
+ *    • Rôle : C'est le FOURNISSEUR DU TAKE PROFIT (TP) OPTIMAL.
+ *      Au lieu de se baser sur de faux volumes, il calcule le taux de chevauchement horizontal
+ *      des vagues ZigZag et extrait les paliers de prix vierges (non-mitigés) où le marché
+ *      doit mathématiquement retourner combler le vide institutionnel.
+ *      Il fournit ainsi une série de cibles ordonnées : TP1 (conservateur), TP2 (étendu), TP3...
+ * 
+ * 🔹 E. MONEY MANAGEMENT DYNAMIQUE (PRÊT POUR CONNEXION ULTÉRIEURE)
+ *    • Fichier source : `moneyManagementDynamique.ts`
+ *    • Rôle : C'est le PILOTE DU CAPITAL ET DU RISQUE FINANCIER.
+ *      - Filtrera les trades dont le ratio R:R est inférieur au seuil minimal (ex: 2.5R).
+ *      - Calculera la taille exacte de lot en fonction du capital et du % de risque (ex: 1%).
+ *      - Pilotera le passage automatique du Stop Loss en Break-Even à 50% du trajet vers le TP.
+ * 
+ * 
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 2️⃣ FLUX D'ÉCHANGE DE DONNÉES (QUI ENVOIE QUOI À QUI ?)
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 
+ *   [Graphique / Bougies]
+ *            │
+ *            ▼
+ *  ┌────────────────────────────────────────────────────────────────────────────┐
+ *  │ 1. BLOC 1 : DOJI & PLAGE CIBLÉE                                            │
+ *  │    • Détecte le Doji (Achat ou Vente)                                      │
+ *  │    • Détermine la plage temporelle : [tempsDebutPlage ➔ tempsDoji]         │
+ *  │    • Extrait : prixSL (extrême), prixEntree (close2), tailleLiquidation    │
+ *  └─────────────────────┬──────────────────────────────────────────────────────┘
+ *                        │ Données envoyées :
+ *                        │ - Bornes temporelles de la plage
+ *                        │ - Sens du signal (ACHAT / VENTE)
+ *                        │ - Taille de la bougie de liquidation
+ *                        ▼
+ *  ┌────────────────────────────────────────────────────────────────────────────┐
+ *  │ 2. BLOC 2 : SHVED S/R & SCORING                                            │
+ *  │    • Filtre les zones Shved : Supports si Achat, Résistances si Vente      │
+ *  │    • Ne garde que les zones strictes dans la plage temporelle              │
+ *  │    • Calcule le Score de liquidité sur 100 points                          │
+ *  │    • Renvoie la meilleure zone et son score                                │
+ *  └─────────────────────┬──────────────────────────────────────────────────────┘
+ *                        │ Données renvoyées à l'Orchestrateur :
+ *                        │ - meilleureZoneShved (niveaux haut/bas/médian)
+ *                        │ - scoreShved (0 à 100 points)
+ *                        ▼
+ *  ┌────────────────────────────────────────────────────────────────────────────┐
+ *  │ 3. ORCHESTRATEUR SMC : VÉRIFICATION DU RANGE DE CONFIRMATION (3 BOUGIES)   │
+ *  │    • Scrute les bougies k = Doji + 1, Doji + 2, Doji + 3                   │
+ *  │    • Si Low <= prixSL (Achat) ou High >= prixSL (Vente) ➔ ANNULÉ           │
+ *  │    • Si les 3 bougies respectent le SL ➔ CONFIRMÉ !                        │
+ *  └─────────────────────┬──────────────────────────────────────────────────────┘
+ *                        │ Si le setup est confirmé :
+ *                        │ Demande au profil UOP les cibles de prix optimales
+ *                        ▼
+ *  ┌────────────────────────────────────────────────────────────────────────────┐
+ *  │ 4. BLOC 3 : PROFIL UOP & SÉLECTION PROPORTIONNELLE DU TP OPTIMAL           │
+ *  │    • UOP calcule les paliers de chevauchement non-mitigés                  │
+ *  │    • Règle de proportionnalité au score Shved :                           │
+ *  │        • Si scoreShved >= 70 pts (Liquidité massive) ➔ Vise TP2 (Étendu)   │
+ *  │        • Si scoreShved < 70 pts (Liquidité modérée) ➔ Vise TP1 (Conservateur)
+ *  │    • Calcule le Ratio Risque/Rendement (R:R) = distanceTP / distanceSL     │
+ *  └─────────────────────┬──────────────────────────────────────────────────────┘
+ *                        │
+ *                        ▼
+ *  ┌────────────────────────────────────────────────────────────────────────────┐
+ *  │ 5. SUIVI DU CYCLE DE VIE DU TRADE & ÉPURATION VISUELLE DU GRAPHIQUE        │
+ *  │    • Scrute les bougies suivantes : TP touché ? SL touché ? En cours ?     │
+ *  │    • Si TP ou SL touché ET masquerSetupsTermines === true :                │
+ *  │        ➔ EFFACEMENT COMPLET DU GRAPHIQUE (Évite la surcharge visuelle !)   │
+ *  │    • Si Setup Actif :                                                      │
+ *  │        ➔ Affiche 1 point discret sur la mèche du Doji                      │
+ *  │        ➔ Affiche 1 segment pointillé du Support/Résistance Shved           │
+ *  │        ➔ Affiche 2 micro-segments courts de 3 bougies (SL Rouge / TP Vert) │
+ *  └────────────────────────────────────────────────────────────────────────────┘
+ * 
+ * 
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 3️⃣ CHRONOLOGIE COMPLÈTE POUR OBTENIR UN SETUP VALIDE
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 
+ *  Étape ① : Un Doji de liquidation + réintégration apparaît sur le graphique.
+ *  Étape ② : La zone de Support/Résistance balayée dans la plage temporelle ciblée
+ *            obtient un score Shved suffisant (>= scoreMinimumShved, par défaut 0).
+ *  Étape ③ : Les 3 bougies suivantes se forment sans JAMAIS toucher ou enfoncer
+ *            le niveau de Stop Loss fixé sur la mèche extrême du Doji.
+ *  Étape ④ : L'indicateur sélectionne le TP Optimal (TP1 ou TP2 selon la force du score),
+ *            calcule le R:R et affiche le setup sur le graphique.
+ *  Étape ⑤ : Dès que le marché touche le TP ou le SL, le setup bascule en "terminé"
+ *            et disparaît automatiquement du graphique pour laisser la place aux futurs trades.
+ * 
+ * 
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 4️⃣ 📋 REGISTRE EXHAUSTIF DES CONDITIONS & PARAMÈTRES RÉGLABLES
+ * ──────────────────────────────────────────────────────────────────────────────
+ * Vous trouverez ci-dessous le registre de TOUTES les conditions actuellement en place.
+ * Si vous désirez faire un ajustement, il vous suffit de vous référer au code [COND-XX] :
+ * 
+ * ------------------------------------------------------------------------------
+ * 🏷️ DÉTECTION DU DOJI ET DE LA PLAGE CIBLÉE (SANDBOX BLOC 1)
+ * ------------------------------------------------------------------------------
+ * • [COND-DOJI-01] Sens de trading autorisé :
+ *     - Règle : Filtrer les signaux autorisés (Achat seul, Vente seule, ou les deux).
+ *     - Paramètres : `activerAchat: true`, `activerVente: true`
+ * 
+ * • [COND-DOJI-02] Filtre de taille relative des bougies du Doji :
+ *     - Règle : Les bougies 1 et 2 du Doji doivent être plus grandes que la moyenne récente.
+ *     - Paramètre : `activerFiltreTaille: true` (défaut: activé)
+ *     - Historique de calcul : `periodeHistorique: 10` (moyenne sur les 10 dernières bougies)
+ *     - Multiplicateur Bougie 1 : `multiplicateurBougie1: 1.0` (Taille B1 >= 1.0 x moyenne)
+ *     - Multiplicateur Bougie 2 : `multiplicateurCorps2: 1.2` (Corps B2 >= 1.2 x moyenne)
+ * 
+ * • [COND-DOJI-03] Tolérance de réintégration :
+ *     - Tolérance de déficit : `toleranceDeficit: 0.30`
+ *       (Permet à B2 de s'arrêter à 30% en dessous de l'Open de B1 tout en restant valide).
+ *     - Tolérance de dépassement : `toleranceDepassement: 2.0`
+ *       (Permet à B2 de dépasser l'Open de B1 jusqu'à 200% de la taille de B1).
+ * 
+ * • [COND-DOJI-04] Recherche de l'extrême précédent (Plage ciblée) :
+ *     - Règle : Recule dans les bougies passées pour trouver le Plus Haut (Achat) ou Plus Bas (Vente) majeur.
+ *     - Paramètre : `maxReculRecherche: 100` (Recul maximal de 100 bougies)
+ * 
+ * ------------------------------------------------------------------------------
+ * 🏷️ ZONES SHVED & SCORE DE LIQUIDITÉ (SANDBOX BLOC 2)
+ * ------------------------------------------------------------------------------
+ * • [COND-SHVED-01] Multi-Timeframe de calcul Shved :
+ *     - Paramètre : `timeframeSource: 'M15'` (Calcul des zones sur M15 projeté sur le graphique)
+ * 
+ * • [COND-SHVED-02] Épuration par direction du trade :
+ *     - Règle : Seuls les SUPPORTS sont retenus en Achat, seules les RÉSISTANCES en Vente.
+ *     - Paramètre : `filtrerParDirectionSetup: true`
+ * 
+ * • [COND-SHVED-03] Épuration stricte par la Plage Temporelle :
+ *     - Règle : La date de début ET la date de fin du niveau Shved doivent être STRICTEMENT
+ *       comprises entre le début de la plage ciblée et la bougie du Doji.
+ *     - Paramètre : `exigerDebutEtFinDansPlage: true`
+ * 
+ * • [COND-SHVED-04] Décomposition du Score de Liquidité sur 100 points :
+ *     - Retests passés : Max 35 points (7 pts par retest antérieur au Doji, plafonné à 5 retests).
+ *     - Hauteur du Rejet / Montagne : Max 30 points (Mesure de la force du rebond vs ATR).
+ *     - Proportionnalité Liquidation/Rejet : Max 25 points (Taille B1 comparée au rejet moyen).
+ *     - Intégrité de la zone : Max 10 points (Bonus de récence / fraîcheur de la zone).
+ * 
+ * • [COND-SHVED-05] Seuil minimal de Score Shved pour accepter un setup :
+ *     - Règle : Si le meilleur score Shved est inférieur à ce seuil, le setup est rejeté d'office.
+ *     - Paramètre : `scoreMinimumShved: 0` (0 = accepte toute zone Shved balayée, modifiable à 50, 60...)
+ * 
+ * ------------------------------------------------------------------------------
+ * 🏷️ RANGE DE CONFIRMATION (ORCHESTRATEUR CENTRAL)
+ * ------------------------------------------------------------------------------
+ * • [COND-CONF-01] Nombre de bougies de confirmation :
+ *     - Règle : Nombre de bougies consécutives après le Doji devant respecter le SL sans le toucher.
+ *     - Paramètre : `nbBougiesConfirmation: 3` (défaut: 3 bougies consécutives)
+ * 
+ * • [COND-CONF-02] Niveau de référence du Stop Loss :
+ *     - Achat : Stop Loss = `prixExtreme` du Doji (Plus Bas / Low de la mèche de liquidation).
+ *     - Vente : Stop Loss = `prixExtreme` du Doji (Plus Haut / High de la mèche de liquidation).
+ *     - Invalidation immédiate si : Low_k <= SL (en Achat) ou High_k >= SL (en Vente).
+ * 
+ * • [COND-CONF-03] Gestion des setups annulés :
+ *     - Paramètre : `afficherSetupsAnnules: false` (défaut: false, ne pollue pas le chart).
+ * 
+ * ------------------------------------------------------------------------------
+ * 🏷️ PROFIL UOP & CHOIX PROPORTIONNEL DU TP OPTIMAL
+ * ------------------------------------------------------------------------------
+ * • [COND-UOP-01] Paramètres d'analyse fractale UOP :
+ *     - Paramètre : `zigzagDepth: 8` (Sensibilité ZigZag)
+ *     - Paramètre : `nbVaguesSuperposees: 4` (Nombre de vagues superposées pour le profil)
+ * 
+ * • [COND-UOP-02] Règle de Proportionnalité du TP selon le Score Shved :
+ *     - Règle :
+ *         • Si `scoreShved >= 70 points` ➔ Objectif étendu sélectionné : **TP2** (Grand mouvement).
+ *         • Si `scoreShved < 70 points`  ➔ Objectif sécurisé sélectionné : **TP1** (Mouvement standard).
+ *     - Paramètre : `seuilScoreGrandMouvement: 70` (seuil de bascule modifiable).
+ * 
+ * • [COND-UOP-03] Cible de secours si aucun palier UOP n'est disponible :
+ *     - Règle : Si le marché n'a pas de palier UOP vierge au-delà de l'entrée :
+ *         • Si score >= 70 ➔ TP secours fixé à 2.5 x Distance SL.
+ *         • Si score < 70  ➔ TP secours fixé à 1.5 x Distance SL.
+ * 
+ * ------------------------------------------------------------------------------
+ * 🏷️ SUIVI DU CYCLE DE VIE & ÉPURATION ACTIVE DU GRAPHIQUE
+ * ------------------------------------------------------------------------------
+ * • [COND-VISU-01] Masquage automatique des setups passés / terminés :
+ *     - Règle : Dès qu'une bougie future touche le TP (Gagnant) ou le SL (Perdant), le trade
+ *       est considéré comme "passé" et est 100% masqué de l'affichage du graphique !
+ *     - Paramètre : `masquerSetupsTermines: true` (défaut: true).
+ * 
+ * • [COND-VISU-02] Style visuel épuré & non-surchargé :
+ *     - Paramètre : `modeVisuel: 'EPURE'` (Point discret + micro-segments courts).
+ *     - `afficherPointDoji: true` (Petit point discret sur la mèche du Doji).
+ *     - `afficherSegmentSR: true` (Segment discontinu sur le niveau S/R Shved balayé).
+ *     - `afficherSegmentSL: true` (Micro-segment rouge discontinu court pour le SL).
+ *     - `afficherSegmentTP: true` (Micro-segment vert continu court pour le TP avec ratio R:R).
+ *     - `dureeSegmentsCibles: 3` (Longueur des micro-segments : 3 bougies seulement).
+ * 
+ * ------------------------------------------------------------------------------
+ * 🏷️ FUTUR PILIER : MONEY MANAGEMENT DYNAMIQUE (PRÊT À CONNECTER)
+ * ------------------------------------------------------------------------------
+ * • [COND-MM-01] Filtre de Ratio Risque/Rendement (R:R) Minimal :
+ *     - Règle : Rejeter tout setup confirmé si son `ratioRR < ratioRRMin`.
+ *     - Valeur prévue : `ratioRRMin: 2.5`
+ * 
+ * • [COND-MM-02] Calcul de position monétaire :
+ *     - Règle : `lot = (capitalCompte * risquePourcent / 100) / (distanceSL * valeurPoint)`.
+ *     - Valeurs prévues : `capitalCompte: 10000$`, `risquePourcent: 1.0%`
+ * 
+ * • [COND-MM-03] Déplacement automatique en Break-Even :
+ *     - Règle : Passer le Stop Loss au prix d'entrée dès que le cours a parcouru 50% de la distance au TP.
+ *     - Valeur prévue : `ratioDeclenchementBE: 0.50`
  * ==============================================================================
  */
 
