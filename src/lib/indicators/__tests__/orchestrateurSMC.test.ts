@@ -277,4 +277,64 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(res.estLimiteParPalier).toBe(false);
     expect(res.prixTPOptimal).toBeGreaterThanOrEqual(160);
   });
+
+  it('génère la liste ordonnée des paliers UOP analysés et affiche les éléments visuels épurés', () => {
+    const tpsCandidats: any[] = [
+      { id: 'tp1', type: 'achat', prixCible: 120, ordre: 1, amplitudePoints: 20, tauxMoyenChevauchement: 4.5 },
+      { id: 'tp2', type: 'achat', prixCible: 160, ordre: 2, amplitudePoints: 60, tauxMoyenChevauchement: 1.8 },
+    ];
+
+    // Calcul de la portée : palier 1 percé, palier 2 bloquant
+    const res = calculerPorteeDynamiqueUOP({
+      prixEntree: 100,
+      prixSL: 90,
+      direction: 'ACHAT',
+      carburantInitial: 160,
+      tpsCandidats,
+      hauteurMoyenne: 10,
+      peagePalierUOP: 100,
+      coutParATR: 50,
+    });
+
+    expect(res.paliersAnalyses).toHaveLength(2);
+    expect(res.paliersAnalyses[0].prix).toBe(120);
+    expect(res.paliersAnalyses[0].estPerce).toBe(true);
+    expect(res.paliersAnalyses[0].estBloquant).toBe(false);
+
+    expect(res.paliersAnalyses[1].prix).toBe(160);
+    expect(res.paliersAnalyses[1].estPerce).toBe(false);
+    expect(res.paliersAnalyses[1].estBloquant).toBe(true);
+
+    // Test sur un graphique avec un setup actif (non terminé)
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 15; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+    // Doji Achat
+    bougies.push(creerBougie(15000, 99.0, 99.0, 85.0, 86.0));
+    bougies.push(creerBougie(16000, 86.0, 99.0, 86.0, 98.8));
+    // 3 bougies de confirmation (sans toucher ni TP ni SL)
+    bougies.push(creerBougie(17000, 98.8, 102.0, 95.0, 101.0));
+    bougies.push(creerBougie(18000, 101.0, 103.0, 96.0, 102.0));
+    bougies.push(creerBougie(19000, 102.0, 104.0, 97.0, 103.0));
+
+    const resOrchestre = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      nbBougiesConfirmation: 3,
+      afficherPointsLiquidation: true,
+      afficherPaliersUOP: true,
+    });
+
+    // 1. Badge de liquidité captée présent
+    const badgeLiquidation = resOrchestre.primitives.labels?.find((l) => l.texte.includes('⚡'));
+    expect(badgeLiquidation).toBeDefined();
+    expect(badgeLiquidation?.texte).toContain('pts');
+
+    // 2. Micro-segments de SL et TP présents
+    const ligneSL = resOrchestre.primitives.lignes?.find((l) => l.label === 'SL');
+    const ligneTP = resOrchestre.primitives.lignes?.find((l) => l.label?.startsWith('TP'));
+    expect(ligneSL).toBeDefined();
+    expect(ligneTP).toBeDefined();
+  });
 });
+

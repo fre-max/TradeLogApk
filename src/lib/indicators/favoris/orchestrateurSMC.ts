@@ -407,10 +407,12 @@ export interface ParametresOrchestrateurSMC {
   // ─── 🎨 Visuels Épurés & Minimalistes (Ergonomie Pro) ───
   modeVisuel?: 'EPURE' | 'COMPLET';      // 'EPURE' (point discret + micro-segments) ou 'COMPLET' (défaut: 'EPURE')
   afficherPointDoji?: boolean;           // Point discret sur la mèche du Doji (défaut: true)
+  afficherPointsLiquidation?: boolean;   // Affiche le badge compact des points de liquidité captés sur le Doji (défaut: true)
   afficherSegmentSR?: boolean;           // Segment discontinu du S/R Shved balayé (défaut: true)
+  afficherPaliersUOP?: boolean;          // Micro-segments pointillés très fins pour chaque palier d'overlap UOP rencontré (défaut: true)
   afficherSegmentSL?: boolean;           // Micro-segment court pour le Stop Loss (défaut: true)
   afficherSegmentTP?: boolean;           // Micro-segment court pour le Take Profit (défaut: true)
-  dureeSegmentsCibles?: number;          // Nombre de bougies de longueur pour les segments SL/TP (défaut: 3)
+  dureeSegmentsCibles?: number;          // Nombre de bougies de longueur pour les segments SL/TP/Paliers (défaut: 3)
   bullColor?: string;                    // Couleur Achat / Support (défaut: '#00E676')
   bearColor?: string;                    // Couleur Vente / Résistance (défaut: '#F23645')
 }
@@ -424,6 +426,17 @@ export type StatutSetupSMC = 'CONFIRME' | 'ANNULE' | 'EN_COURS';
  * Issue finale du trade après la confirmation
  */
 export type ResultatTradeSMC = 'TP_TOUCHE' | 'SL_TOUCHE' | 'EN_COURS';
+
+/**
+ * Palier UOP analysé sur la route du trade
+ */
+export interface PalierUOPAnalyse {
+  prix: number;
+  ordre: number;
+  estPerce: boolean;
+  estBloquant: boolean;
+  tauxChevauchement: number;
+}
 
 /**
  * Représentation complète d'un Setup orchestré
@@ -460,6 +473,7 @@ export interface SetupOrchestreSMC {
   carburantRestant?: number;    // Carburant restant à l'ancrage du TP
   paliersTraverses?: number;    // Nombre de murs de liquidité UOP franchis
   estLimiteParPalier?: boolean; // Vrai si le TP a calé devant un palier infranchissable
+  paliersAnalyses?: PalierUOPAnalyse[]; // Liste ordonnée des paliers UOP rencontrés sur la route
 
   // Cycle de vie post-confirmation
   estTermine: boolean;          // Vrai si le TP ou le SL a été touché par la suite
@@ -569,6 +583,7 @@ export interface ResultatPorteeDynamique {
   palierBloquant?: TPOptimalUOP;
   estLimiteParPalier: boolean;
   distancePoints: number;
+  paliersAnalyses: PalierUOPAnalyse[];
 }
 
 /**
@@ -638,6 +653,7 @@ export function calculerPorteeDynamiqueUOP(options: {
       paliersTraverses: 0,
       estLimiteParPalier: false,
       distancePoints: Math.abs(prixSecours - prixEntree),
+      paliersAnalyses: [],
     };
   }
 
@@ -646,6 +662,7 @@ export function calculerPorteeDynamiqueUOP(options: {
     return Math.abs(a.prixCible - prixEntree) - Math.abs(b.prixCible - prixEntree);
   });
 
+  const paliersAnalyses: PalierUOPAnalyse[] = [];
   let budgetRestant = carburantInitial;
   let prixDernierPoint = prixEntree;
   let paliersTraverses = 0;
@@ -676,6 +693,15 @@ export function calculerPorteeDynamiqueUOP(options: {
       prixTPOptimal = estAchat ? prixDernierPoint + avanceeReelle : prixDernierPoint - avanceeReelle;
       palierBloquant = palier;
       estLimiteParPalier = true;
+
+      // Palier bloquant (mur infranchissable faute de carburant en chemin)
+      paliersAnalyses.push({
+        prix: palier.prixCible,
+        ordre: i + 1,
+        estPerce: false,
+        estBloquant: true,
+        tauxChevauchement: palier.tauxMoyenChevauchement,
+      });
       break;
     }
 
@@ -687,6 +713,15 @@ export function calculerPorteeDynamiqueUOP(options: {
       prixDernierPoint = palier.prixCible;
       prixTPOptimal = palier.prixCible;
       ordreTP = i + 1;
+
+      // Enregistrement du palier percé avec succès
+      paliersAnalyses.push({
+        prix: palier.prixCible,
+        ordre: i + 1,
+        estPerce: true,
+        estBloquant: false,
+        tauxChevauchement: palier.tauxMoyenChevauchement,
+      });
     } else {
       // 🛑 Le mur est trop épais ! On ancre le TP juste devant le palier ([COND-FRICTION-03])
       const margeSecurite = atrSecurise * margeSecuriteDevantPalier;
@@ -697,6 +732,15 @@ export function calculerPorteeDynamiqueUOP(options: {
       palierBloquant = palier;
       estLimiteParPalier = true;
       ordreTP = i + 1;
+
+      // Enregistrement du palier comme mur bloquant
+      paliersAnalyses.push({
+        prix: palier.prixCible,
+        ordre: i + 1,
+        estPerce: false,
+        estBloquant: true,
+        tauxChevauchement: palier.tauxMoyenChevauchement,
+      });
       break;
     }
   }
@@ -721,6 +765,7 @@ export function calculerPorteeDynamiqueUOP(options: {
     palierBloquant,
     estLimiteParPalier,
     distancePoints,
+    paliersAnalyses,
   };
 }
 
@@ -803,7 +848,9 @@ export function calculerOrchestrateurSMC(
   // 🎨 Options Visuelles Épurées
   const modeVisuel = parametres.modeVisuel || 'EPURE';
   const afficherPointDoji = parametres.afficherPointDoji !== false;
+  const afficherPointsLiquidation = parametres.afficherPointsLiquidation !== false; // Affiche le badge compact des points captés (défaut: true)
   const afficherSegmentSR = parametres.afficherSegmentSR !== false;
+  const afficherPaliersUOP = parametres.afficherPaliersUOP !== false; // Micro-segments pointillés des paliers UOP (défaut: true)
   const afficherSegmentSL = parametres.afficherSegmentSL !== false;
   const afficherSegmentTP = parametres.afficherSegmentTP !== false;
   const dureeSegmentsCibles = Math.max(1, Number(parametres.dureeSegmentsCibles ?? nbBougiesConfirmation));
@@ -943,6 +990,8 @@ export function calculerOrchestrateurSMC(
       ? (resultatUOP.tpOptimauxAchat || []).filter((tp) => tp.prixCible > prixEntree)
       : (resultatUOP.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
 
+    let paliersAnalyses: PalierUOPAnalyse[] = [];
+
     if (modeCalculTP === 'ENERGIE_FRICTION') {
       // 🚀 MODÈLE D'ÉNERGIE : Liquidité engrangée vs Résistance UOP
       // 1. Calcul de la profondeur de pénétration de la mèche de balayage
@@ -990,6 +1039,7 @@ export function calculerOrchestrateurSMC(
       carburantRestant = resPortee.carburantRestant;
       paliersTraverses = resPortee.paliersTraverses;
       estLimiteParPalier = resPortee.estLimiteParPalier;
+      paliersAnalyses = resPortee.paliersAnalyses;
       tpSelectionne = resPortee.palierBloquant ?? tpsCandidats[Math.min(tpsCandidats.length - 1, Math.max(0, ordreTP - 1))];
     } else {
       // 🏛️ MODÈLE STANDARD : Proportionnalité simple au Score Shved
@@ -1004,6 +1054,13 @@ export function calculerOrchestrateurSMC(
           ordreTP = 1;
         }
         prixTP = tpSelectionne.prixCible;
+        paliersAnalyses = tpsCandidats.slice(0, ordreTP).map((tp, idx) => ({
+          prix: tp.prixCible,
+          ordre: idx + 1,
+          estPerce: true,
+          estBloquant: false,
+          tauxChevauchement: tp.tauxMoyenChevauchement,
+        }));
       } else {
         const multiplicateurSecours = viserGrandMouvement ? 2.5 : 1.5;
         prixTP = estAchat
@@ -1094,6 +1151,7 @@ export function calculerOrchestrateurSMC(
       carburantRestant,
       paliersTraverses,
       estLimiteParPalier,
+      paliersAnalyses,
       estTermine,
       resultatTrade,
       indexSortieTrade,
@@ -1120,7 +1178,7 @@ export function calculerOrchestrateurSMC(
     const couleurPrincipale = estAchat ? bullColor : bearColor;
     const dateDoji = doji.temps;
 
-    // Largeur temporelle des micro-segments SL / TP (courte pour ne pas surcharger)
+    // Largeur temporelle des micro-segments SL / TP / Paliers UOP (courte pour ne pas surcharger)
     const indexBougieFinCible = Math.min(bougies.length - 1, indexDoji + dureeSegmentsCibles);
     const dateFinCible = bougies[indexBougieFinCible].time;
 
@@ -1137,6 +1195,19 @@ export function calculerOrchestrateurSMC(
         couleur: couleurPoint,
         rayon: 4,
         style: 'plein',
+      });
+    }
+
+    // 1️⃣.bis ⚡ Badge Compact de Liquidation : Quantité de points de liquidité captés
+    // Affiche par exemple "⚡ 450 pts" de manière très discrète au niveau du Doji
+    if (afficherPointsLiquidation && carburantInitial && carburantInitial > 0 && (statut === 'CONFIRME' || statut === 'EN_COURS')) {
+      labels.push({
+        id: `orchestre-liq-pts-${indexDoji}`,
+        prix: prixSL,
+        date: dateDoji,
+        texte: `⚡ ${carburantInitial} pts`,
+        couleur: couleurPrincipale,
+        position: estAchat ? 'below' : 'above',
       });
     }
 
@@ -1159,6 +1230,29 @@ export function calculerOrchestrateurSMC(
         style: 'dashed',
         label: `${estAchat ? 'Sup' : 'Res'} [${scoreShved} pts]`,
       });
+    }
+
+    // 2️⃣.bis 🌊 Paliers d'Overlap UOP rencontrés sur la route (Percés vs Murs)
+    // Micro-segments pointillés très fins pour chaque palier UOP analysé
+    if (afficherPaliersUOP && paliersAnalyses && paliersAnalyses.length > 0 && (statut === 'CONFIRME' || statut === 'EN_COURS')) {
+      for (const palier of paliersAnalyses) {
+        // Cyan discret pour palier percé, Ambre/Orange pour mur bloquant
+        const couleurPalier = palier.estBloquant ? '#FFA726' : '#29B6F6';
+        const labelTexte = palier.estBloquant
+          ? `Mur P${palier.ordre} 🛑`
+          : `P${palier.ordre} ✓`;
+
+        lignes.push({
+          id: `orchestre-palier-uop-${indexDoji}-${palier.ordre}`,
+          prix: palier.prix,
+          dateDebut: dateDoji,
+          dateFin: dateFinCible,
+          couleur: couleurPalier,
+          epaisseur: 1,
+          style: 'dotted',
+          label: labelTexte,
+        });
+      }
     }
 
     // 3️⃣ Micro-segments SL et TP pour les Setups Confirmés Actifs ✅
