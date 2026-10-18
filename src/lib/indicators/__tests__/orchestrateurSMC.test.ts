@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { Bougie } from '@/lib/chartDataHelper';
-import { calculerOrchestrateurSMC } from '../favoris/orchestrateurSMC';
+import {
+  calculerOrchestrateurSMC,
+  calculerCarburantLiquidation,
+  calculerPorteeDynamiqueUOP,
+} from '../favoris/orchestrateurSMC';
 
 function creerBougie(
   time: number,
@@ -208,5 +212,45 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
       masquerSetupsTermines: false,
     });
     expect(resAffiche.primitives.points?.length).toBeGreaterThan(0);
+  });
+
+  it('calcule correctement le carburant initial selon les retests et la pénétration de la mèche', () => {
+    // 3 retests (300 pts) et mèche profonde (> 1.2 ATR -> x1.6) -> 480 pts
+    const res = calculerCarburantLiquidation({
+      nombreRetests: 3,
+      profondeurMeche: 15,
+      hauteurMoyenne: 10,
+    });
+    expect(res.pointsRetests).toBe(300);
+    expect(res.multiplicateurMeche).toBe(1.6);
+    expect(res.carburantTotal).toBe(480);
+  });
+
+  it('arrête l\'avancée du TP Optimal devant un palier UOP infranchissable par manque de carburant', () => {
+    // Entrée à 100, SL à 90 (distance 10)
+    // 2 Paliers : Palier 1 à 120 (+20), Palier 2 à 160 (+60)
+    const tpsCandidats: any[] = [
+      { id: 'tp1', type: 'achat', prixCible: 120, ordre: 1, amplitudePoints: 20, tauxMoyenChevauchement: 5 },
+      { id: 'tp2', type: 'achat', prixCible: 160, ordre: 2, amplitudePoints: 60, tauxMoyenChevauchement: 2 },
+    ];
+
+    // Carburant insuffisant pour percer le 2ème palier (ex: 150 pts de carburant)
+    const res = calculerPorteeDynamiqueUOP({
+      prixEntree: 100,
+      prixSL: 90,
+      direction: 'ACHAT',
+      carburantInitial: 160,
+      tpsCandidats,
+      hauteurMoyenne: 10,
+      peagePalierUOP: 100,
+      coutParATR: 50,
+    });
+
+    // Le palier 1 (120) est percé, mais pas le palier 2 (160)
+    expect(res.paliersTraverses).toBe(1);
+    expect(res.estLimiteParPalier).toBe(true);
+    expect(res.palierBloquant?.prixCible).toBe(160);
+    expect(res.prixTPOptimal).toBeLessThan(160);
+    expect(res.prixTPOptimal).toBeGreaterThanOrEqual(120);
   });
 });

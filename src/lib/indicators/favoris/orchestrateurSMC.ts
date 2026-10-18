@@ -391,9 +391,12 @@ export interface ParametresOrchestrateurSMC {
   masquerSetupsTermines?: boolean;      // Masquer du graphique les setups dont le TP ou SL a déjà été touché (défaut: true)
 
   // ─── 🎯 Cibles UOP & Proportionnalité ───
-  seuilScoreGrandMouvement?: number;     // Score Shved pour viser TP2 au lieu de TP1 (défaut: 70)
+  modeCalculTP?: 'STANDARD_SHVED' | 'ENERGIE_FRICTION'; // Méthode de calcul du TP optimal (défaut: 'ENERGIE_FRICTION')
+  seuilScoreGrandMouvement?: number;     // Score Shved pour viser TP2 au lieu de TP1 en mode STANDARD (défaut: 70)
   zigzagDepth?: number;                  // Sensibilité ZigZag UOP (défaut: 8)
   nbVaguesSuperposees?: number;          // Nombre de vagues superposées UOP (défaut: 4)
+  peagePalierUOP?: number;               // Forfait en points de carburant pour percer un palier UOP (défaut: 100)
+  coutParATR?: number;                   // Consommation en points de carburant par unité d'ATR parcourue (défaut: 50)
 
   // ─── 🎨 Visuels Épurés & Minimalistes (Ergonomie Pro) ───
   modeVisuel?: 'EPURE' | 'COMPLET';      // 'EPURE' (point discret + micro-segments) ou 'COMPLET' (défaut: 'EPURE')
@@ -446,6 +449,12 @@ export interface SetupOrchestreSMC {
   ratioRR?: number;             // Ratio Risque/Rendement (R:R)
   tpSelectionne?: TPOptimalUOP;
 
+  // 🚀 Données du Moteur d'Énergie UOP (Carburant vs Friction)
+  carburantInitial?: number;    // Réservoir de carburant capté lors de la liquidation
+  carburantRestant?: number;    // Carburant restant à l'ancrage du TP
+  paliersTraverses?: number;    // Nombre de murs de liquidité UOP franchis
+  estLimiteParPalier?: boolean; // Vrai si le TP a calé devant un palier infranchissable
+
   // Cycle de vie post-confirmation
   estTermine: boolean;          // Vrai si le TP ou le SL a été touché par la suite
   resultatTrade: ResultatTradeSMC; // Issue du trade ('TP_TOUCHE', 'SL_TOUCHE' ou 'EN_COURS')
@@ -468,6 +477,225 @@ export interface ResultatOrchestrateurSMC {
     totalVentesConfirmees: number;
     ratioMoyenRR: number;
     tauxReussiteTP: number;      // % de trades gagnants parmi les terminés
+  };
+}
+
+// ─── ⚡ MOTEUR D'ÉNERGIE & PORTÉE DYNAMIQUE UOP (CARBURANT VS FRICTION) ─────────
+
+export interface ResultatCarburantLiquidation {
+  carburantTotal: number;
+  pointsRetests: number;
+  multiplicateurMeche: number;
+}
+
+/**
+ * Calcule le réservoir de carburant initial (liquidité engrangée lors de la liquidation)
+ * en combinant la liquidité des retests passés du S/R et la profondeur de la mèche de balayage.
+ * 
+ * Formule :
+ * Carburant = PointsRetests * MultiplicateurMeche
+ * 
+ * Exemple :
+ * const res = calculerCarburantLiquidation({
+ *   nombreRetests: 3,
+ *   profondeurMeche: 0.0025,
+ *   hauteurMoyenne: 0.0018
+ * });
+ * console.log('Carburant engrangé :', res.carburantTotal); // 450 pts
+ */
+export function calculerCarburantLiquidation(options: {
+  nombreRetests: number;
+  profondeurMeche: number;
+  hauteurMoyenne: number;
+}): ResultatCarburantLiquidation {
+  const { nombreRetests, profondeurMeche, hauteurMoyenne } = options;
+
+  // 1️⃣ Barème progressif des retests S/R ([COND-ENERGIE-01])
+  let pointsRetests = 100;
+  if (nombreRetests <= 0) {
+    pointsRetests = 80;
+  } else if (nombreRetests === 1) {
+    pointsRetests = 100;
+  } else if (nombreRetests === 2) {
+    pointsRetests = 200;
+  } else if (nombreRetests === 3) {
+    pointsRetests = 300;
+  } else {
+    pointsRetests = 400; // Plafond maximal pour 4 retests ou plus
+  }
+
+  // 2️⃣ Multiplicateur de pénétration de la mèche ([COND-ENERGIE-02])
+  const atrSecurise = Math.max(0.00001, hauteurMoyenne);
+  const ratioMecheAtr = Math.max(0, profondeurMeche) / atrSecurise;
+
+  let multiplicateurMeche = 1.0;
+  if (ratioMecheAtr > 1.2) {
+    multiplicateurMeche = 1.6; // Pénétration profonde (chasse aux stops massive)
+  } else if (ratioMecheAtr >= 0.5) {
+    multiplicateurMeche = 1.3; // Pénétration classique
+  } else {
+    multiplicateurMeche = 1.0; // Effleurement superficiel
+  }
+
+  // 3️⃣ Carburant Total Initial ([COND-ENERGIE-03])
+  const carburantTotal = Math.round(pointsRetests * multiplicateurMeche);
+
+  return {
+    carburantTotal,
+    pointsRetests,
+    multiplicateurMeche,
+  };
+}
+
+export interface ResultatPorteeDynamique {
+  prixTPOptimal: number;
+  ordreTP: number;
+  carburantInitial: number;
+  carburantRestant: number;
+  paliersTraverses: number;
+  palierBloquant?: TPOptimalUOP;
+  estLimiteParPalier: boolean;
+  distancePoints: number;
+}
+
+/**
+ * Simule le parcours du prix à travers le profil UOP et détermine le TP optimal
+ * en fonction du budget de carburant restant et des obstacles (paliers non-mitigés).
+ * 
+ * Exemple :
+ * const portee = calculerPorteeDynamiqueUOP({
+ *   prixEntree: 1.1000,
+ *   prixSL: 1.0970,
+ *   direction: 'ACHAT',
+ *   carburantInitial: 450,
+ *   tpsCandidats: tps,
+ *   hauteurMoyenne: 0.0020
+ * });
+ * console.log('TP Optimal calculé :', portee.prixTPOptimal);
+ */
+export function calculerPorteeDynamiqueUOP(options: {
+  prixEntree: number;
+  prixSL: number;
+  direction: 'ACHAT' | 'VENTE';
+  carburantInitial: number;
+  tpsCandidats: TPOptimalUOP[];
+  hauteurMoyenne: number;
+  peagePalierUOP?: number;
+  coutParATR?: number;
+}): ResultatPorteeDynamique {
+  const {
+    prixEntree,
+    prixSL,
+    direction,
+    carburantInitial,
+    tpsCandidats,
+    hauteurMoyenne,
+    peagePalierUOP = 100,
+    coutParATR = 50,
+  } = options;
+
+  const estAchat = direction === 'ACHAT';
+  const distanceSL = Math.max(0.0001, Math.abs(prixEntree - prixSL));
+  const atrSecurise = Math.max(0.0001, hauteurMoyenne);
+
+  // Cas de secours : si aucun palier UOP n'a été trouvé
+  if (!tpsCandidats || tpsCandidats.length === 0) {
+    const facteurSecours = Math.max(1.5, Number((carburantInitial / 150).toFixed(2)));
+    const prixSecours = estAchat
+      ? prixEntree + distanceSL * facteurSecours
+      : prixEntree - distanceSL * facteurSecours;
+
+    return {
+      prixTPOptimal: Number(prixSecours.toFixed(5)),
+      ordreTP: 1,
+      carburantInitial,
+      carburantRestant: 0,
+      paliersTraverses: 0,
+      estLimiteParPalier: false,
+      distancePoints: Math.abs(prixSecours - prixEntree),
+    };
+  }
+
+  // Trier les paliers par distance croissante depuis le prix d'entrée
+  const paliersTries = [...tpsCandidats].sort((a, b) => {
+    return Math.abs(a.prixCible - prixEntree) - Math.abs(b.prixCible - prixEntree);
+  });
+
+  let budgetRestant = carburantInitial;
+  let prixDernierPoint = prixEntree;
+  let paliersTraverses = 0;
+  let prixTPOptimal = paliersTries[0].prixCible;
+  let ordreTP = 1;
+  let palierBloquant: TPOptimalUOP | undefined;
+  let estLimiteParPalier = false;
+
+  for (let i = 0; i < paliersTries.length; i++) {
+    const palier = paliersTries[i];
+    const distancePalier = Math.abs(palier.prixCible - prixDernierPoint);
+
+    // 1️⃣ Consommation continue selon la distance franchie (en unités ATR) ([COND-FRICTION-01])
+    let multiplicateurFriction = 1.0;
+    if (palier.tauxMoyenChevauchement >= 4.0) {
+      multiplicateurFriction = 0.5; // Autoroute fluide (fort overlap)
+    } else if (palier.tauxMoyenChevauchement < 2.0) {
+      multiplicateurFriction = 2.0; // Zone vierge (faible overlap)
+    }
+
+    const consommationDistance = (distancePalier / atrSecurise) * coutParATR * multiplicateurFriction;
+    budgetRestant -= consommationDistance;
+
+    // Si le budget est épuisé avant même d'atteindre le palier
+    if (budgetRestant <= 0) {
+      const proportionRestante = Math.max(0.1, (budgetRestant + consommationDistance) / consommationDistance);
+      const avanceeReelle = distancePalier * proportionRestante;
+      prixTPOptimal = estAchat ? prixDernierPoint + avanceeReelle : prixDernierPoint - avanceeReelle;
+      palierBloquant = palier;
+      estLimiteParPalier = true;
+      break;
+    }
+
+    // 2️⃣ Péage de franchissement du palier non-mitigé ([COND-FRICTION-02])
+    if (budgetRestant >= peagePalierUOP) {
+      // ✅ Palier percé !
+      budgetRestant -= peagePalierUOP;
+      paliersTraverses++;
+      prixDernierPoint = palier.prixCible;
+      prixTPOptimal = palier.prixCible;
+      ordreTP = i + 1;
+    } else {
+      // 🛑 Le mur est trop épais ! On ancre le TP juste devant le palier ([COND-FRICTION-03])
+      const margeSecurite = atrSecurise * 0.15;
+      prixTPOptimal = estAchat
+        ? Math.max(prixEntree, palier.prixCible - margeSecurite)
+        : Math.min(prixEntree, palier.prixCible + margeSecurite);
+
+      palierBloquant = palier;
+      estLimiteParPalier = true;
+      ordreTP = i + 1;
+      break;
+    }
+  }
+
+  // 3️⃣ Si tous les paliers sont percés et qu'il reste encore du carburant
+  if (!estLimiteParPalier && budgetRestant > 0 && paliersTraverses === paliersTries.length) {
+    const palierMax = paliersTries[paliersTries.length - 1];
+    const distanceSupplementaire = (budgetRestant / coutParATR) * atrSecurise * 0.5;
+    prixTPOptimal = estAchat
+      ? palierMax.prixCible + distanceSupplementaire
+      : palierMax.prixCible - distanceSupplementaire;
+  }
+
+  const distancePoints = Math.abs(prixTPOptimal - prixEntree);
+
+  return {
+    prixTPOptimal: Number(prixTPOptimal.toFixed(5)),
+    ordreTP,
+    carburantInitial,
+    carburantRestant: Math.max(0, Math.round(budgetRestant)),
+    paliersTraverses,
+    palierBloquant,
+    estLimiteParPalier,
+    distancePoints,
   };
 }
 
@@ -526,6 +754,9 @@ export function calculerOrchestrateurSMC(
   const nbBougiesConfirmation = Math.max(1, Number(parametres.nbBougiesConfirmation ?? 3));
   const afficherSetupsAnnules = Boolean(parametres.afficherSetupsAnnules);
   const masquerSetupsTermines = parametres.masquerSetupsTermines !== false; // Actif par défaut !
+  const modeCalculTP = parametres.modeCalculTP || 'ENERGIE_FRICTION'; // Moteur d'énergie actif par défaut !
+  const peagePalierUOP = Math.max(10, Number(parametres.peagePalierUOP ?? 100));
+  const coutParATR = Math.max(5, Number(parametres.coutParATR ?? 50));
   const seuilScoreGrandMouvement = Math.max(10, Number(parametres.seuilScoreGrandMouvement ?? 70));
   const scoreMinimumShved = Math.max(0, Number(parametres.scoreMinimumShved ?? 0));
   const bullColor = parametres.bullColor || '#00E676';
@@ -660,35 +891,78 @@ export function calculerOrchestrateurSMC(
       totalEnCours++;
     }
 
-    // C. CIBLE TP OPTIMAL & PROPORTIONNALITÉ DU SCORE SHVED (BLOC UOP)
+    // C. CIBLE TP OPTIMAL & MOTEUR D'ÉNERGIE UOP (CARBURANT VS FRICTION)
     let tpSelectionne: TPOptimalUOP | undefined;
     let prixTP: number | undefined;
     let ordreTP: number = 1;
+    let carburantInitial: number | undefined;
+    let carburantRestant: number | undefined;
+    let paliersTraverses: number | undefined;
+    let estLimiteParPalier: boolean | undefined;
 
     // Sélection des TP candidats selon la direction
     const tpsCandidats = estAchat
       ? (resultatUOP.tpOptimauxAchat || []).filter((tp) => tp.prixCible > prixEntree)
       : (resultatUOP.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
 
-    // Règle de proportionnalité : si le score Shved est massif (ex: >= 70 pts), on prend un TP2
-    const viserGrandMouvement = scoreShved >= seuilScoreGrandMouvement;
-
-    if (tpsCandidats.length > 0) {
-      if (viserGrandMouvement && tpsCandidats.length >= 2) {
-        tpSelectionne = tpsCandidats[1];
-        ordreTP = 2;
-      } else {
-        tpSelectionne = tpsCandidats[0];
-        ordreTP = 1;
+    if (modeCalculTP === 'ENERGIE_FRICTION') {
+      // 🚀 MODÈLE D'ÉNERGIE : Liquidité engrangée vs Résistance UOP
+      // 1. Calcul de la profondeur de pénétration de la mèche de balayage
+      let profondeurMeche = distanceSL;
+      if (meilleureZone) {
+        profondeurMeche = estAchat
+          ? Math.max(0, meilleureZone.zone.prixMedian - prixSL)
+          : Math.max(0, prixSL - meilleureZone.zone.prixMedian);
       }
-      prixTP = tpSelectionne.prixCible;
+
+      // 2. Calcul du réservoir de carburant initial ([COND-ENERGIE-01 à 03])
+      const nombreRetests = meilleureZone?.retestsAvant ?? 0;
+      const resCarburant = calculerCarburantLiquidation({
+        nombreRetests,
+        profondeurMeche,
+        hauteurMoyenne: doji.moyenneHauteur,
+      });
+
+      carburantInitial = resCarburant.carburantTotal;
+
+      // 3. Simulation du trajet et franchissement des paliers UOP ([COND-FRICTION-01 à 03])
+      const resPortee = calculerPorteeDynamiqueUOP({
+        prixEntree,
+        prixSL,
+        direction: doji.type,
+        carburantInitial,
+        tpsCandidats,
+        hauteurMoyenne: doji.moyenneHauteur,
+        peagePalierUOP,
+        coutParATR,
+      });
+
+      prixTP = resPortee.prixTPOptimal;
+      ordreTP = resPortee.ordreTP;
+      carburantRestant = resPortee.carburantRestant;
+      paliersTraverses = resPortee.paliersTraverses;
+      estLimiteParPalier = resPortee.estLimiteParPalier;
+      tpSelectionne = resPortee.palierBloquant ?? tpsCandidats[Math.min(tpsCandidats.length - 1, Math.max(0, ordreTP - 1))];
     } else {
-      // Si aucun palier UOP n'a été trouvé, on applique un TP proportionnel au score
-      const multiplicateurSecours = viserGrandMouvement ? 2.5 : 1.5;
-      prixTP = estAchat
-        ? prixEntree + distanceSL * multiplicateurSecours
-        : prixEntree - distanceSL * multiplicateurSecours;
-      ordreTP = viserGrandMouvement ? 2 : 1;
+      // 🏛️ MODÈLE STANDARD : Proportionnalité simple au Score Shved
+      const viserGrandMouvement = scoreShved >= seuilScoreGrandMouvement;
+
+      if (tpsCandidats.length > 0) {
+        if (viserGrandMouvement && tpsCandidats.length >= 2) {
+          tpSelectionne = tpsCandidats[1];
+          ordreTP = 2;
+        } else {
+          tpSelectionne = tpsCandidats[0];
+          ordreTP = 1;
+        }
+        prixTP = tpSelectionne.prixCible;
+      } else {
+        const multiplicateurSecours = viserGrandMouvement ? 2.5 : 1.5;
+        prixTP = estAchat
+          ? prixEntree + distanceSL * multiplicateurSecours
+          : prixEntree - distanceSL * multiplicateurSecours;
+        ordreTP = viserGrandMouvement ? 2 : 1;
+      }
     }
 
     const distanceTP = Math.abs(prixTP - prixEntree);
@@ -768,6 +1042,10 @@ export function calculerOrchestrateurSMC(
       distanceTP,
       ratioRR,
       tpSelectionne,
+      carburantInitial,
+      carburantRestant,
+      paliersTraverses,
+      estLimiteParPalier,
       estTermine,
       resultatTrade,
       indexSortieTrade,
@@ -861,7 +1139,7 @@ export function calculerOrchestrateurSMC(
           couleur: '#00E676',
           epaisseur: 1.5,
           style: 'solid',
-          label: `TP (${ratioRR}R)`,
+          label: `TP (${ratioRR}R${carburantInitial ? ` | ${carburantInitial}pts` : ''})`,
         });
       }
 
@@ -871,7 +1149,7 @@ export function calculerOrchestrateurSMC(
           id: `orchestre-lbl-${indexDoji}`,
           prix: prixSL,
           date: dateDoji,
-          texte: `✅ SMC ${estAchat ? 'ACHAT' : 'VENTE'} (Score: ${scoreShved} | R:R ${ratioRR})`,
+          texte: `✅ SMC ${estAchat ? 'ACHAT' : 'VENTE'} (Score: ${scoreShved} | R:R ${ratioRR}${carburantInitial ? ` | Carb: ${carburantInitial}pts` : ''})`,
           couleur: couleurPrincipale,
           position: estAchat ? 'below' : 'above',
         });
