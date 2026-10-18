@@ -35,7 +35,8 @@ import {
  * 4️⃣ 📋 REGISTRE EXHAUSTIF DES CONDITIONS & PARAMÈTRES RÉGLABLES
  *     -> Pour tout ajustement futur, il suffit de désigner le code [COND-XX] !
  * 5️⃣ RENDU VISUEL ÉPURÉ & RÈGLE DE MASQUAGE DES SETUPS PASSÉS
- * 6️⃣ INTÉGRATION FUTURE DU MONEY MANAGEMENT DYNAMIQUE
+ * 6️⃣ 🚀 NOUVEAU MODÈLE AVANCÉ : MOTEUR D'ÉNERGIE (CARBURANT INITIAL VS FRICTION OVERLAP UOP)
+ * 7️⃣ INTÉGRATION FUTURE DU MONEY MANAGEMENT DYNAMIQUE
  * ==============================================================================
  * 
  * 
@@ -235,11 +236,11 @@ import {
  *     - Paramètre : `afficherSetupsAnnules: false` (défaut: false, ne pollue pas le chart).
  * 
  * ------------------------------------------------------------------------------
- * 🏷️ PROFIL UOP & CHOIX PROPORTIONNEL DU TP OPTIMAL
+ * 🏷️ PROFIL UOP & CHOIX PROPORTIONNEL DU TP OPTIMAL (MODÈLE STANDARD ACTUEL)
  * ------------------------------------------------------------------------------
  * • [COND-UOP-01] Paramètres d'analyse fractale UOP :
- *     - Paramètre : `zigzagDepth: 8` (Sensibilité ZigZag)
- *     - Paramètre : `nbVaguesSuperposees: 4` (Nombre de vagues superposées pour le profil)
+ *     - Sensibilité ZigZag : `zigzagDepth: 8` (amplitude des swings détectés)
+ *     - Vagues superposées : `nbVaguesSuperposees: 4` (profondeur d'historique de chevauchement)
  * 
  * • [COND-UOP-02] Règle de Proportionnalité du TP selon le Score Shved :
  *     - Règle :
@@ -251,6 +252,83 @@ import {
  *     - Règle : Si le marché n'a pas de palier UOP vierge au-delà de l'entrée :
  *         • Si score >= 70 ➔ TP secours fixé à 2.5 x Distance SL.
  *         • Si score < 70  ➔ TP secours fixé à 1.5 x Distance SL.
+ * 
+ * ------------------------------------------------------------------------------
+ * 🏷️ 🚀 NOUVEAU MODÈLE AVANCÉ : MOTEUR D'ÉNERGIE (CARBURANT VS FRICTION OVERLAP UOP)
+ * ------------------------------------------------------------------------------
+ * Ce modèle révolutionnaire modélise la capacité réelle d'accélération du marché :
+ * Le Doji fournit un RÉSERVOIR DE CARBURANT, et la route vers le haut (UOP) oppose
+ * une RÉSISTANCE DE FRICTION. Le TP Optimal est le point exact où le carburant s'épuise
+ * ou cale devant un mur d'absorption infranchissable.
+ * 
+ * 🔹 1. CALCUL DU CARBURANT INITIAL (ÉNERGIE CINÉTIQUE ENGRANGÉE)
+ * • [COND-ENERGIE-01] Carburant de Base selon les Retests S/R (L_retests) :
+ *     - Règle : Chaque rebond antérieur sur la zone S/R attire des traders particuliers
+ *       qui entassent leurs Stop Loss juste derrière la ligne.
+ *     - Barème progressif de points de carburant :
+ *         • 1 retest antérieur  ➔ 100 points de carburant
+ *         • 2 retests antérieurs ➔ 200 points de carburant
+ *         • 3 retests antérieurs ➔ 300 points de carburant
+ *         • 4 retests ou plus   ➔ 400 points de carburant (plafond maximal)
+ * 
+ * • [COND-ENERGIE-02] Multiplicateur de Mèche de Balayage (M_meche) :
+ *     - Règle : Mesure la profondeur de pénétration de la mèche de liquidation au-delà
+ *       du niveau S/R, comparée à la volatilité moyenne (ATR) :
+ *         • Pénétration superficielle (< 0.5 x ATR) ➔ Multiplicateur = 1.0x (Balayage de surface)
+ *         • Pénétration normale (0.5 à 1.2 x ATR)   ➔ Multiplicateur = 1.3x (Balayage classique)
+ *         • Pénétration profonde (> 1.2 x ATR)      ➔ Multiplicateur = 1.6x (Chasse aux stops massive)
+ * 
+ * • [COND-ENERGIE-03] Formule du Budget Total Initial (B0) :
+ *     - Formule mathématique : `B0 = L_retests * M_meche`
+ *     - Exemple chiffré : Support testé 3 fois (300 pts) avec mèche profonde (x 1.5)
+ *       ➔ Budget Total Initial B0 = 300 * 1.5 = 450 points de carburant !
+ * 
+ * 🔹 2. CONSOMMATION & FRICTION DE LA ROUTE (OVERLAP UOP)
+ * • [COND-FRICTION-01] Grille de Consommation Continue selon le Taux d'Overlap :
+ *     - Zone à Fort Overlap (>= 75%) :
+ *         • Règle : Marché déjà retravaillé et négocié des deux côtés (Autoroute fluide).
+ *         • Consommation : `0.5 point de carburant par pip` parcouru.
+ *     - Zone à Overlap Moyen (35% à 74%) :
+ *         • Règle : Terrain standard avec résistance modérée.
+ *         • Consommation : `1.0 point de carburant par pip` parcouru.
+ *     - Zone à Faible Overlap (< 35%) :
+ *         • Règle : Terrain vierge ou déséquilibre d'ordres (FVG / Imbalance).
+ *         • Consommation : `2.0 points de carburant par pip` parcouru.
+ * 
+ * • [COND-FRICTION-02] Forfait Péage de Traversée d'un Palier Non-Mitigé UOP :
+ *     - Règle : Chaque palier vierge non-mitigé UOP rencontré sur la trajectoire représente
+ *       un ancien sommet ou creux institutionnel qui oppose un mur d'ordres contraires.
+ *     - Forfait d'absorption exigé : `100 points de carburant` par palier.
+ *     - Condition de percée :
+ *         • Si Budget Restant >= 100 pts ➔ Le mur est PERCÉ ! On déduit 100 pts du budget et la hausse continue.
+ *         • Si Budget Restant < 100 pts  ➔ Le mur est INFRANCHISSABLE ! Le marché calera net ici.
+ * 
+ * • [COND-FRICTION-03] Ancrage Mathématique du Take Profit Optimal :
+ *     - Si un palier UOP ne peut pas être percé : Le TP Optimal est placé immédiatement
+ *       DEVANT ce palier (ex: 2 à 3 pips avant) pour garantir l'exécution sans subir le rejet.
+ *     - Si tous les paliers sont franchis avec succès : Le TP Optimal continue d'avancer
+ *       jusqu'au niveau exact où le budget de carburant tombe à zéro.
+ * 
+ * 🔹 3. EXEMPLE COMPLET SIMULÉ PAS-À-PAS :
+ *     - Signal d'Achat : Entrée à 1.1000, Stop Loss à 1.0970 (Risque = 30 pips).
+ *     - Carburant initial : 3 tests S/R + mèche profonde ➔ B0 = 450 points.
+ *     - Étape 1 : Le prix monte de 20 pips dans une zone à fort overlap (20 pips * 0.5 = 10 pts).
+ *       ➔ Reste 440 pts.
+ *     - Étape 2 : Rencontre du Palier UOP 1 (exige 100 pts). 440 >= 100 ➔ PALIER PERCÉ !
+ *       ➔ Reste 340 pts.
+ *     - Étape 3 : Le prix monte de 30 pips supplémentaires en overlap moyen (30 * 1.0 = 30 pts).
+ *       ➔ Reste 310 pts.
+ *     - Étape 4 : Rencontre du Palier UOP 2 (exige 100 pts). 310 >= 100 ➔ PALIER PERCÉ !
+ *       ➔ Reste 210 pts.
+ *     - Étape 5 : Le prix monte de 40 pips en faible overlap (40 * 2.0 = 80 pts).
+ *       ➔ Reste 130 pts.
+ *     - Étape 6 : Rencontre du Palier UOP 3 (exige 100 pts). 130 >= 100 ➔ PALIER PERCÉ !
+ *       ➔ Reste 30 pts.
+ *     - Étape 7 : Le prix monte de 10 pips en faible overlap (10 * 2.0 = 20 pts).
+ *       ➔ Reste 10 pts.
+ *     - Étape 8 : Rencontre du Palier UOP 4 (exige 100 pts). Reste 10 pts < 100 pts ➔ ÉCHEC DE PERCÉE !
+ *     - 🏁 RÉSULTAT FINAL : Le TP Optimal est fixé à 1.1102 (juste devant le Palier 4), soit +102 pips.
+ *       ➔ Ratio R:R exceptionnel et validé par la physique du carnet : 102 pips / 30 pips = 3.40R !
  * 
  * ------------------------------------------------------------------------------
  * 🏷️ SUIVI DU CYCLE DE VIE & ÉPURATION ACTIVE DU GRAPHIQUE
