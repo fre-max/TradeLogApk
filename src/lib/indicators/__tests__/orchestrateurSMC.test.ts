@@ -163,4 +163,50 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(res?.donnees).toBeDefined();
     expect(res?.primitives).toBeDefined();
   });
+
+  it('masque automatiquement du graphique un setup passé dont le TP a été touché', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 15; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Doji Achat (SL à 85.0, Entrée à 98.8, distance SL ~ 13.8 -> TP vers ~119.5 ou 133.3)
+    bougies.push(creerBougie(15000, 99.0, 99.0, 85.0, 86.0));
+    bougies.push(creerBougie(16000, 86.0, 99.0, 86.0, 98.8));
+
+    // 3 bougies de confirmation (Low > 85.0)
+    bougies.push(creerBougie(17000, 98.8, 102.0, 95.0, 101.0));
+    bougies.push(creerBougie(18000, 101.0, 105.0, 97.0, 104.0));
+    bougies.push(creerBougie(19000, 104.0, 108.0, 99.0, 107.0));
+
+    // Bougie 20 : Vague haussière puissante qui touche le Take Profit (High 150.0)
+    bougies.push(creerBougie(20000, 107.0, 150.0, 105.0, 145.0));
+
+    // 1. Avec masquerSetupsTermines = true (par défaut) : le setup est masqué du graphique !
+    const resMasque = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      nbBougiesConfirmation: 3,
+      masquerSetupsTermines: true,
+    });
+
+    const setupAchat = resMasque.setups.find((s) => s.type === 'ACHAT');
+    expect(setupAchat).toBeDefined();
+    expect(setupAchat?.statut).toBe('CONFIRME');
+    expect(setupAchat?.estTermine).toBe(true);
+    expect(setupAchat?.resultatTrade).toBe('TP_TOUCHE');
+    expect(resMasque.statistiques.totalTPTouches).toBe(1);
+    expect(resMasque.statistiques.totalActifs).toBe(0);
+
+    // Le graphique ne doit contenir AUCUN point ni ligne pour ce setup passé
+    expect(resMasque.primitives.points?.length).toBe(0);
+    expect(resMasque.primitives.lignes?.length).toBe(0);
+
+    // 2. Avec masquerSetupsTermines = false : le setup passé s'affiche pour historique
+    const resAffiche = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      nbBougiesConfirmation: 3,
+      masquerSetupsTermines: false,
+    });
+    expect(resAffiche.primitives.points?.length).toBeGreaterThan(0);
+  });
 });

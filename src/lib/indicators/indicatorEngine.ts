@@ -5084,6 +5084,7 @@ return {
     parametres: {
       nbBougiesConfirmation: 3,
       afficherSetupsAnnules: false,
+      masquerSetupsTermines: true,
       seuilScoreGrandMouvement: 70,
       modeVisuel: 'EPURE',
       afficherPointDoji: true,
@@ -5180,6 +5181,14 @@ return {
         type: 'boolean',
         valeurParDefaut: false,
         groupe: 'Validation du Range (Confirmation)',
+      },
+      {
+        cle: 'masquerSetupsTermines',
+        label: 'Masquer Setups Passés (TP ou SL Atteint)',
+        description: 'Épuration active : retire du graphique les setups dont l\'objectif TP ou le Stop Loss a déjà été touché par la suite',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Visuels Épurés (Zéro Surcharge)',
       },
       {
         cle: 'seuilScoreGrandMouvement',

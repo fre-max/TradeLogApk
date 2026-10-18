@@ -41,10 +41,10 @@ import {
  *        • Score Modéré (< 70 pts) : on vise le TP1 conservateur.
  *    - Calcule le Ratio Risque/Rendement (R:R).
  * 
- * 4️⃣ AFFICHAGE ÉPURÉ CHIRURGICAL (Zéro Surcharge Graphique)
- *    - Un point discret (VisualPoint) placé sous/sur le Doji pour repérer l'extrême.
- *    - Un segment en tirets discontinus fins pour le Support / Résistance balayé.
- *    - Des micro-segments horizontaux courts pour le SL (rouge) et le TP (vert).
+ * 4️⃣ SUIVI ACTIF DU CYCLE DE VIE & ÉPURATION DU GRAPHIQUE
+ *    - Identifie quand un setup confirmé a touché son TP ou son SL dans les bougies suivantes.
+ *    - 🧹 Masquage automatique des setups passés/terminés (TP ou SL touché) pour ne garder
+ *        sur le graphique UNIQUEMENT les setups en cours ou actifs récents !
  * ==============================================================================
  */
 
@@ -72,6 +72,9 @@ export interface ParametresOrchestrateurSMC {
   nbBougiesConfirmation?: number;        // Nombre de bougies de confirmation du range (défaut: 3)
   afficherSetupsAnnules?: boolean;       // Afficher les signaux invalidés avec un badge discret (défaut: false)
 
+  // ─── 🧹 Épuration Active : Masquage des Setups Passés (TP ou SL Touché) ───
+  masquerSetupsTermines?: boolean;      // Masquer du graphique les setups dont le TP ou SL a déjà été touché (défaut: true)
+
   // ─── 🎯 Cibles UOP & Proportionnalité ───
   seuilScoreGrandMouvement?: number;     // Score Shved pour viser TP2 au lieu de TP1 (défaut: 70)
   zigzagDepth?: number;                  // Sensibilité ZigZag UOP (défaut: 8)
@@ -92,6 +95,11 @@ export interface ParametresOrchestrateurSMC {
  * Statut d'un setup de trading SMC
  */
 export type StatutSetupSMC = 'CONFIRME' | 'ANNULE' | 'EN_COURS';
+
+/**
+ * Issue finale du trade après la confirmation
+ */
+export type ResultatTradeSMC = 'TP_TOUCHE' | 'SL_TOUCHE' | 'EN_COURS';
 
 /**
  * Représentation complète d'un Setup orchestré
@@ -122,6 +130,12 @@ export interface SetupOrchestreSMC {
   distanceTP?: number;          // Distance en points entre entrée et TP
   ratioRR?: number;             // Ratio Risque/Rendement (R:R)
   tpSelectionne?: TPOptimalUOP;
+
+  // Cycle de vie post-confirmation
+  estTermine: boolean;          // Vrai si le TP ou le SL a été touché par la suite
+  resultatTrade: ResultatTradeSMC; // Issue du trade ('TP_TOUCHE', 'SL_TOUCHE' ou 'EN_COURS')
+  indexSortieTrade?: number;    // Index de la bougie où le TP ou le SL a été atteint
+  tempsSortieTrade?: number | string; // Date de sortie du trade
 }
 
 export interface ResultatOrchestrateurSMC {
@@ -130,11 +144,15 @@ export interface ResultatOrchestrateurSMC {
   statistiques: {
     totalDetectes: number;
     totalConfirmes: number;
+    totalActifs: number;         // Confirmés dont ni le TP ni le SL n'ont encore été touchés
+    totalTPTouches: number;      // Setups ayant atteint le TP optimal
+    totalSLTouches: number;      // Setups ayant touché le SL
     totalAnnules: number;
     totalEnCours: number;
     totalAchatsConfirmes: number;
     totalVentesConfirmees: number;
     ratioMoyenRR: number;
+    tauxReussiteTP: number;      // % de trades gagnants parmi les terminés
   };
 }
 
@@ -146,15 +164,18 @@ export interface ResultatOrchestrateurSMC {
  * 2. Récupère le score de liquidité Shved de la zone balayée.
  * 3. Valide le Range de confirmation des 3 bougies consécutives.
  * 4. Calcule le TP Optimal UOP proportionnel au score de liquidité.
- * 5. Génère les visuels épurés pour le graphique (point discret + micro-segments courts).
+ * 5. Suit l'état du trade dans les bougies suivantes (TP ou SL touché).
+ * 6. Épure le graphique : masque automatiquement les setups déjà passés (TP ou SL touché)
+ *    pour ne garder que les trades vivants et actifs !
  * 
  * Exemple d'utilisation :
  * ```typescript
  * const res = calculerOrchestrateurSMC(bougies, {
  *   modeVisuel: 'EPURE',
+ *   masquerSetupsTermines: true,
  *   nbBougiesConfirmation: 3
  * });
- * console.log('Setups confirmés :', res.statistiques.totalConfirmes);
+ * console.log('Setups actifs en cours :', res.statistiques.totalActifs);
  * ```
  */
 export function calculerOrchestrateurSMC(
@@ -172,11 +193,15 @@ export function calculerOrchestrateurSMC(
     statistiques: {
       totalDetectes: 0,
       totalConfirmes: 0,
+      totalActifs: 0,
+      totalTPTouches: 0,
+      totalSLTouches: 0,
       totalAnnules: 0,
       totalEnCours: 0,
       totalAchatsConfirmes: 0,
       totalVentesConfirmees: 0,
       ratioMoyenRR: 0,
+      tauxReussiteTP: 0,
     },
   };
 
@@ -185,6 +210,7 @@ export function calculerOrchestrateurSMC(
   // 1️⃣ Options et Réglages
   const nbBougiesConfirmation = Math.max(1, Number(parametres.nbBougiesConfirmation ?? 3));
   const afficherSetupsAnnules = Boolean(parametres.afficherSetupsAnnules);
+  const masquerSetupsTermines = parametres.masquerSetupsTermines !== false; // Actif par défaut !
   const seuilScoreGrandMouvement = Math.max(10, Number(parametres.seuilScoreGrandMouvement ?? 70));
   const scoreMinimumShved = Math.max(0, Number(parametres.scoreMinimumShved ?? 0));
   const bullColor = parametres.bullColor || '#00E676';
@@ -235,6 +261,9 @@ export function calculerOrchestrateurSMC(
   const setups: SetupOrchestreSMC[] = [];
   let totalDetectes = 0;
   let totalConfirmes = 0;
+  let totalActifs = 0;
+  let totalTPTouches = 0;
+  let totalSLTouches = 0;
   let totalAnnules = 0;
   let totalEnCours = 0;
   let totalAchatsConfirmes = 0;
@@ -305,7 +334,7 @@ export function calculerOrchestrateurSMC(
       statut = 'EN_COURS';
     }
 
-    // Comptabilisation des statistiques
+    // Comptabilisation initiale des statuts
     if (statut === 'CONFIRME') {
       totalConfirmes++;
       if (estAchat) totalAchatsConfirmes++;
@@ -354,7 +383,58 @@ export function calculerOrchestrateurSMC(
       sommeRRConfirmes += ratioRR;
     }
 
-    // Création de l'objet Setup complet
+    // D. SUIVI POST-CONFIRMATION : VÉRIFICATION DU TP OU DU SL TOUCHÉ DANS LE FUTUR
+    let estTermine = false;
+    let resultatTrade: ResultatTradeSMC = 'EN_COURS';
+    let indexSortieTrade: number | undefined;
+    let tempsSortieTrade: number | string | undefined;
+
+    if (statut === 'CONFIRME') {
+      // On commence à scruter les bougies après la fin de la confirmation
+      const indexDebutSuivi = indexDoji + nbBougiesConfirmation + 1;
+
+      for (let k = indexDebutSuivi; k < bougies.length; k++) {
+        const b = bougies[k];
+
+        if (estAchat) {
+          // En Achat : TP touché si High >= prixTP
+          const tpTouche = prixTP !== undefined && b.high >= prixTP;
+          // SL touché si Low <= prixSL
+          const slTouche = b.low <= prixSL;
+
+          if (tpTouche || slTouche) {
+            estTermine = true;
+            resultatTrade = tpTouche ? 'TP_TOUCHE' : 'SL_TOUCHE';
+            indexSortieTrade = k;
+            tempsSortieTrade = b.time;
+            break;
+          }
+        } else {
+          // En Vente : TP touché si Low <= prixTP
+          const tpTouche = prixTP !== undefined && b.low <= prixTP;
+          // SL touché si High >= prixSL
+          const slTouche = b.high >= prixSL;
+
+          if (tpTouche || slTouche) {
+            estTermine = true;
+            resultatTrade = tpTouche ? 'TP_TOUCHE' : 'SL_TOUCHE';
+            indexSortieTrade = k;
+            tempsSortieTrade = b.time;
+            break;
+          }
+        }
+      }
+
+      // Comptabilisation des issues de trades
+      if (estTermine) {
+        if (resultatTrade === 'TP_TOUCHE') totalTPTouches++;
+        else if (resultatTrade === 'SL_TOUCHE') totalSLTouches++;
+      } else {
+        totalActifs++;
+      }
+    }
+
+    // Création de l'objet Setup complet (conservé en télémétrie pour les statistiques)
     const setup: SetupOrchestreSMC = {
       id: `smc-setup-${indexDoji}`,
       type: doji.type,
@@ -373,11 +453,29 @@ export function calculerOrchestrateurSMC(
       distanceTP,
       ratioRR,
       tpSelectionne,
+      estTermine,
+      resultatTrade,
+      indexSortieTrade,
+      tempsSortieTrade,
     };
 
     setups.push(setup);
 
-    // ─── 🎨 Génération des Primitives Visuelles Épurées ───
+    // ────────────────────────────────────────────────────────────────────────────
+    // 🧹 ÉPURATION ACTIVE : FILTRAGE DES SETUPS PASSÉS (TP OU SL DÉJÀ TOUCHÉ)
+    // ────────────────────────────────────────────────────────────────────────────
+    // Si l'option masquerSetupsTermines est activée, on ignore totalement le tracé
+    // de ce setup pour garder le graphique vierge de tout historique périmé !
+    if (masquerSetupsTermines && estTermine) {
+      continue;
+    }
+
+    // Si le setup a été annulé par le range de 3 bougies et qu'on ne souhaite pas l'afficher
+    if (statut === 'ANNULE' && !afficherSetupsAnnules) {
+      continue;
+    }
+
+    // ─── 🎨 Génération des Primitives Visuelles pour les Setups Actifs ───
     const couleurPrincipale = estAchat ? bullColor : bearColor;
     const dateDoji = doji.temps;
 
@@ -391,17 +489,14 @@ export function calculerOrchestrateurSMC(
         ? couleurPrincipale
         : (statut === 'EN_COURS' ? '#FFD600' : '#8E8E93');
 
-      // Le point est tracé pour les confirmés, ou en cours, ou annulés si l'option est activée
-      if (statut === 'CONFIRME' || statut === 'EN_COURS' || afficherSetupsAnnules) {
-        points.push({
-          id: `orchestre-pt-${indexDoji}`,
-          prix: prixSL,
-          date: dateDoji,
-          couleur: couleurPoint,
-          rayon: 4,
-          style: 'plein',
-        });
-      }
+      points.push({
+        id: `orchestre-pt-${indexDoji}`,
+        prix: prixSL,
+        date: dateDoji,
+        couleur: couleurPoint,
+        rayon: 4,
+        style: 'plein',
+      });
     }
 
     // 2️⃣ Segment Discontinu du Support ou Résistance Shved balayé
@@ -425,7 +520,7 @@ export function calculerOrchestrateurSMC(
       });
     }
 
-    // 3️⃣ Micro-segments SL et TP pour les Setups Confirmés ✅
+    // 3️⃣ Micro-segments SL et TP pour les Setups Confirmés Actifs ✅
     if (statut === 'CONFIRME') {
       // Micro-segment court du Stop Loss (Rouge en tirets discrets)
       if (afficherSegmentSL) {
@@ -468,7 +563,7 @@ export function calculerOrchestrateurSMC(
       }
     }
 
-    // 4️⃣ Si Setup Annulé et affichage demandé en mode complet
+    // 4️⃣ Si Setup Annulé et affichage explicitement demandé en mode complet
     else if (statut === 'ANNULE' && afficherSetupsAnnules && modeVisuel === 'COMPLET') {
       labels.push({
         id: `orchestre-lbl-annule-${indexDoji}`,
@@ -485,17 +580,26 @@ export function calculerOrchestrateurSMC(
     ? Number((sommeRRConfirmes / totalConfirmes).toFixed(2))
     : 0;
 
+  const totalTermines = totalTPTouches + totalSLTouches;
+  const tauxReussiteTP = totalTermines > 0
+    ? Number(((totalTPTouches / totalTermines) * 100).toFixed(1))
+    : 0;
+
   return {
     setups,
     primitives: { labels, lignes, boites, points },
     statistiques: {
       totalDetectes,
       totalConfirmes,
+      totalActifs,
+      totalTPTouches,
+      totalSLTouches,
       totalAnnules,
       totalEnCours,
       totalAchatsConfirmes,
       totalVentesConfirmees,
       ratioMoyenRR,
+      tauxReussiteTP,
     },
   };
 }
