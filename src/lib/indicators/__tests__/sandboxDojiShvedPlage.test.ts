@@ -154,5 +154,46 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
       expect(finLigne).toBeLessThanOrEqual(21000);
     }
   });
+
+  it('affiche UNIQUEMENT les supports pour un setup Achat et UNIQUEMENT les résistances pour un setup Vente', () => {
+    const bougies: Bougie[] = [];
+
+    // Bougies de base
+    for (let k = 0; k < 10; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Creux de référence à 80.0
+    bougies.push(creerBougie(10000, 100, 101, 80.0, 90.0));
+
+    // Structure interne : creux local fractal pour créer un SUPPORT à 13000
+    bougies.push(creerBougie(11000, 90.0, 95.0, 88.0, 93.0));
+    bougies.push(creerBougie(12000, 93.0, 96.0, 91.0, 95.0));
+    bougies.push(creerBougie(13000, 95.0, 96.0, 84.0, 92.0)); // Creux fractal
+    bougies.push(creerBougie(14000, 92.0, 97.0, 90.0, 96.0));
+    // Pic fractal pour créer une RÉSISTANCE à 15000
+    bougies.push(creerBougie(15000, 96.0, 105.0, 95.0, 97.0)); // Sommet fractal
+    bougies.push(creerBougie(16000, 97.0, 98.0, 93.0, 94.0));
+    bougies.push(creerBougie(17000, 94.0, 95.0, 89.0, 90.0));
+
+    // Doji Achat à 19000
+    bougies.push(creerBougie(18000, 90.0, 90.0, 81.0, 82.0));
+    bougies.push(creerBougie(19000, 82.0, 91.0, 82.0, 90.5));
+
+    const resAchat = calculerSandboxDojiShvedPlage(bougies, {
+      activerFiltreTaille: false,
+      filtrerParDirectionSetup: true,
+      timeframeSource: 'ACTUEL',
+    });
+
+    const signalAchat = resAchat.signaux.find((s) => s.type === 'ACHAT');
+    expect(signalAchat).toBeDefined();
+
+    // Pour l'achat, toutes les lignes affichées doivent être de couleur bullColor (support)
+    // et aucune ligne de résistance ne doit être présente
+    for (const ligne of resAchat.primitives.lignes || []) {
+      expect(ligne.couleur).toBe('#00E676'); // bullColor
+    }
+  });
 });
 

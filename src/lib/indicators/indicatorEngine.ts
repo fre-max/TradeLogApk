@@ -37,7 +37,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.25.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.26.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4830,6 +4830,7 @@ return {
       afficherNiveauxCasses: true,
       maxReculRecherche: 100,
       exigerDebutEtFinDansPlage: true,
+      filtrerParDirectionSetup: true,
       styleLignesSupport: 'dashed',
       styleLignesResistance: 'dashed',
       epaisseurLignes: 2,
@@ -4881,6 +4882,14 @@ return {
         max: 5,
         step: 1,
         groupe: 'Style des Supports & Résistances',
+      },
+      {
+        cle: 'filtrerParDirectionSetup',
+        label: 'Filtrer par Sens (Support Achat / Résist. Vente)',
+        description: 'Si activé, affiche uniquement les Supports pour un setup Achat et uniquement les Résistances pour un setup Vente',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Plage Temporelle Ciblée',
       },
       {
         cle: 'exigerDebutEtFinDansPlage',

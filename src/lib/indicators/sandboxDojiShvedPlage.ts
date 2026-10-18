@@ -17,8 +17,10 @@ import {
  *      - Il identifie le point le plus bas du Doji (min(Low1, Low2)).
  *      - Il recule dans le temps pour trouver la bougie précédente qui avait créé un plus bas encore plus extrême.
  *      - Cela définit une "Plage Temporelle Ciblée" entre cette bougie antérieure et notre Doji.
- *  3️⃣ Épuration totale : N'affiche QUE les supports et résistances Shved dont le début
- *      ET la fin sont compris à l'intérieur de cette plage temporelle [Extrême Précédent -> Doji] !
+ *  3️⃣ Épuration totale :
+ *      - Pour un setup ACHAT (Spring) : N'affiche UNIQUEMENT que les SUPPORTS !
+ *      - Pour un setup VENTE (UTAD)   : N'affiche UNIQUEMENT que les RÉSISTANCES !
+ *      - Ne garde que les niveaux dont le début ET la fin sont compris dans la plage [Extrême Précédent -> Doji].
  *      - Permet d'épurer complètement le graphique et d'ignorer tout le bruit environnant.
  *  4️⃣ Permet de choisir librement le style des segments : CONTINUS ('solid') ou DISCONTINUS ('dashed').
  *
@@ -54,6 +56,8 @@ export interface ParametresSandboxDojiShvedPlage {
   maxReculRecherche?: number;
   // Épuration totale : exige que le début ET la fin du S/R soient STRICTEMENT compris dans la plage (défaut: true)
   exigerDebutEtFinDansPlage?: boolean;
+  // Filtrage strict par direction : Supports uniquement pour Achat, Résistances uniquement pour Vente (défaut: true)
+  filtrerParDirectionSetup?: boolean;
 
   // ─── 🎨 Visuels & Segments Continues / Discontinues ───
   // Style des lignes de Support ('dashed' = discontinu, 'solid' = continu)
@@ -284,6 +288,7 @@ export function calculerSandboxDojiShvedPlage(
 
   const maxReculRecherche = Math.max(10, Number(parametres.maxReculRecherche ?? 100));
   const exigerDebutEtFinDansPlage = parametres.exigerDebutEtFinDansPlage !== false;
+  const filtrerParDirectionSetup = parametres.filtrerParDirectionSetup !== false;
   const styleLignesSupport = parametres.styleLignesSupport || 'dashed';
   const styleLignesResistance = parametres.styleLignesResistance || 'dashed';
   const epaisseurLignes = Number(parametres.epaisseurLignes ?? 2);
@@ -369,13 +374,23 @@ export function calculerSandboxDojiShvedPlage(
     // 5️⃣ Sélection et filtrage des supports/résistances Shved dans cette plage
     const zonesDansPlage: ZoneShved[] = [];
 
+    // 🎯 RÈGLE DE DIRECTION (Demandée par l'utilisateur) :
+    // - Setup ACHAT (Spring) -> On affiche UNIQUEMENT les SUPPORTS
+    // - Setup VENTE (UTAD)   -> On affiche UNIQUEMENT les RÉSISTANCES
+    const typeZoneCible = estAchat ? 'SUPPORT' : 'RESISTANCE';
+
     for (const zone of toutesLesZonesShved) {
+      // Filtrage par sens : ignore les résistances pour un achat, et les supports pour une vente
+      if (filtrerParDirectionSetup && zone.type !== typeZoneCible) {
+        continue;
+      }
+
       if (zone.estCassee && parametres.afficherNiveauxCasses === false) continue;
 
       const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
       const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
 
-      // 🧹 RÈGLE D'ÉPURATION TOTALE (Demandée par l'utilisateur) :
+      // 🧹 RÈGLE D'ÉPURATION TOTALE :
       // Affichage des S/R Shved UNIQUEMENT si le début ET la fin du S/R sont compris
       // à l'intérieur de la plage temporelle [tempsDebutPlage, tempsFinPlage].
       const debutComprisDansPlage = dateDebutZoneMs >= tempsDebutPlageMs && dateDebutZoneMs <= tempsFinPlageMs;
@@ -416,8 +431,9 @@ export function calculerSandboxDojiShvedPlage(
 
     // 6️⃣ Étiquette épurée du Doji sur le graphique
     const couleurSignal = estAchat ? bullColor : bearColor;
+    const typeSRAffiche = estAchat ? 'Sup' : 'Res';
     const labelTexte = zonesDansPlage.length > 0
-      ? `${texteLabel}\n(${zonesDansPlage.length} S/R)`
+      ? `${texteLabel}\n(${zonesDansPlage.length} ${typeSRAffiche})`
       : texteLabel;
 
     labels.push({
