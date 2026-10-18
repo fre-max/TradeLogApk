@@ -19,19 +19,13 @@ import { calculerLiquidationReintegration } from './liquidationReintegration';
  *     `validerSetupNiveauShved(params): boolean` (vers la ligne 190).
  *     Ouvrez cette fonction pour activer/désactiver/ajuster n'importe quelle règle !
  *
- * 🎯 POUR QU'UN SETUP COMPLET (COMBO) SOIT VALIDÉ, IL DOIT RESPECTER 5 CONDITIONS :
+ * 🎯 POUR QU'UN SETUP COMPLET (COMBO) SOIT VALIDÉ, IL DOIT RESPECTER LES CONDITIONS :
  *
  * ─── CONDITION 1 : Formation du Doji Personnalisé (2 bougies consécutives) ────
  *  • Gérée par `calculerLiquidationReintegration()` dans `liquidationReintegration.ts`.
- *  • Bougie 1 (Liquidation) : Bougie impulsive dans le sens du piège (baissière
- *    pour Spring, haussière pour UTAD). Sa taille totale (haut - bas) doit être
- *    au moins `multiplicateurBougie1` fois la moyenne récente (défaut: 1.75x).
- *  • Bougie 2 (Réintégration) : Bougie en sens inverse. Son corps réel (|open - close|)
- *    doit être au moins `multiplicateurCorps2` fois la moyenne récente (défaut: 1.75x).
+ *  • Bougie 1 (Liquidation) : Bougie impulsive dans le sens du piège.
+ *  • Bougie 2 (Réintégration) : Bougie impulsive de retournement en sens inverse.
  *  • Clôture de la Bougie 2 : Doit revenir au niveau d'ouverture de la Bougie 1.
- *    - Si elle dépasse (sens favorable) : marge max `toleranceDepassement` (défaut: 25%).
- *    - Si elle reste en deçà (déficit)  : marge max `toleranceDeficit` (défaut: 5%).
- *  👉 Pour assouplir : baisser `multiplicateurBougie1` et `multiplicateurCorps2` à 1.2
  *
  * ─── CONDITION 2 : Balayage du Niveau Shved par la Mèche (dans validerSetupNiveauShved) ───
  *  • Pour un Achat (Spring) : La mèche basse extrême (min(Low1, Low2)) doit plonger
@@ -40,20 +34,22 @@ import { calculerLiquidationReintegration } from './liquidationReintegration';
  *    au-dessus de la résistance Shved, ET la clôture de la Bougie 2 doit revenir en dessous.
  *
  * ─── CONDITION 3 : Intégrité du Niveau Shved (dans validerSetupNiveauShved) ────
- *  • Le niveau de liquidité devait être intact à l'arrivée du Doji. Si une bougie
- *    antérieure a déjà clôturé au-delà du niveau, celui-ci était déjà consommé.
+ *  • Le niveau de liquidité devait être intact à l'arrivée du Doji (non cassé avant).
  *
  * ─── CONDITION 4 : Fraîcheur & Âge Récent du Niveau (dans validerSetupNiveauShved) ──
- *  • Le niveau ne doit pas avoir été créé il y a plus de `lookbackMaxBarsAvantPattern`
- *    bougies avant le Doji (défaut: 100 bougies, 0 = illimité).
- *  • L'historique global analysé est borné à `maxLookbackBars` (défaut: 200 bougies).
- *  👉 Pour autoriser des niveaux plus anciens : augmenter `lookbackMaxBarsAvantPattern: 300`
+ *  • Le niveau ne doit pas avoir été créé trop loin dans le passé (`lookbackMaxBarsAvantPattern`).
  *
  * ─── CONDITION 5 : Retests Minima du Niveau AVANT le Doji (dans validerSetupNiveauShved) ─
  *  • Le niveau doit avoir été retesté au moins `minRetests` fois (défaut: 1).
- *  • Les retests sont comptés STRICTEMENT avant la Bougie 1 (sans biais futuriste).
- *  👉 Pour accepter les zones neuves sans rebond : mettre `minRetests: 0`
- *  👉 Pour n'avoir que les zones blindées        : mettre `minRetests: 3`
+ *
+ * ─── CONDITION 6 : Proportionnalité (Liquidation vs Montagne Shved) ─────────────
+ *  • Activé si `activerFiltreProportionnalite === true` (défaut: false).
+ *  • La taille de la liquidation (Bougie 1) doit être comprise entre `ratioProportionMin` (défaut: 15%)
+ *    et `ratioProportionMax` (défaut: 150%) du rejet moyen de la montagne Shved.
+ *
+ * ─── CONDITION 7 : Score de Liquidité Minimal Requis (dans validerSetupNiveauShved) ──
+ *  • Activé si `scoreMinimum > 0` (défaut: 0).
+ *  • Élimine les signaux dont le score de liquidité calculé sur 100 points est inférieur au seuil.
  * ==============================================================================
  */
 
@@ -77,11 +73,21 @@ export interface ParametresSweepNiveauShvedLePlusFort {
   lookbackMaxBarsAvantPattern?: number;
   afficherFaibles?: boolean;       // Inclure les fractals faibles (défaut: false)
 
-  // ─── 🎯 Règles de liquidité ───
+  // ─── 🎯 Règles de liquidité & Score Institutionnel (0 à 100) ───
   // Nombre minimum de retests du niveau AVANT le pattern (défaut: 1 → jamais de niveau vierge)
   minRetests?: number;
   // N'afficher le pattern que s'il a balayé au moins un niveau Shved (défaut: true)
   exigerNiveauBalaye?: boolean;
+  // Score de liquidité minimum requis (0 à 100, défaut: 0 = aucun filtrage par score)
+  scoreMinimum?: number;
+
+  // ─── ⚖️ Filtre de Proportionnalité (Liquidation vs Montagne Shved) ───
+  // Active le filtre de proportionnalité entre la bougie 1 et la hauteur du rejet Shved (défaut: false)
+  activerFiltreProportionnalite?: boolean;
+  // Ratio minimum requis (Taille Bougie 1 / Rejet Moyen) (défaut: 0.15 = au moins 15% de la montagne)
+  ratioProportionMin?: number;
+  // Ratio maximum autorisé (Taille Bougie 1 / Rejet Moyen) (défaut: 1.50 = max 150% de la montagne)
+  ratioProportionMax?: number;
 
   // ─── 🕯️ Paramètres du pattern (Doji personnalisé Liq/Reint) ───
   toleranceDeficit?: number;
@@ -95,7 +101,9 @@ export interface ParametresSweepNiveauShvedLePlusFort {
   activerFiltreTendance?: boolean;
   trendBars?: number;
 
-  // ─── 🎨 Vision d'Ensemble & Affichage ───
+  // ─── 🎨 Vision d'Ensemble & Affichage Épuré ───
+  // Affiche le badge compact du score de liquidité sur le signal (ex: [85] ou [95 ⭐]) (défaut: true)
+  afficherBadgeScore?: boolean;
   // Afficher tous les niveaux S/R Shved calculés en arrière-plan sur le graphique (défaut: true)
   afficherNiveauxShved?: boolean;
   // Afficher aussi les niveaux Shved déjà cassés en traits pointillés discrets (défaut: true)
@@ -112,13 +120,21 @@ export interface ParametresSweepNiveauShvedLePlusFort {
 }
 
 /**
- * Un niveau Shved balayé par la mèche du pattern
+ * Un niveau Shved balayé par la mèche du pattern avec son évaluation de liquidité SMC
  */
 export interface NiveauShvedBalaye {
   zone: ZoneShved;
   prix: number;                   // Prix du niveau (ligne médiane Shved)
   retestsAvantPattern: number;    // Retests comptés strictement AVANT la bougie 1 du pattern
   profondeur: number;             // Distance entre le niveau et l'extrême de la mèche
+  scoreLiquidite: number;         // Score global de liquidité calculé sur 100 points
+  pointsRetests: number;          // Points attribués aux retests (max 35)
+  pointsRejets: number;           // Points attribués à la hauteur moyenne des rejets Shved (max 30)
+  pointsProportionnalite: number; // Points attribués à la proportionnalité liquidation / montagne (max 25)
+  pointsIntegrite: number;        // Points bonus si le niveau est resté intact (max 10)
+  rejetMoyen: number;             // Hauteur moyenne des rejets en prix
+  ratioProportion: number;        // Ratio Taille Bougie 1 / Rejet Moyen
+  qualite: 'FAIBLE' | 'MOYENNE' | 'FORTE' | 'INSTITUTIONNELLE';
 }
 
 /**
@@ -135,6 +151,10 @@ export interface SignalSweepNiveauShvedLePlusFort {
   niveauxBalayes: NiveauShvedBalaye[];   // Tous les niveaux balayés, du plus fort au moins fort
   nombreNiveauxBalayes: number;
   liquiditeTotale: number;        // Somme des retests de tous les niveaux balayés
+  scoreLiquidite: number;         // Score de liquidité du niveau retenu (0 à 100)
+  qualiteLiquidite?: 'FAIBLE' | 'MOYENNE' | 'FORTE' | 'INSTITUTIONNELLE';
+  ratioProportion?: number;       // Ratio proportionnel de la liquidation
+  rejetMoyen?: number;            // Hauteur moyenne de la montagne Shved balayée
 }
 
 export interface ResultatSweepNiveauShvedLePlusFort {
@@ -191,6 +211,128 @@ function estNiveauEncoreDisponible(zone: ZoneShved, tempsBougie1: number): boole
   return convertirEnSecondes(zone.dateFin) >= tempsBougie1;
 }
 
+// ─── 🧮 ÉVALUATION DU SCORE DE LIQUIDITÉ & PROPORTIONNALITÉ SMC ───────────────
+
+/**
+ * Résultat détaillé de l'évaluation de liquidité d'un niveau Shved
+ */
+export interface EvaluationLiquiditeShved {
+  scoreTotal: number;           // Note de liquidité sur 100 points
+  pointsRetests: number;        // Points accordés aux retests (max 35)
+  pointsRejets: number;         // Points accordés à la hauteur moyenne des rejets (max 30)
+  pointsProportionnalite: number; // Points accordés à la proportionnalité liquidation / montagne (max 25)
+  pointsIntegrite: number;      // Points bonus si le niveau est resté intact (max 10)
+  rejetMoyen: number;           // Hauteur moyenne des rejets en prix
+  ratioRejetMoyen: number;      // Rejet moyen exprimé en nombre de bougies
+  ratioProportion: number;      // Ratio Taille Bougie 1 / Rejet Moyen
+  qualite: 'FAIBLE' | 'MOYENNE' | 'FORTE' | 'INSTITUTIONNELLE';
+}
+
+/**
+ * Calcule le Score de Liquidité Institutionnelle (0 à 100) pour un niveau Shved,
+ * en combinant le nombre de retests, la hauteur moyenne des rejets ("montagnes")
+ * et la proportionnalité avec la bougie de liquidation.
+ *
+ * Exemple :
+ * const eval = evaluerScoreLiquiditeShved({
+ *   zone, bougies, indexBougie1: 50, tempsBougie1: 1727200000,
+ *   tailleLiquidation: 12.5, tailleMoyenneBougie: 2.0
+ * });
+ * console.log(`Score: ${eval.scoreTotal}/100 [${eval.qualite}]`);
+ */
+export function evaluerScoreLiquiditeShved(params: {
+  zone: ZoneShved;
+  bougies: Bougie[];
+  indexBougie1: number;
+  tempsBougie1: number;
+  tailleLiquidation: number;
+  tailleMoyenneBougie: number;
+}): EvaluationLiquiditeShved {
+  const {
+    zone,
+    bougies,
+    indexBougie1,
+    tempsBougie1,
+    tailleLiquidation,
+    tailleMoyenneBougie,
+  } = params;
+
+  // 1️⃣ Retests survenus strictement avant le Doji
+  const retestsAvant = compterRetestsAvant(zone, tempsBougie1);
+
+  // Points Retests (max 35 pts)
+  let pointsRetests = 15;
+  if (retestsAvant >= 3) {
+    pointsRetests = 35;
+  } else if (retestsAvant === 2) {
+    pointsRetests = 25;
+  }
+
+  // 2️⃣ Amplitude moyenne des rejets (la "hauteur des montagnes")
+  const indexDepart = Math.max(0, zone.indexOrigine);
+  let sommetMax = zone.prixMedian;
+  let creuxMin = zone.prixMedian;
+
+  const finIndex = Math.min(bougies.length - 1, indexBougie1);
+  for (let j = indexDepart; j < finIndex; j++) {
+    if (bougies[j].high > sommetMax) sommetMax = bougies[j].high;
+    if (bougies[j].low < creuxMin) creuxMin = bougies[j].low;
+  }
+
+  const hauteurTotaleRejet = zone.type === 'SUPPORT'
+    ? (sommetMax - zone.prixMedian)
+    : (zone.prixMedian - creuxMin);
+
+  // Rejet moyen par test (divisé par le nombre de tests pour obtenir la moyenne des vagues)
+  const rejetMoyen = Math.max(0.0001, hauteurTotaleRejet / Math.max(1, retestsAvant));
+  const ratioRejetMoyen = rejetMoyen / Math.max(0.0001, tailleMoyenneBougie);
+
+  // Points Hauteur Montagne (max 30 pts)
+  let pointsRejets = 10;
+  if (ratioRejetMoyen >= 2.5) {
+    pointsRejets = 30;
+  } else if (ratioRejetMoyen >= 1.0) {
+    pointsRejets = 20;
+  }
+
+  // 3️⃣ Proportionnalité (Taille Bougie 1 Liquidation vs Rejet Moyen de la Montagne)
+  // Ratio = TailleLiquidation / RejetMoyen
+  const ratioProportion = tailleLiquidation / Math.max(0.0001, rejetMoyen);
+
+  // Points Proportionnalité (max 25 pts)
+  // Sweet spot : la liquidation fait entre 20% et 80% de la hauteur de la montagne
+  let pointsProportionnalite = 5;
+  if (ratioProportion >= 0.20 && ratioProportion <= 0.80) {
+    pointsProportionnalite = 25;
+  } else if (ratioProportion >= 0.10 && ratioProportion <= 1.20) {
+    pointsProportionnalite = 15;
+  }
+
+  // 4️⃣ Bonus d'intégrité (max 10 pts)
+  const estDisponible = estNiveauEncoreDisponible(zone, tempsBougie1);
+  const pointsIntegrite = estDisponible && !zone.estCassee ? 10 : 0;
+
+  // 5️⃣ Score total sur 100
+  const scoreTotal = Math.min(100, Math.round(pointsRetests + pointsRejets + pointsProportionnalite + pointsIntegrite));
+
+  let qualite: 'FAIBLE' | 'MOYENNE' | 'FORTE' | 'INSTITUTIONNELLE' = 'FAIBLE';
+  if (scoreTotal >= 80) qualite = 'INSTITUTIONNELLE';
+  else if (scoreTotal >= 60) qualite = 'FORTE';
+  else if (scoreTotal >= 40) qualite = 'MOYENNE';
+
+  return {
+    scoreTotal,
+    pointsRetests,
+    pointsRejets,
+    pointsProportionnalite,
+    pointsIntegrite,
+    rejetMoyen,
+    ratioRejetMoyen,
+    ratioProportion,
+    qualite,
+  };
+}
+
 // ─── 🎯 FONCTION CENTRALE DE VALIDATION DU SETUP (POUR LE DÉVELOPPEUR) ──────
 
 /**
@@ -205,6 +347,12 @@ export interface ParametresValidationSetupShved {
   minRetests?: number;
   maxBarsAge?: number;
   pasTempsSec?: number;
+  scoreLiquidite?: number;
+  scoreMinimum?: number;
+  ratioProportion?: number;
+  activerFiltreProportionnalite?: boolean;
+  ratioProportionMin?: number;
+  ratioProportionMax?: number;
 }
 
 /**
@@ -219,21 +367,6 @@ export interface ParametresValidationSetupShved {
  *  • Pour assouplir une règle : modifiez les opérateurs (<, >) ou les valeurs de comparaison.
  *  • Pour ajouter une nouvelle règle : ajoutez votre `if (!maCondition) return false;`.
  *
- * Exemple d'utilisation :
- * ```typescript
- * const estValide = validerSetupNiveauShved({
- *   estAchat: true,
- *   prixExtreme: 1.0820,
- *   clotureBougie2: 1.0850,
- *   tempsBougie1: 1791936000,
- *   zone: supportShved,
- *   minRetests: 1,
- *   maxBarsAge: 100,
- *   pasTempsSec: 900
- * });
- * console.log('Le setup est-il validé ?', estValide); // true ou false
- * ```
- *
  * @returns {boolean} true si le niveau respecte TOUTES les conditions du setup, false sinon
  */
 export function validerSetupNiveauShved(params: ParametresValidationSetupShved): boolean {
@@ -246,6 +379,12 @@ export function validerSetupNiveauShved(params: ParametresValidationSetupShved):
     minRetests = 1,
     maxBarsAge = 100,
     pasTempsSec = 3600,
+    scoreLiquidite = 0,
+    scoreMinimum = 0,
+    ratioProportion = 0,
+    activerFiltreProportionnalite = false,
+    ratioProportionMin = 0.15,
+    ratioProportionMax = 1.50,
   } = params;
 
   const prixNiveau = zone.prixMedian;
@@ -294,6 +433,23 @@ export function validerSetupNiveauShved(params: ParametresValidationSetupShved):
     return false;
   }
 
+  // ─── 🔍 CONDITION 5 : Filtre de Proportionnalité (Liquidation vs Montagne) ─────
+  // Vérifie que la bougie 1 n'est ni ridiculement minuscule (micro-bruit)
+  // ni démesurément géante (crash) par rapport au rejet moyen du niveau.
+  if (activerFiltreProportionnalite) {
+    if (ratioProportion < ratioProportionMin || ratioProportion > ratioProportionMax) {
+      // ❌ Échoué : La liquidation n'est pas proportionnelle à la taille du niveau
+      return false;
+    }
+  }
+
+  // ─── 🔍 CONDITION 6 : Score de Liquidité Minimal Requis ───────────────────────
+  // Si l'utilisateur exige une qualité minimale (ex: score >= 60)
+  if (scoreMinimum > 0 && scoreLiquidite < scoreMinimum) {
+    // ❌ Échoué : Le niveau ne contient pas assez de liquidité selon le score
+    return false;
+  }
+
   // ✅ TOUTES les conditions sont satisfaites : le setup est validé !
   return true;
 }
@@ -337,6 +493,11 @@ export function calculerSweepNiveauShvedLePlusFort(
   const afficherNiveauxCasses = options.afficherNiveauxCasses !== false;
   const afficherTousDojis = options.afficherTousDojis !== false;
   const afficherForceDansLabel = options.afficherForceDansLabel !== false;
+  const afficherBadgeScore = options.afficherBadgeScore !== false;
+  const scoreMinimum = Math.max(0, Number(options.scoreMinimum ?? 0));
+  const activerFiltreProportionnalite = Boolean(options.activerFiltreProportionnalite);
+  const ratioProportionMin = Number(options.ratioProportionMin ?? 0.15);
+  const ratioProportionMax = Number(options.ratioProportionMax ?? 1.50);
   const afficherAutresNiveaux = Boolean(options.afficherAutresNiveaux);
   const bullColor = options.bullColor || '#00E676';
   const bearColor = options.bearColor || '#F23645';
@@ -397,6 +558,17 @@ export function calculerSweepNiveauShvedLePlusFort(
 
     const estAchat = pattern.type === 'ACHAT';
     const tempsBougie1 = convertirEnSecondes(bougie1.time);
+    const tailleLiquidation = Math.max(0.0001, bougie1.high - bougie1.low);
+
+    // Taille moyenne d'une bougie sur les 10 bougies précédant le pattern
+    const indexDebutRef = Math.max(0, i - 11);
+    let sommeHauteurs = 0;
+    let nbRef = 0;
+    for (let k = indexDebutRef; k < i - 1; k++) {
+      sommeHauteurs += (bougies[k].high - bougies[k].low);
+      nbRef++;
+    }
+    const tailleMoyenneBougie = nbRef > 0 ? (sommeHauteurs / nbRef) : tailleLiquidation;
 
     // Extrême de la mèche du pattern (le point qui est allé chercher la liquidité)
     const prixExtreme = estAchat
@@ -408,6 +580,16 @@ export function calculerSweepNiveauShvedLePlusFort(
     const niveauxBalayes: NiveauShvedBalaye[] = [];
 
     for (const zone of zonesCandidates) {
+      // 🧮 Évaluation du score de liquidité & de la proportionnalité SMC
+      const evaluation = evaluerScoreLiquiditeShved({
+        zone,
+        bougies,
+        indexBougie1: i - 1,
+        tempsBougie1,
+        tailleLiquidation,
+        tailleMoyenneBougie,
+      });
+
       // ─── 🎯 VÉRIFICATION DES CONDITIONS DU SETUP (FONCTION UNIQUE ET CENTRALISÉE) ───
       const setupValide = validerSetupNiveauShved({
         estAchat,
@@ -418,6 +600,12 @@ export function calculerSweepNiveauShvedLePlusFort(
         minRetests,
         maxBarsAge,
         pasTempsSec,
+        scoreLiquidite: evaluation.scoreTotal,
+        scoreMinimum,
+        ratioProportion: evaluation.ratioProportion,
+        activerFiltreProportionnalite,
+        ratioProportionMin,
+        ratioProportionMax,
       });
 
       // Si l'une des conditions a échoué dans la fonction, on ignore ce niveau
@@ -429,11 +617,22 @@ export function calculerSweepNiveauShvedLePlusFort(
         prix: zone.prixMedian,
         retestsAvantPattern,
         profondeur: Math.abs(zone.prixMedian - prixExtreme),
+        scoreLiquidite: evaluation.scoreTotal,
+        pointsRetests: evaluation.pointsRetests,
+        pointsRejets: evaluation.pointsRejets,
+        pointsProportionnalite: evaluation.pointsProportionnalite,
+        pointsIntegrite: evaluation.pointsIntegrite,
+        rejetMoyen: evaluation.rejetMoyen,
+        ratioProportion: evaluation.ratioProportion,
+        qualite: evaluation.qualite,
       });
     }
 
-    // D. Tri : le plus retesté d'abord ; à égalité, le niveau le plus récent
+    // D. Tri : le meilleur Score de Liquidité d'abord ; à égalité, le plus de retests ; à égalité, le plus récent
     niveauxBalayes.sort((a, b) => {
+      if (b.scoreLiquidite !== a.scoreLiquidite) {
+        return b.scoreLiquidite - a.scoreLiquidite;
+      }
       if (b.retestsAvantPattern !== a.retestsAvantPattern) {
         return b.retestsAvantPattern - a.retestsAvantPattern;
       }
@@ -477,6 +676,10 @@ export function calculerSweepNiveauShvedLePlusFort(
       niveauxBalayes,
       nombreNiveauxBalayes: niveauxBalayes.length,
       liquiditeTotale,
+      scoreLiquidite: niveauLePlusFort ? niveauLePlusFort.scoreLiquidite : 0,
+      qualiteLiquidite: niveauLePlusFort?.qualite,
+      ratioProportion: niveauLePlusFort?.ratioProportion,
+      rejetMoyen: niveauLePlusFort?.rejetMoyen,
     });
 
     if (estAchat) totalAchats++;
@@ -486,15 +689,23 @@ export function calculerSweepNiveauShvedLePlusFort(
       maxRetestsBalayes = Math.max(maxRetestsBalayes, niveauLePlusFort.retestsAvantPattern);
     }
 
-    // 6️⃣ Visuels du Combo (Doji + Niveau Shved)
+    // 6️⃣ Visuels du Combo (Doji + Niveau Shved Épuré)
     const couleur = estAchat ? bullColor : bearColor;
 
-    // Étiquette du combo avec la force du niveau (ex: "Liq/Reint\n5x")
+    // Étiquette épurée : intègre le score sans surcharger le graphique
     let texte = texteLabel;
-    if (afficherForceDansLabel && niveauLePlusFort) {
-      texte = `${texteLabel}\n${niveauLePlusFort.retestsAvantPattern}x`;
-      if (niveauxBalayes.length > 1) {
-        texte += ` (${niveauxBalayes.length} niv.)`;
+    if (niveauLePlusFort) {
+      if (afficherBadgeScore) {
+        const badgeEtoile = niveauLePlusFort.scoreLiquidite >= 80 ? ' ⭐' : '';
+        texte = `${texteLabel}\n[${niveauLePlusFort.scoreLiquidite}${badgeEtoile}]`;
+        if (afficherForceDansLabel) {
+          texte += ` ${niveauLePlusFort.retestsAvantPattern}x`;
+        }
+      } else if (afficherForceDansLabel) {
+        texte = `${texteLabel}\n${niveauLePlusFort.retestsAvantPattern}x`;
+        if (niveauxBalayes.length > 1) {
+          texte += ` (${niveauxBalayes.length} niv.)`;
+        }
       }
     }
 

@@ -36,7 +36,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.22.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.23.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4593,6 +4593,11 @@ return {
       activerFiltreTendance: false,
       trendBars: 5,
       afficherForceDansLabel: true,
+      afficherBadgeScore: true,
+      scoreMinimum: 0,
+      activerFiltreProportionnalite: false,
+      ratioProportionMin: 0.15,
+      ratioProportionMax: 1.5,
       afficherAutresNiveaux: false,
       bullColor: '#00E676',
       bearColor: '#F23645',
@@ -4677,6 +4682,55 @@ return {
         type: 'boolean',
         valeurParDefaut: true,
         groupe: 'Règles de Liquidité',
+      },
+      {
+        cle: 'afficherBadgeScore',
+        label: 'Afficher le Score de Liquidité [0-100]',
+        description: 'Affiche un badge épuré du score de liquidité institutionnelle sur le signal (ex: [85] ou [95 ⭐])',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Score de Liquidité SMC & Proportionnalité',
+      },
+      {
+        cle: 'scoreMinimum',
+        label: 'Score de Liquidité Minimum Requis',
+        description: 'Filtre anti-bruit : n\'affiche les signaux que si le niveau atteint au moins ce score (0 = désactivé)',
+        type: 'number',
+        valeurParDefaut: 0,
+        min: 0,
+        max: 100,
+        step: 5,
+        groupe: 'Score de Liquidité SMC & Proportionnalité',
+      },
+      {
+        cle: 'activerFiltreProportionnalite',
+        label: 'Filtre Proportionnalité (Liquidation / Montagne)',
+        description: 'Exige que la taille de la liquidation soit proportionnelle à la hauteur moyenne des rejets du niveau Shved',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Score de Liquidité SMC & Proportionnalité',
+      },
+      {
+        cle: 'ratioProportionMin',
+        label: 'Proportion Minimale (Bougie 1 / Rejet Shved)',
+        description: 'Taille minimale de la liquidation par rapport à la montagne Shved (0.15 = 15%)',
+        type: 'number',
+        valeurParDefaut: 0.15,
+        min: 0.05,
+        max: 1.0,
+        step: 0.05,
+        groupe: 'Score de Liquidité SMC & Proportionnalité',
+      },
+      {
+        cle: 'ratioProportionMax',
+        label: 'Proportion Maximale (Bougie 1 / Rejet Shved)',
+        description: 'Taille maximale autorisée pour éviter les crashs incontrôlés (1.50 = 150%)',
+        type: 'number',
+        valeurParDefaut: 1.50,
+        min: 0.50,
+        max: 5.0,
+        step: 0.1,
+        groupe: 'Score de Liquidité SMC & Proportionnalité',
       },
       {
         cle: 'afficherForceDansLabel',

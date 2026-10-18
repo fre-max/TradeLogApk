@@ -3,6 +3,7 @@ import type { Bougie } from '@/lib/chartDataHelper';
 import {
   calculerSweepNiveauShvedLePlusFort,
   validerSetupNiveauShved,
+  evaluerScoreLiquiditeShved,
 } from '../sweepNiveauShvedLePlusFort';
 
 function creerBougie(
@@ -217,5 +218,96 @@ describe('Indicateur Doji Liq/Reint + Liquidité Shved la Plus Forte', () => {
     });
     expect(tropPeuRetests).toBe(false);
   });
+
+  it('calcule un Score de Liquidité précis sur 100 via evaluerScoreLiquiditeShved', () => {
+    // Support Shved à 100.0 avec 3 retests
+    const zone = {
+      id: 'support-fort',
+      type: 'SUPPORT' as const,
+      prixHaut: 100.5,
+      prixBas: 99.5,
+      prixMedian: 100.0,
+      estCassee: false,
+      estFaible: false,
+      force: 'PROVEN' as const,
+      indexOrigine: 0,
+      retests: 3,
+      dateDebut: 1000,
+      dateFin: 10000,
+      datesTouches: [2000, 3000, 4000],
+    };
+
+    // Bougies montant jusqu'à 130 (sommet de 30 points au-dessus de 100)
+    const bougies: Bougie[] = [
+      creerBougie(1000, 100, 105, 100, 104),
+      creerBougie(2000, 104, 130, 100, 125), // Grand sommet à 130
+      creerBougie(3000, 125, 128, 100, 110),
+      creerBougie(4000, 110, 115, 99.5, 102),
+    ];
+
+    // Taille bougie 1 de liquidation = 5.0, bougie moyenne = 2.0
+    const evaluation = evaluerScoreLiquiditeShved({
+      zone,
+      bougies,
+      indexBougie1: 3,
+      tempsBougie1: 5000,
+      tailleLiquidation: 5.0,
+      tailleMoyenneBougie: 2.0,
+    });
+
+    expect(evaluation.scoreTotal).toBeGreaterThan(0);
+    expect(evaluation.scoreTotal).toBeLessThanOrEqual(100);
+    expect(evaluation.pointsRetests).toBe(35); // 3 retests = 35 points
+    expect(evaluation.pointsIntegrite).toBe(10); // Zone intacte = 10 points
+    expect(evaluation.rejetMoyen).toBeGreaterThan(0);
+    expect(evaluation.ratioProportion).toBeGreaterThan(0);
+  });
+
+  it('valide ou rejette un niveau selon le filtre de proportionnalité', () => {
+    const zoneSupport = {
+      id: 'support-1',
+      type: 'SUPPORT' as const,
+      prixHaut: 100.5,
+      prixBas: 99.5,
+      prixMedian: 100.0,
+      estCassee: false,
+      estFaible: false,
+      force: 'VERIFIED' as const,
+      indexOrigine: 0,
+      retests: 2,
+      dateDebut: 1000,
+      dateFin: 10000,
+      datesTouches: [2000],
+    };
+
+    // Cas proportionné : ratio = 0.5 (50%), compris entre 0.15 et 1.50 -> VALIDÉ
+    const accepteProportion = validerSetupNiveauShved({
+      estAchat: true,
+      prixExtreme: 99.0,
+      clotureBougie2: 100.5,
+      tempsBougie1: 5000,
+      zone: zoneSupport,
+      activerFiltreProportionnalite: true,
+      ratioProportion: 0.5,
+      ratioProportionMin: 0.15,
+      ratioProportionMax: 1.5,
+    });
+    expect(accepteProportion).toBe(true);
+
+    // Cas disproportionné : micro-bruit avec ratio = 0.05 (< 0.15) -> REJETÉ
+    const rejeteMicroBruit = validerSetupNiveauShved({
+      estAchat: true,
+      prixExtreme: 99.0,
+      clotureBougie2: 100.5,
+      tempsBougie1: 5000,
+      zone: zoneSupport,
+      activerFiltreProportionnalite: true,
+      ratioProportion: 0.05,
+      ratioProportionMin: 0.15,
+      ratioProportionMax: 1.5,
+    });
+    expect(rejeteMicroBruit).toBe(false);
+  });
 });
+
 
