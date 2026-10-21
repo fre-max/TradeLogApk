@@ -1,6 +1,7 @@
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualBox, VisualLine, VisualLabel, VisualCurve, VisualPoint, IndicatorExecutionResult, IndicatorScript } from '@/types/indicatorScript';
+import type { SetupOrchestreSMC } from './favoris/orchestrateurSMC';
 import { dessinerLuxAlgoSMC } from './luxAlgoSMCRenderer';
 import { dessinerProtectedSwings } from './protectedSwingsRenderer';
 import { dessinerZigZag } from './zigzagRenderer';
@@ -385,4 +386,112 @@ function dessinerPointDiscret(
 
   ctx.restore();
 }
+
+/**
+ * 🔍 Projette sur le canvas la surbrillance temporaire d'un setup SMC sélectionné en diagnostic.
+ * Affiche la plage temporelle ciblée, toutes les zones S/R Shved candidates analysées avec leurs scores,
+ * ainsi que le tracé complet des paliers UOP.
+ */
+export function dessinerSurbrillanceDiagnosticSMC(
+  ctx: CanvasRenderingContext2D,
+  setup: SetupOrchestreSMC,
+  chart: IChartApi,
+  series: ISeriesApi<'Candlestick'>,
+  bougies: Bougie[]
+): void {
+  if (!setup || !chart || !series) return;
+  const timeScale = chart.timeScale();
+
+  const xDoji = obtenirXPourTemps(timeScale, setup.tempsDoji, bougies);
+  const xDebutPlage = setup.tempsDebutPlage ? obtenirXPourTemps(timeScale, setup.tempsDebutPlage, bougies) : null;
+
+  ctx.save();
+
+  // 1️⃣ Ombrage de la Plage Temporelle Ciblée [DebutPlage ➔ Doji]
+  if (xDebutPlage !== null && xDoji !== null && xDoji > xDebutPlage) {
+    const largeurPlage = xDoji - xDebutPlage;
+
+    // Fond subtil bleuté
+    ctx.fillStyle = 'rgba(41, 182, 246, 0.06)';
+    ctx.fillRect(xDebutPlage, 0, largeurPlage, ctx.canvas.height);
+
+    // Ligne verticale de début de plage
+    ctx.strokeStyle = 'rgba(41, 182, 246, 0.4)';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(xDebutPlage, 0);
+    ctx.lineTo(xDebutPlage, ctx.canvas.height);
+    ctx.stroke();
+
+    // Petit label discret en haut
+    ctx.fillStyle = '#29B6F6';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText('📍 Début Plage SMC', xDebutPlage + 4, 16);
+  }
+
+  // 2️⃣ Tracé de TOUTES les zones S/R candidates analysées dans la plage
+  const zones = setup.zonesShvedCandidates || (setup.meilleureZoneShved ? [setup.meilleureZoneShved] : []);
+  for (const z of zones) {
+    const estRetenue = setup.meilleureZoneShved?.zone.id === z.zone.id;
+    const yMed = series.priceToCoordinate(z.zone.prixMedian);
+    if (yMed === null) continue;
+
+    const xDebutLigne = obtenirXPourTemps(timeScale, z.zone.dateDebut, bougies) ?? (xDebutPlage ?? 0);
+    const xFinLigne = xDoji ?? ctx.canvas.width;
+
+    ctx.beginPath();
+    if (estRetenue) {
+      // Zone retenue : cyan vif lumineux plus épais
+      ctx.strokeStyle = '#29B6F6';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 3]);
+    } else {
+      // Zones non retenues : gris discret
+      ctx.strokeStyle = 'rgba(142, 142, 147, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+    }
+
+    ctx.moveTo(xDebutLigne, yMed);
+    ctx.lineTo(xFinLigne, yMed);
+    ctx.stroke();
+
+    // Badge de score
+    ctx.font = estRetenue ? 'bold 10px sans-serif' : '9px sans-serif';
+    ctx.fillStyle = estRetenue ? '#29B6F6' : '#8E8E93';
+    const texteScore = estRetenue
+      ? `⭐ ${z.zone.type === 'SUPPORT' ? 'Sup' : 'Res'} Retenu [${z.score} pts]`
+      : `${z.zone.type === 'SUPPORT' ? 'Sup' : 'Res'} [${z.score} pts]`;
+    ctx.fillText(texteScore, xDebutLigne + 4, yMed - 4);
+  }
+
+  // 3️⃣ Tracé étendu des Paliers d'Overlap UOP
+  const etapesUOP = setup.etapesPaliersUOP || [];
+  for (const etape of etapesUOP) {
+    const yPalier = series.priceToCoordinate(etape.prixCible);
+    if (yPalier === null) continue;
+
+    const xDebutPalier = xDoji ?? 0;
+    const xFinPalier = Math.min(ctx.canvas.width, xDebutPalier + 140);
+
+    ctx.beginPath();
+    ctx.strokeStyle = etape.estBloquant ? '#FFA726' : '#29B6F6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([2, 2]);
+    ctx.moveTo(xDebutPalier, yPalier);
+    ctx.lineTo(xFinPalier, yPalier);
+    ctx.stroke();
+
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillStyle = etape.estBloquant ? '#FFA726' : '#29B6F6';
+    const labelPalier = etape.estBloquant
+      ? `🛑 Mur P${etape.ordre} (${etape.budgetApres}pts)`
+      : `✓ P${etape.ordre} [${etape.tauxChevauchement}x]`;
+    ctx.fillText(labelPalier, xFinPalier - 75, yPalier - 3);
+  }
+
+  ctx.restore();
+}
+
 

@@ -7,6 +7,8 @@ import {
   type SignalDojiAvecPlage,
   type ZoneShvedAvecScore,
 } from './sandboxDojiShvedPlage';
+
+export type { ZoneShvedAvecScore };
 import {
   calculerShvedSupplyDemand,
   type ZoneShved,
@@ -439,6 +441,35 @@ export interface PalierUOPAnalyse {
 }
 
 /**
+ * Détail pas-à-pas de l'évaluation d'un palier UOP par le moteur d'énergie
+ */
+export interface EtapePalierUOPDetail {
+  ordre: number;
+  prixCible: number;
+  distancePoints: number;
+  tauxChevauchement: number;
+  consommationDistance: number;
+  peagePalier: number;
+  budgetAvant: number;
+  budgetApres: number;
+  estPerce: boolean;
+  estBloquant: boolean;
+  explication: string;
+}
+
+/**
+ * Détails de calcul du carburant initial capté lors du balayage de liquidité
+ */
+export interface DetailsCarburantLiquidation {
+  pointsRetests: number;
+  nombreRetests: number;
+  multiplicateurMeche: number;
+  profondeurMeche: number;
+  hauteurMoyenneATR: number;
+  carburantTotal: number;
+}
+
+/**
  * Représentation complète d'un Setup orchestré
  */
 export interface SetupOrchestreSMC {
@@ -448,6 +479,10 @@ export interface SetupOrchestreSMC {
   indexDoji: number;
   tempsDoji: number | string;
 
+  // Plage temporelle ciblée
+  tempsDebutPlage?: number | string;
+  indexDebutPlage?: number;
+
   // Niveaux de prix clés
   prixEntree: number;           // Cours de clôture de la bougie 2 du Doji
   prixSL: number;               // Prix extrême du Doji (Stop Loss naturel)
@@ -456,6 +491,7 @@ export interface SetupOrchestreSMC {
   // Score Shved de la liquidité balayée
   scoreShved: number;           // Score sur 100 points
   meilleureZoneShved?: ZoneShvedAvecScore;
+  zonesShvedCandidates?: ZoneShvedAvecScore[]; // Toutes les zones S/R Shved trouvées et scorées dans la plage
 
   // Validation du Range (les 3 bougies)
   bougiesObservees: number;     // Nombre de bougies écoulées après le Doji
@@ -474,6 +510,9 @@ export interface SetupOrchestreSMC {
   paliersTraverses?: number;    // Nombre de murs de liquidité UOP franchis
   estLimiteParPalier?: boolean; // Vrai si le TP a calé devant un palier infranchissable
   paliersAnalyses?: PalierUOPAnalyse[]; // Liste ordonnée des paliers UOP rencontrés sur la route
+  etapesPaliersUOP?: EtapePalierUOPDetail[]; // Trajet pas-à-pas à travers chaque palier UOP
+  detailsCarburant?: DetailsCarburantLiquidation; // Détails du calcul du carburant initial
+  tousPaliersUOPCandidats?: TPOptimalUOP[]; // Tous les paliers UOP candidats disponibles
 
   // Cycle de vie post-confirmation
   estTermine: boolean;          // Vrai si le TP ou le SL a été touché par la suite
@@ -584,6 +623,7 @@ export interface ResultatPorteeDynamique {
   estLimiteParPalier: boolean;
   distancePoints: number;
   paliersAnalyses: PalierUOPAnalyse[];
+  etapesDetails: EtapePalierUOPDetail[];
 }
 
 /**
@@ -654,6 +694,7 @@ export function calculerPorteeDynamiqueUOP(options: {
       estLimiteParPalier: false,
       distancePoints: Math.abs(prixSecours - prixEntree),
       paliersAnalyses: [],
+      etapesDetails: [],
     };
   }
 
@@ -663,6 +704,7 @@ export function calculerPorteeDynamiqueUOP(options: {
   });
 
   const paliersAnalyses: PalierUOPAnalyse[] = [];
+  const etapesDetails: EtapePalierUOPDetail[] = [];
   let budgetRestant = carburantInitial;
   let prixDernierPoint = prixEntree;
   let paliersTraverses = 0;
@@ -674,6 +716,7 @@ export function calculerPorteeDynamiqueUOP(options: {
   for (let i = 0; i < paliersTries.length; i++) {
     const palier = paliersTries[i];
     const distancePalier = Math.abs(palier.prixCible - prixDernierPoint);
+    const budgetAvant = Math.round(budgetRestant);
 
     // 1️⃣ Consommation continue selon la distance franchie (en unités ATR) ([COND-FRICTION-01])
     let multiplicateurFriction = coutFrictionMoyenOverlap;
@@ -684,6 +727,7 @@ export function calculerPorteeDynamiqueUOP(options: {
     }
 
     const consommationDistance = (distancePalier / atrSecurise) * coutParATR * multiplicateurFriction;
+    const consoArrondie = Math.round(consommationDistance);
     budgetRestant -= consommationDistance;
 
     // Si le budget est épuisé avant même d'atteindre le palier
@@ -701,6 +745,20 @@ export function calculerPorteeDynamiqueUOP(options: {
         estPerce: false,
         estBloquant: true,
         tauxChevauchement: palier.tauxMoyenChevauchement,
+      });
+
+      etapesDetails.push({
+        ordre: i + 1,
+        prixCible: palier.prixCible,
+        distancePoints: Number(distancePalier.toFixed(5)),
+        tauxChevauchement: Number(palier.tauxMoyenChevauchement.toFixed(2)),
+        consommationDistance: consoArrondie,
+        peagePalier: peagePalierUOP,
+        budgetAvant,
+        budgetApres: 0,
+        estPerce: false,
+        estBloquant: true,
+        explication: `Carburant épuisé en chemin (${budgetAvant} pts disponibles vs ${consoArrondie} pts de friction requis).`,
       });
       break;
     }
@@ -722,6 +780,20 @@ export function calculerPorteeDynamiqueUOP(options: {
         estBloquant: false,
         tauxChevauchement: palier.tauxMoyenChevauchement,
       });
+
+      etapesDetails.push({
+        ordre: i + 1,
+        prixCible: palier.prixCible,
+        distancePoints: Number(distancePalier.toFixed(5)),
+        tauxChevauchement: Number(palier.tauxMoyenChevauchement.toFixed(2)),
+        consommationDistance: consoArrondie,
+        peagePalier: peagePalierUOP,
+        budgetAvant,
+        budgetApres: Math.round(budgetRestant),
+        estPerce: true,
+        estBloquant: false,
+        explication: `Palier percé avec succès ! Déduction : ${consoArrondie} pts (friction) + ${peagePalierUOP} pts (péage). Reste ${Math.round(budgetRestant)} pts.`,
+      });
     } else {
       // 🛑 Le mur est trop épais ! On ancre le TP juste devant le palier ([COND-FRICTION-03])
       const margeSecurite = atrSecurise * margeSecuriteDevantPalier;
@@ -740,6 +812,20 @@ export function calculerPorteeDynamiqueUOP(options: {
         estPerce: false,
         estBloquant: true,
         tauxChevauchement: palier.tauxMoyenChevauchement,
+      });
+
+      etapesDetails.push({
+        ordre: i + 1,
+        prixCible: palier.prixCible,
+        distancePoints: Number(distancePalier.toFixed(5)),
+        tauxChevauchement: Number(palier.tauxMoyenChevauchement.toFixed(2)),
+        consommationDistance: consoArrondie,
+        peagePalier: peagePalierUOP,
+        budgetAvant,
+        budgetApres: Math.round(budgetRestant),
+        estPerce: false,
+        estBloquant: true,
+        explication: `Mur infranchissable ! Carburant restant (${Math.round(budgetRestant)} pts) < Péage (${peagePalierUOP} pts). TP ancré avec marge.`,
       });
       break;
     }
@@ -766,6 +852,7 @@ export function calculerPorteeDynamiqueUOP(options: {
     estLimiteParPalier,
     distancePoints,
     paliersAnalyses,
+    etapesDetails,
   };
 }
 
@@ -920,7 +1007,7 @@ export function calculerOrchestrateurSMC(
         exigerDebutEtFinDansPlage: true,
         afficherNiveauxCasses: true,
         scoreMinimum: 0,
-        topNiveauxScore: 1, // Le meilleur niveau suffit pour scorer
+        topNiveauxScore: 20, // Analyse et score jusqu'à 20 zones candidates dans la plage pour le diagnostic
       }
     );
 
@@ -991,6 +1078,8 @@ export function calculerOrchestrateurSMC(
       : (resultatUOP.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
 
     let paliersAnalyses: PalierUOPAnalyse[] = [];
+    let etapesPaliersUOP: EtapePalierUOPDetail[] | undefined;
+    let detailsCarburant: DetailsCarburantLiquidation | undefined;
 
     if (modeCalculTP === 'ENERGIE_FRICTION') {
       // 🚀 MODÈLE D'ÉNERGIE : Liquidité engrangée vs Résistance UOP
@@ -1015,6 +1104,14 @@ export function calculerOrchestrateurSMC(
       });
 
       carburantInitial = resCarburant.carburantTotal;
+      detailsCarburant = {
+        pointsRetests: resCarburant.pointsRetests,
+        nombreRetests,
+        multiplicateurMeche: resCarburant.multiplicateurMeche,
+        profondeurMeche,
+        hauteurMoyenneATR: doji.moyenneHauteur,
+        carburantTotal: resCarburant.carburantTotal,
+      };
 
       // 3. Simulation du trajet et franchissement des paliers UOP ([COND-FRICTION-01 à 03])
       const resPortee = calculerPorteeDynamiqueUOP({
@@ -1040,6 +1137,7 @@ export function calculerOrchestrateurSMC(
       paliersTraverses = resPortee.paliersTraverses;
       estLimiteParPalier = resPortee.estLimiteParPalier;
       paliersAnalyses = resPortee.paliersAnalyses;
+      etapesPaliersUOP = resPortee.etapesDetails;
       tpSelectionne = resPortee.palierBloquant ?? tpsCandidats[Math.min(tpsCandidats.length - 1, Math.max(0, ordreTP - 1))];
     } else {
       // 🏛️ MODÈLE STANDARD : Proportionnalité simple au Score Shved
@@ -1128,18 +1226,21 @@ export function calculerOrchestrateurSMC(
       }
     }
 
-    // Création de l'objet Setup complet (conservé en télémétrie pour les statistiques)
+    // Création de l'objet Setup complet (conservé en télémétrie pour les statistiques et diagnostic)
     const setup: SetupOrchestreSMC = {
       id: `smc-setup-${indexDoji}`,
       type: doji.type,
       statut,
       indexDoji,
       tempsDoji: doji.temps,
+      tempsDebutPlage: doji.tempsDebutPlage,
+      indexDebutPlage: doji.indexDebutPlage,
       prixEntree,
       prixSL,
       distanceSL,
       scoreShved,
       meilleureZoneShved: meilleureZone,
+      zonesShvedCandidates: zonesDansPlage,
       bougiesObservees,
       bougieInvalidationIndex,
       prixTP,
@@ -1149,9 +1250,12 @@ export function calculerOrchestrateurSMC(
       tpSelectionne,
       carburantInitial,
       carburantRestant,
+      detailsCarburant,
       paliersTraverses,
       estLimiteParPalier,
       paliersAnalyses,
+      etapesPaliersUOP,
+      tousPaliersUOPCandidats: tpsCandidats,
       estTermine,
       resultatTrade,
       indexSortieTrade,

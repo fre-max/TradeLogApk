@@ -42,7 +42,11 @@ import {
   capturerSnapshotSMC,
 } from '@/lib/indicators/luxAlgoSMC';
 import { recupererIndicateursStockes, evaluerIndicateurScript } from '@/lib/indicators/indicatorEngine';
-import { dessinerResultatIndicateur, dessinerPrimitivesIndicateur } from '@/lib/indicators/scriptRenderer';
+import {
+  dessinerResultatIndicateur,
+  dessinerPrimitivesIndicateur,
+  dessinerSurbrillanceDiagnosticSMC,
+} from '@/lib/indicators/scriptRenderer';
 import type { IndicatorScript, IndicatorExecutionResult } from '@/types/indicatorScript';
 import { sonderSetupComplet } from '@/lib/bot/laboratoire/sondeurSetup';
 import { useLaboratoireStore } from '@/store/laboratoireStore';
@@ -50,6 +54,8 @@ import {
   diagnostiquerBougieDoji,
   type RapportDiagnosticDoji,
 } from '@/lib/indicators/liquidationReintegration';
+import { DiagnosticSetupSMCModal } from './DiagnosticSetupSMCModal';
+import type { SetupOrchestreSMC } from '@/lib/indicators/favoris/orchestrateurSMC';
 
 // ─── 🛠️ Seuils de détection tactile élargis ──────────────────────────────────
 // 30px de tolérance au lieu de 5px par défaut pour faciliter la sélection au doigt.
@@ -642,6 +648,10 @@ export const BacktestChart = React.forwardRef<
   // 🔍 Diagnostic interactif de Setup Liquidation & Réintégration
   const [diagnosticDoji, setDiagnosticDoji] = useState<RapportDiagnosticDoji | null>(null);
 
+  // 🔍 Diagnostic interactif de Setup Chef d'Orchestre SMC
+  const [setupSMCDiagnostic, setSetupSMCDiagnostic] = useState<SetupOrchestreSMC | null>(null);
+  const [surbrillanceSMCActive, setSurbrillanceSMCActive] = useState<boolean>(true);
+
   // Réf stable pour les callbacks
   const stateRef = useRef({
     activeTool,
@@ -653,6 +663,8 @@ export const BacktestChart = React.forwardRef<
     positionSelectionneeId,
     dragAction,
     resultatsScriptsActifs,
+    setupSMCDiagnostic,
+    surbrillanceSMCActive,
   });
 
   useEffect(() => {
@@ -666,6 +678,8 @@ export const BacktestChart = React.forwardRef<
       positionSelectionneeId,
       dragAction,
       resultatsScriptsActifs,
+      setupSMCDiagnostic,
+      surbrillanceSMCActive,
     };
     redessinerOverlay();
   }, [
@@ -678,6 +692,8 @@ export const BacktestChart = React.forwardRef<
     positionSelectionneeId,
     dragAction,
     resultatsScriptsActifs,
+    setupSMCDiagnostic,
+    surbrillanceSMCActive,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Rendu overlay : P&L actif + positions canvas + prévisualisation ─────────
@@ -697,6 +713,8 @@ export const BacktestChart = React.forwardRef<
       positionsCanvas: currentPositions,
       positionSelectionneeId: selectedId,
       resultatsScriptsActifs: currentScriptsResults,
+      setupSMCDiagnostic: currentSMCSetup,
+      surbrillanceSMCActive: currentSurbrillance,
     } = stateRef.current;
 
     const chart = chartRef.current;
@@ -719,6 +737,21 @@ export const BacktestChart = React.forwardRef<
         } catch (err) {
           console.warn(`⚠️ [BacktestChart] Erreur de tracé pour ${item.script.nom}:`, err);
         }
+      }
+    }
+
+    // 0️⃣.bis Surbrillance temporaire haute fidélité du Setup SMC inspecté en diagnostic
+    if (currentSMCSetup && currentSurbrillance) {
+      try {
+        dessinerSurbrillanceDiagnosticSMC(
+          ctx,
+          currentSMCSetup,
+          chart,
+          series,
+          bougiesVisibles
+        );
+      } catch (err) {
+        console.warn('⚠️ [BacktestChart] Erreur de tracé surbrillance SMC:', err);
       }
     }
 
@@ -1549,6 +1582,9 @@ export const BacktestChart = React.forwardRef<
         if (diagnosticDoji) {
           setDiagnosticDoji(null);
         }
+        if (setupSMCDiagnostic) {
+          setSetupSMCDiagnostic(null);
+        }
       }
 
       if (activeTool !== null) return;
@@ -1686,7 +1722,7 @@ export const BacktestChart = React.forwardRef<
         return;
       }
 
-      // 🔍 Si l'outil actif est l'inspecteur / diagnostic de setup Liq / Reint
+      // 🔍 Si l'outil actif est l'inspecteur / diagnostic de setup
       if (activeTool === 'inspect-setup') {
         const rect = conteneur.getBoundingClientRect();
         const px = event.clientX - rect.left;
@@ -1694,8 +1730,30 @@ export const BacktestChart = React.forwardRef<
         if (logical !== null) {
           const targetIndex = Math.round(logical);
           const completes = stateRef.current.donneesCompletes;
+
+          // 1️⃣ Priorité : Vérifier si un setup du Chef d'Orchestre SMC se trouve sur ou près de cette bougie
+          const resSMC = stateRef.current.resultatsScriptsActifs?.find(
+            (r: any) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
+          );
+          const setupsSMCDisponibles: SetupOrchestreSMC[] = (resSMC?.resultat?.donnees as any)?.setups || [];
+          const setupSMCTrouve = setupsSMCDisponibles.find(
+            (s) => Math.abs(s.indexDoji - targetIndex) <= 1 || (targetIndex >= s.indexDoji && targetIndex <= s.indexDoji + 3)
+          );
+
+          if (setupSMCTrouve) {
+            console.log(`🔍 [BacktestChart] Diagnostic Setup SMC sélectionné sur bougie #${setupSMCTrouve.indexDoji}`);
+            setSetupSMCDiagnostic(setupSMCTrouve);
+            setSurbrillanceSMCActive(true);
+            useUIStore.getState().addToast(
+              `Diagnostic Setup SMC #${setupSMCTrouve.indexDoji} (${setupSMCTrouve.type}) ouvert !`,
+              'info'
+            );
+            return;
+          }
+
+          // 2️⃣ Sinon : Diagnostic classique de l'indicateur Doji Liq/Reint
           if (targetIndex >= 0 && targetIndex < completes.length) {
-            console.log(`🔍 [BacktestChart] Diagnostic demandé sur la bougie #${targetIndex}`);
+            console.log(`🔍 [BacktestChart] Diagnostic Doji demandé sur la bougie #${targetIndex}`);
             const scriptLiq = scriptsIndicateurs.find((s) => s.id === 'script-liquidation-reintegration');
             const rapport = diagnostiquerBougieDoji(completes, targetIndex, scriptLiq?.parametres);
             if (rapport) {
@@ -1717,12 +1775,38 @@ export const BacktestChart = React.forwardRef<
 
       const estOutil = activeTool === 'pos-long' || activeTool === 'pos-short';
 
-      // Pour les outils bibliothèque, on désélectionne une position canvas si cliquée
-      if (!estOutil) {
+      // Pour la navigation normale (aucun outil de dessin actif)
+      if (!estOutil && activeTool === null) {
+        // Clic sur une position canvas existante ?
         const idClique = detecterClicPositionCanvas(ancre.px, ancre.py);
         if (idClique) {
           setPositionSelectionneeId(idClique);
           return;
+        }
+
+        // Clic direct sur un setup SMC existant pour ouvrir son diagnostic instantanément ?
+        const rect = conteneur.getBoundingClientRect();
+        const px = event.clientX - rect.left;
+        const logical = chart.timeScale().coordinateToLogical(px);
+        if (logical !== null) {
+          const targetIndex = Math.round(logical);
+          const resSMC = stateRef.current.resultatsScriptsActifs?.find(
+            (r: any) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
+          );
+          const setupsSMCDisponibles: SetupOrchestreSMC[] = (resSMC?.resultat?.donnees as any)?.setups || [];
+          const setupSMCTrouve = setupsSMCDisponibles.find(
+            (s) => Math.abs(s.indexDoji - targetIndex) <= 1
+          );
+
+          if (setupSMCTrouve) {
+            setSetupSMCDiagnostic(setupSMCTrouve);
+            setSurbrillanceSMCActive(true);
+            useUIStore.getState().addToast(
+              `Diagnostic Setup SMC #${setupSMCTrouve.indexDoji} (${setupSMCTrouve.type}) ouvert !`,
+              'info'
+            );
+            return;
+          }
         }
       }
 
@@ -1887,6 +1971,14 @@ export const BacktestChart = React.forwardRef<
     ? config.instructions[Math.min(etapeActuelle, config.instructions.length - 1)]
     : null;
   const progresseAncres = config ? `${etapeActuelle}/${config.ancres}` : null;
+  // 🔍 Liste de tous les setups détectés par le Chef d'Orchestre SMC
+  const setupsSMCListe = useMemo<SetupOrchestreSMC[]>(() => {
+    const resSMC = resultatsScriptsActifs.find(
+      (r) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
+    );
+    return ((resSMC?.resultat?.donnees as any)?.setups as SetupOrchestreSMC[]) || [];
+  }, [resultatsScriptsActifs]);
+
   const estOutil = activeTool === 'pos-long' || activeTool === 'pos-short';
 
   return (
@@ -1947,6 +2039,20 @@ export const BacktestChart = React.forwardRef<
               >
                 {script.visibleSurGraphique ? '👁️' : '👁️‍🗨️'}
               </button>
+              {/* 🔍 Bouton Diag SMC dédié si c'est le Chef d'Orchestre SMC et qu'il y a des setups */}
+              {(script.id === 'script-orchestrateur-smc' || script.id.includes('orchestrateur')) && setupsSMCListe.length > 0 && (
+                <button
+                  onClick={() => {
+                    const dernier = setupsSMCListe[setupsSMCListe.length - 1];
+                    setSetupSMCDiagnostic(dernier);
+                    setSurbrillanceSMCActive(true);
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/50 text-[10px] text-cyan-300 font-bold transition-all shadow-xs"
+                  title={`Ouvrir le diagnostic détaillé des setups SMC (${setupsSMCListe.length} détecté${setupsSMCListe.length > 1 ? 's' : ''})`}
+                >
+                  🔍 Diag ({setupsSMCListe.length})
+                </button>
+              )}
               {onOpenIndicatorModal && (
                 <button
                   onClick={() => onOpenIndicatorModal(script.id, 'configuration')}
@@ -2126,6 +2232,27 @@ export const BacktestChart = React.forwardRef<
               <kbd className="font-bold text-txt">Ctrl+D</kbd> dupliquer · <kbd className="font-bold text-txt">Del</kbd> supprimer
             </span>
           </div>
+        )}
+
+        {/* ── 🔍 Diagnostic Haute Fidélité du Setup Chef d'Orchestre SMC ── */}
+        {setupSMCDiagnostic && (
+          <DiagnosticSetupSMCModal
+            setup={setupSMCDiagnostic}
+            setupsTotaux={setupsSMCListe}
+            onSelectSetup={(s) => {
+              setSetupSMCDiagnostic(s);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+            onClose={() => {
+              setSetupSMCDiagnostic(null);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+            surbrillanceActive={surbrillanceSMCActive}
+            onToggleSurbrillance={(actif) => {
+              setSurbrillanceSMCActive(actif);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+          />
         )}
       </div>
     </div>
