@@ -44,8 +44,8 @@ export interface ParametresSandboxDojiShvedPlage {
   timeframeSource?: string;          // Unité de temps Shved (ex: 'M15', 'ACTUEL', défaut: 'M15')
   donneesM1?: Bougie[];              // Bougies M1 pour le calcul MTF
   chartTimeframe?: string;           // Unité de temps du graphique actuel
-  periodeATR?: number;               // ATR pour l'épaisseur des zones Shved (défaut: 15)
-  zoneFuzzFactor?: number;           // Facteur d'épaisseur Shved (défaut: 0.1)
+  periodeATR?: number;               // ATR pour l'épaisseur des zones Shved (défaut: 2)
+  zoneFuzzFactor?: number;           // Facteur d'épaisseur Shved (défaut: 0.01)
   minRetests?: number;               // Nombre minimum de retests Shved (défaut: 0 = accepte tout)
   afficherNiveauxCasses?: boolean;   // Inclut aussi les niveaux déjà cassés (défaut: true)
 
@@ -53,6 +53,7 @@ export interface ParametresSandboxDojiShvedPlage {
   maxReculRecherche?: number;        // Nombre max de bougies de recul pour trouver l'extrême précédent (défaut: 100)
   exigerDebutEtFinDansPlage?: boolean; // Épuration totale : début ET fin du S/R dans la plage (défaut: true)
   filtrerParDirectionSetup?: boolean; // Supports pour Achat, Résistances pour Vente (défaut: true)
+  sectionnerNiveauxAnterieurs?: boolean; // Sectionne les niveaux antérieurs ayant des retests dans la plage (défaut: true)
 
   // ─── 🏆 Score de Liquidité & Filtrage Top N ───
   topNiveauxScore?: number;          // Nombre max de S/R à afficher selon le score (défaut: 3, 0 = tout afficher)
@@ -100,12 +101,18 @@ export interface ZoneShvedAvecScore {
   pointsRejets: number;      // Points attribués à la hauteur de la montagne (max 30)
   pointsProportionnalite: number; // Points attribués à la proportionnalité (max 25)
   pointsIntegrite: number;   // Points bonus intégrité (max 10)
+  estRetenue?: boolean;      // Est-ce le niveau gagnant retenu par l'algorithme ?
+  motifSelection?: string;   // Explication pédagogique pour le diagnostic
+  estStrictementDansPlage?: boolean; // Début ET fin situés à l'intérieur de la plage
+  estSectionnee?: boolean;   // Vrai si le niveau a été sectionné pour la plage (Option A + 1)
+  retestsLocaux?: number;    // Nombre de touches survenues à l'intérieur de la plage
 }
 
 /**
  * Signal combiné complet de la Sandbox avec les niveaux Shved associés
  */
 export interface SignalSandboxPlage {
+  id?: string;               // Identifiant unique du signal pour le diagnostic
   type: 'ACHAT' | 'VENTE';
   indexBougie: number;
   temps: number | string;
@@ -119,6 +126,9 @@ export interface SignalSandboxPlage {
   meilleurScore?: number;
   scoresNiveauxDansPlage?: number[];
   niveauxShved?: ZoneShvedAvecScore[];
+  // 🔍 Diagnostic interactif complet :
+  toutesZonesCandidates?: ZoneShvedAvecScore[]; // Tous les S/R du sens présents dans la plage
+  zoneRetenue?: ZoneShvedAvecScore | null;       // La zone sélectionnée comme étant la meilleure
 }
 
 export interface ResultatSandboxDojiShvedPlage {
@@ -393,6 +403,103 @@ export function compterRetestsAvant(zone: ZoneShved, tempsDojiMs: number): numbe
 }
 
 /**
+ * Extrait les horodatages des retests d'une zone Shved survenus
+ * strictement à l'intérieur de la plage temporelle ciblée.
+ * 
+ * Exemple :
+ * const touches = obtenirTouchesDansPlage(zone, bougies, indexDebutPlage, indexFinPlage, tempsDebutMs, tempsFinMs);
+ * console.log('Nombre de touches dans la plage :', touches.length);
+ */
+export function obtenirTouchesDansPlage(
+  zone: ZoneShved,
+  bougies: Bougie[],
+  indexDebutPlage: number,
+  indexFinPlage: number,
+  tempsDebutPlageMs: number,
+  tempsFinPlageMs: number
+): (number | string)[] {
+  // 1️⃣ Si Shved a déjà enregistré les dates précises des retests
+  if (zone.datesTouches && zone.datesTouches.length > 0) {
+    const touchesDansFenetre = zone.datesTouches.filter((t) => {
+      const tMs = convertirTempsEnMs(t);
+      return tMs >= tempsDebutPlageMs && tMs <= tempsFinPlageMs;
+    });
+    if (touchesDansFenetre.length > 0) {
+      return touchesDansFenetre;
+    }
+  }
+
+  // 2️⃣ Analyse directe sur les bougies de la plage (sécurité et précision)
+  const touchesDirectes: (number | string)[] = [];
+  const debut = Math.max(0, indexDebutPlage);
+  const fin = Math.min(bougies.length - 1, indexFinPlage);
+  let dernierIndexTouche = -999;
+
+  for (let k = debut; k <= fin; k++) {
+    const b = bougies[k];
+    // Le prix entre dans la zone de support ou résistance
+    if (b.low <= zone.prixHaut && b.high >= zone.prixBas) {
+      // On respecte un intervalle de 2 bougies pour distinguer deux retests séparés
+      if (k - dernierIndexTouche >= 2) {
+        touchesDirectes.push(b.time);
+        dernierIndexTouche = k;
+      }
+    }
+  }
+
+  return touchesDirectes;
+}
+
+/**
+ * Sectionne une zone Shved qui a débuté avant notre plage temporelle.
+ * 
+ * - Option A : Le segment démarre pile au début de la plage temporelle (creux/sommet antérieur).
+ * - Option 1 : Ne comptabilise que les retests survenus à l'intérieur de la plage.
+ * 
+ * Exemple :
+ * const zoneSectionnee = sectionnerZoneShvedDansPlage(zone, signalDoji, bougies);
+ */
+export function sectionnerZoneShvedDansPlage(
+  zone: ZoneShved,
+  signalDoji: SignalDojiAvecPlage,
+  bougies: Bougie[]
+): ZoneShved | null {
+  const tempsDebutPlageMs = convertirTempsEnMs(signalDoji.tempsDebutPlage);
+  const indexBougie1 = signalDoji.indexBougie - 1;
+  const tempsBougie1Ms = convertirTempsEnMs(bougies[indexBougie1]?.time ?? signalDoji.temps);
+
+  // 1️⃣ Recherche des touches réelles à l'intérieur de la plage
+  const touchesDansPlage = obtenirTouchesDansPlage(
+    zone,
+    bougies,
+    signalDoji.indexDebutPlage,
+    indexBougie1,
+    tempsDebutPlageMs,
+    tempsBougie1Ms
+  );
+
+  // Si le niveau n'a pas été touché dans la plage, on ne le sectionne pas
+  if (touchesDansPlage.length === 0) {
+    return null;
+  }
+
+  // 2️⃣ Création du nouveau niveau sectionné
+  // Option A : Date de début = tempsDebutPlage (début de la plage)
+  // Option 1 : Retests = nombre de touches locales dans la plage
+  const zoneSectionnee: ZoneShved = {
+    ...zone,
+    id: `${zone.id}-sectionne-${signalDoji.indexDebutPlage}`,
+    dateDebut: signalDoji.tempsDebutPlage,
+    indexOrigine: signalDoji.indexDebutPlage,
+    retests: touchesDansPlage.length,
+    datesTouches: touchesDansPlage,
+    estFaible: false,
+  };
+
+  return zoneSectionnee;
+}
+
+/**
  * Calcule le score de liquidité institutionnelle sur 100 points pour un niveau Shved.
  *  1. Retests (max 35 pts)
  *  2. Rejets / Hauteur de la montagne (max 30 pts)
@@ -497,6 +604,7 @@ export function evaluerNiveauxShvedDansPlage(
     filtrerParDirectionSetup?: boolean;
     exigerDebutEtFinDansPlage?: boolean;
     afficherNiveauxCasses?: boolean;
+    sectionnerNiveauxAnterieurs?: boolean;
     scoreMinimum?: number;
     topNiveauxScore?: number;
   } = {}
@@ -504,6 +612,7 @@ export function evaluerNiveauxShvedDansPlage(
   const filtrerParDirectionSetup = options.filtrerParDirectionSetup !== false;
   const exigerDebutEtFinDansPlage = options.exigerDebutEtFinDansPlage !== false;
   const afficherNiveauxCasses = options.afficherNiveauxCasses !== false;
+  const sectionnerNiveauxAnterieurs = options.sectionnerNiveauxAnterieurs !== false;
   const scoreMinimum = Math.max(0, Number(options.scoreMinimum ?? 0));
   const topNiveauxScore = Math.max(0, Number(options.topNiveauxScore ?? 3));
 
@@ -527,25 +636,49 @@ export function evaluerNiveauxShvedDansPlage(
     const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
     const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
 
-    // 3. Épuration totale : début ET fin compris dans la plage temporelle
+    // 3. Détection de la position temporelle de la zone
     const debutComprisDansPlage = dateDebutZoneMs >= tempsDebutPlageMs && dateDebutZoneMs <= tempsFinPlageMs;
     const finCompriseDansPlage = dateFinZoneMs >= tempsDebutPlageMs && dateFinZoneMs <= tempsFinPlageMs;
 
-    const estDansPlage = exigerDebutEtFinDansPlage
-      ? (debutComprisDansPlage && finCompriseDansPlage)
-      : (dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs);
+    let zoneAEvaluer: ZoneShved | null = null;
+    let estSectionnee = false;
 
-    if (estDansPlage) {
+    if (debutComprisDansPlage && finCompriseDansPlage) {
+      // Cas 1 : Zone née directement à l'intérieur de la plage
+      zoneAEvaluer = zone;
+    } else if (dateDebutZoneMs < tempsDebutPlageMs && dateFinZoneMs >= tempsDebutPlageMs) {
+      // Cas 2 : Zone née dans le passé lointain mais traversant notre plage
+      if (sectionnerNiveauxAnterieurs) {
+        // ✂️ Option A (débute au début de la plage) + Option 1 (retests uniquement dans la plage)
+        const zoneSectionnee = sectionnerZoneShvedDansPlage(zone, signalDoji, bougies);
+        if (zoneSectionnee) {
+          zoneAEvaluer = zoneSectionnee;
+          estSectionnee = true;
+        }
+      } else if (!exigerDebutEtFinDansPlage) {
+        zoneAEvaluer = zone;
+      }
+    } else if (!exigerDebutEtFinDansPlage && (dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs)) {
+      // Mode permissif sans sectionnement
+      zoneAEvaluer = zone;
+    }
+
+    if (zoneAEvaluer) {
       // 4. Calcul du score de liquidité sur 100 points
       const indexBougie1 = signalDoji.indexBougie - 1;
       const evalScore = calculerScoreZoneShved(
-        zone,
+        zoneAEvaluer,
         bougies,
         indexBougie1,
         bougies[indexBougie1].time,
         signalDoji.tailleLiquidation,
         signalDoji.moyenneHauteur
       );
+
+      evalScore.estSectionnee = estSectionnee;
+      if (estSectionnee) {
+        evalScore.retestsLocaux = zoneAEvaluer.retests;
+      }
 
       if (evalScore.score >= scoreMinimum) {
         zonesDansPlage.push(evalScore);
@@ -607,8 +740,8 @@ export function calculerSandboxDojiShvedPlage(
     afficherNonRetestees: true,
     afficherFaibles: true,
     minRetests: Math.max(0, Number(parametres.minRetests ?? 0)),
-    periodeATR: parametres.periodeATR ?? 15,
-    zoneFuzzFactor: parametres.zoneFuzzFactor ?? 0.1,
+    periodeATR: parametres.periodeATR ?? 2,
+    zoneFuzzFactor: parametres.zoneFuzzFactor ?? 0.01,
     maxLookbackBars: 250,
     afficherZones: false,
     afficherLignes: false,
@@ -633,7 +766,7 @@ export function calculerSandboxDojiShvedPlage(
     if (estAchat) totalAchats++;
     else totalVentes++;
 
-    // Évaluation des zones Shved dans la plage du Doji
+    // Évaluation des zones Shved dans la plage du Doji (Filtre Top N standard)
     const zonesSelectionnees = evaluerNiveauxShvedDansPlage(
       toutesLesZonesShved,
       signalDoji,
@@ -643,6 +776,93 @@ export function calculerSandboxDojiShvedPlage(
 
     const tempsDebutPlageMs = convertirTempsEnMs(signalDoji.tempsDebutPlage);
     const tempsFinPlageMs = convertirTempsEnMs(signalDoji.temps);
+
+    // 🔍 NOUVEAU DIAGNOSTIC INTERACTIF : Récupération de TOUS les supports (Achat) ou résistances (Vente) dans la plage
+    const typeZoneCible = estAchat ? 'SUPPORT' : 'RESISTANCE';
+    const toutesZonesCandidates: ZoneShvedAvecScore[] = [];
+    const sectionnerAnterieurs = parametres.sectionnerNiveauxAnterieurs !== false;
+
+    for (const zone of toutesLesZonesShved) {
+      // 1. Règle directionnelle stricte conservée : Supports pour Achat, Résistances pour Vente
+      if (zone.type !== typeZoneCible) continue;
+
+      const dateDebutZoneMs = convertirTempsEnMs(zone.dateDebut);
+      const dateFinZoneMs = convertirTempsEnMs(zone.dateFin);
+
+      // Présente dans la plage : chevauchement temporel avec la fenêtre ciblée
+      const chevauchePlage = (dateDebutZoneMs <= tempsFinPlageMs && dateFinZoneMs >= tempsDebutPlageMs);
+      if (!chevauchePlage) continue;
+
+      const debutCompris = dateDebutZoneMs >= tempsDebutPlageMs && dateDebutZoneMs <= tempsFinPlageMs;
+      const finComprise = dateFinZoneMs >= tempsDebutPlageMs && dateFinZoneMs <= tempsFinPlageMs;
+
+      let zoneAEvaluer: ZoneShved = zone;
+      let estSectionnee = false;
+      let estStrictementDansPlage = debutCompris && finComprise;
+
+      // ✂️ Si la zone est née avant la plage temporelle mais traverse notre fenêtre
+      if (dateDebutZoneMs < tempsDebutPlageMs && sectionnerAnterieurs) {
+        const zoneSectionnee = sectionnerZoneShvedDansPlage(zone, signalDoji, bougies);
+        if (zoneSectionnee) {
+          zoneAEvaluer = zoneSectionnee;
+          estSectionnee = true;
+          estStrictementDansPlage = true; // Démarre au début de la plage par construction (Option A)
+        }
+      }
+
+      // Calcul du score de liquidité sur 100 points
+      const indexBougie1 = signalDoji.indexBougie - 1;
+      const evalScore = calculerScoreZoneShved(
+        zoneAEvaluer,
+        bougies,
+        indexBougie1,
+        bougies[indexBougie1].time,
+        signalDoji.tailleLiquidation,
+        signalDoji.moyenneHauteur
+      );
+
+      toutesZonesCandidates.push({
+        ...evalScore,
+        estStrictementDansPlage,
+        estSectionnee,
+        retestsLocaux: estSectionnee ? zoneAEvaluer.retests : undefined,
+      });
+    }
+
+    // Tri de toutes les candidates par score décroissant
+    toutesZonesCandidates.sort((a, b) => b.score - a.score);
+
+    // Identifier la zone gagnante retenue selon les critères actuels du système
+    const zoneRetenue = zonesSelectionnees.length > 0 ? zonesSelectionnees[0] : null;
+
+    // Déterminer pour chaque candidate son statut et son motif explicatif
+    const exigerStrict = parametres.exigerDebutEtFinDansPlage !== false;
+    const scoreMin = Math.max(0, Number(parametres.scoreMinimum ?? 0));
+    const accepterCassees = parametres.afficherNiveauxCasses !== false;
+
+    for (const cand of toutesZonesCandidates) {
+      if (zoneRetenue && cand.zone.id === zoneRetenue.zone.id) {
+        cand.estRetenue = true;
+        cand.motifSelection = cand.estSectionnee
+          ? `⭐ Niveau retenu (Sectionné dans la plage, ${cand.score}/100 pts)`
+          : `⭐ Meilleur niveau retenu (${cand.score}/100 pts)`;
+      } else {
+        cand.estRetenue = false;
+        if (exigerStrict && !cand.estStrictementDansPlage) {
+          cand.motifSelection = "Écarté : déborde hors de la plage sans retest local dans la fenêtre";
+        } else if (!accepterCassees && cand.zone.estCassee) {
+          cand.motifSelection = "Écarté : zone déjà brisée avant la survenue du Doji";
+        } else if (cand.score < scoreMin) {
+          cand.motifSelection = `Écarté : score de ${cand.score} pts inférieur au seuil minimal (${scoreMin} pts)`;
+        } else if (zoneRetenue) {
+          cand.motifSelection = cand.estSectionnee
+            ? `Écarté : niveau sectionné (${cand.score} pts, ${cand.retestsLocaux ?? cand.retestsAvant} touches locales) inférieur au niveau retenu (${zoneRetenue.score} pts)`
+            : `Écarté : score de ${cand.score} pts inférieur au niveau retenu (${zoneRetenue.score} pts)`;
+        } else {
+          cand.motifSelection = "Écarté par le tri";
+        }
+      }
+    }
 
     // Tracé des segments Shved pour le Top retenu
     for (const item of zonesSelectionnees) {
@@ -663,8 +883,9 @@ export function calculerSandboxDojiShvedPlage(
         ? (dateFinZoneMs > tempsFinPlageMs ? signalDoji.temps : zone.dateFin)
         : zone.dateFin;
 
+      const badgeSection = item.estSectionnee ? ' ✂️' : '';
       const labelLigne = afficherScoreSurLigne
-        ? `${estSupport ? 'Sup' : 'Res'} [${item.score} pts]`
+        ? `${estSupport ? 'Sup' : 'Res'} [${item.score} pts]${badgeSection}`
         : undefined;
 
       lignes.push({
@@ -699,6 +920,7 @@ export function calculerSandboxDojiShvedPlage(
     });
 
     signauxComplets.push({
+      id: `sandbox-signal-${signalDoji.indexBougie}`,
       type: signalDoji.type,
       indexBougie: signalDoji.indexBougie,
       temps: signalDoji.temps,
@@ -712,6 +934,8 @@ export function calculerSandboxDojiShvedPlage(
       meilleurScore,
       scoresNiveauxDansPlage: zonesSelectionnees.map(z => z.score),
       niveauxShved: zonesSelectionnees,
+      toutesZonesCandidates,
+      zoneRetenue,
     });
   }
 

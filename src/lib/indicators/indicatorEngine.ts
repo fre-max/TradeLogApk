@@ -38,7 +38,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.28.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.30.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4825,13 +4825,14 @@ return {
     collecteActive: true,
     parametres: {
       timeframeSource: 'M15',
-      periodeATR: 15,
-      zoneFuzzFactor: 0.1,
+      periodeATR: 2,
+      zoneFuzzFactor: 0.01,
       minRetests: 0,
       afficherNiveauxCasses: true,
       maxReculRecherche: 100,
       exigerDebutEtFinDansPlage: true,
       filtrerParDirectionSetup: true,
+      sectionnerNiveauxAnterieurs: true,
       topNiveauxScore: 3,
       scoreMinimum: 0,
       afficherScoreSurLigne: true,
@@ -4988,6 +4989,36 @@ return {
         groupe: 'Supports & Résistances Shved',
       },
       {
+        cle: 'periodeATR',
+        label: 'Période ATR Shved',
+        description: 'Période de calcul de la volatilité ATR pour dimensionner les zones Shved (défaut: 2)',
+        type: 'number',
+        valeurParDefaut: 2,
+        min: 1,
+        max: 50,
+        step: 1,
+        groupe: 'Supports & Résistances Shved',
+      },
+      {
+        cle: 'zoneFuzzFactor',
+        label: 'Zone Fuzz Factor (Épaisseur)',
+        description: 'Multiplicateur ATR pour l\'épaisseur de la zone Shved (défaut: 0.01 = très fin)',
+        type: 'number',
+        valeurParDefaut: 0.01,
+        min: 0.001,
+        max: 2,
+        step: 0.005,
+        groupe: 'Supports & Résistances Shved',
+      },
+      {
+        cle: 'sectionnerNiveauxAnterieurs',
+        label: 'Sectionner Niveaux Antérieurs (Retests Locaux)',
+        description: 'Si un niveau a débuté avant la plage mais possède des retests à l\'intérieur, il est sectionné au début de la plage pour créer un nouveau niveau local (Option A + Option 1)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Supports & Résistances Shved',
+      },
+      {
         cle: 'toleranceDeficit',
         label: 'Tolérance Retrait Doji (Déficit)',
         description: 'Tolérance si la réintégration reste un peu courte sous Open1 (0.30 = 30%)',
@@ -5119,6 +5150,8 @@ return {
       toleranceDepassement: 2.0,
       maxReculRecherche: 100,
       timeframeSource: 'M15',
+      exigerAutorouteUOP: true,
+      minTauxChevauchementAutoroute: 3.0,
       bullColor: '#00E676',
       bearColor: '#F23645',
     },
@@ -5320,6 +5353,25 @@ return {
         min: 0.0,
         max: 0.50,
         step: 0.05,
+        groupe: "Moteur d'Énergie & Coût des Péages UOP",
+      },
+      {
+        cle: 'exigerAutorouteUOP',
+        label: 'Exiger une Autoroute UOP en Face',
+        description: 'Rejette le setup si le marché en face n\'a pas de vraie autoroute (zone à faible chevauchement uniquement)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: "Moteur d'Énergie & Coût des Péages UOP",
+      },
+      {
+        cle: 'minTauxChevauchementAutoroute',
+        label: 'Taux Min de Chevauchement Autoroute',
+        description: 'Nombre minimum moyen de bougies par palier pour qualifier une vraie autoroute fluide (défaut: 3.0)',
+        type: 'number',
+        valeurParDefaut: 3.0,
+        min: 1.0,
+        max: 10.0,
+        step: 0.5,
         groupe: "Moteur d'Énergie & Coût des Péages UOP",
       },
       {
@@ -5674,6 +5726,22 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
           }
           delete paramsMigres.toleranceProximite;
           aModifieAuVol = true;
+        }
+
+        // 🔄 Migration automatique des valeurs par défaut de l'indicateur Sandbox Doji Shved Plage
+        if (s.id === 'script-sandbox-doji-shved-plage') {
+          if (paramsMigres.periodeATR === 15) {
+            paramsMigres.periodeATR = 2;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.zoneFuzzFactor === 0.1) {
+            paramsMigres.zoneFuzzFactor = 0.01;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.sectionnerNiveauxAnterieurs === undefined) {
+            paramsMigres.sectionnerNiveauxAnterieurs = true;
+            aModifieAuVol = true;
+          }
         }
 
         return {

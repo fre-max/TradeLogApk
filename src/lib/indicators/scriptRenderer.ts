@@ -2,6 +2,7 @@ import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualBox, VisualLine, VisualLabel, VisualCurve, VisualPoint, IndicatorExecutionResult, IndicatorScript } from '@/types/indicatorScript';
 import type { SetupOrchestreSMC } from './favoris/orchestrateurSMC';
+import type { SignalSandboxPlage } from './favoris/sandboxDojiShvedPlage';
 import { dessinerLuxAlgoSMC } from './luxAlgoSMCRenderer';
 import { dessinerProtectedSwings } from './protectedSwingsRenderer';
 import { dessinerZigZag } from './zigzagRenderer';
@@ -404,15 +405,18 @@ export function dessinerSurbrillanceDiagnosticSMC(
 
   const xDoji = obtenirXPourTemps(timeScale, setup.tempsDoji, bougies);
   const xDebutPlage = setup.tempsDebutPlage ? obtenirXPourTemps(timeScale, setup.tempsDebutPlage, bougies) : null;
+  const estAchat = setup.type === 'ACHAT';
 
   ctx.save();
 
+  // ────────────────────────────────────────────────────────────────────────────
   // 1️⃣ Ombrage de la Plage Temporelle Ciblée [DebutPlage ➔ Doji]
+  // ────────────────────────────────────────────────────────────────────────────
   if (xDebutPlage !== null && xDoji !== null && xDoji > xDebutPlage) {
     const largeurPlage = xDoji - xDebutPlage;
 
     // Fond subtil bleuté
-    ctx.fillStyle = 'rgba(41, 182, 246, 0.06)';
+    ctx.fillStyle = 'rgba(41, 182, 246, 0.05)';
     ctx.fillRect(xDebutPlage, 0, largeurPlage, ctx.canvas.height);
 
     // Ligne verticale de début de plage
@@ -424,72 +428,604 @@ export function dessinerSurbrillanceDiagnosticSMC(
     ctx.lineTo(xDebutPlage, ctx.canvas.height);
     ctx.stroke();
 
-    // Petit label discret en haut
-    ctx.fillStyle = '#29B6F6';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillText('📍 Début Plage SMC', xDebutPlage + 4, 16);
+    // Petit badge discret en haut de la plage
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillRect(xDebutPlage + 2, 8, 120, 18);
+    ctx.strokeStyle = 'rgba(41, 182, 246, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(xDebutPlage + 2, 8, 120, 18);
+
+    ctx.fillStyle = '#38BDF8';
+    ctx.font = 'bold 9.5px sans-serif';
+    ctx.fillText('📍 Début Recherche S/R', xDebutPlage + 8, 20);
   }
 
-  // 2️⃣ Tracé de TOUTES les zones S/R candidates analysées dans la plage
+  // ────────────────────────────────────────────────────────────────────────────
+  // 2️⃣ Supports et Résistances Shved analysés (avec changement de couleur net)
+  // ────────────────────────────────────────────────────────────────────────────
+  // Affiche TOUS les supports et résistances analysés pour ce setup,
+  // en distinguant clairement la zone retenue par rapport aux zones rejetées.
   const zones = setup.zonesShvedCandidates || (setup.meilleureZoneShved ? [setup.meilleureZoneShved] : []);
   for (const z of zones) {
     const estRetenue = setup.meilleureZoneShved?.zone.id === z.zone.id;
     const yMed = series.priceToCoordinate(z.zone.prixMedian);
     if (yMed === null) continue;
 
+    const yBas = series.priceToCoordinate(z.zone.prixBas);
+    const yHautCoord = series.priceToCoordinate(z.zone.prixHaut);
+
     const xDebutLigne = obtenirXPourTemps(timeScale, z.zone.dateDebut, bougies) ?? (xDebutPlage ?? 0);
     const xFinLigne = xDoji ?? ctx.canvas.width;
+    const largeurZone = Math.max(10, xFinLigne - xDebutLigne);
 
-    ctx.beginPath();
-    if (estRetenue) {
-      // Zone retenue : cyan vif lumineux plus épais
-      ctx.strokeStyle = '#29B6F6';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 3]);
-    } else {
-      // Zones non retenues : gris discret
-      ctx.strokeStyle = 'rgba(142, 142, 147, 0.45)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
+    const estSupport = z.zone.type === 'SUPPORT';
+
+    // A. Boîte de la zone de prix [prixBas, prixHaut]
+    if (yBas !== null && yHautCoord !== null) {
+      const yHaut = Math.min(yBas, yHautCoord);
+      const hauteurZone = Math.max(4, Math.abs(yBas - yHautCoord));
+
+      if (estRetenue) {
+        // ⭐ ZONE RETENUE : Vert émeraude éclatant pour support, Cyan néon pour résistance
+        const couleurFond = estSupport ? 'rgba(0, 230, 118, 0.18)' : 'rgba(0, 229, 255, 0.18)';
+        const couleurBord = estSupport ? '#00E676' : '#00E5FF';
+
+        ctx.fillStyle = couleurFond;
+        ctx.fillRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+
+        ctx.strokeStyle = couleurBord;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.strokeRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+      } else {
+        // ZONES ÉCARTÉES : Gris ardoise discret et atténué
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.06)';
+        ctx.fillRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+      }
     }
 
+    // B. Ligne médiane
+    ctx.beginPath();
+    if (estRetenue) {
+      ctx.strokeStyle = estSupport ? '#00E676' : '#00E5FF';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+    } else {
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+    }
     ctx.moveTo(xDebutLigne, yMed);
     ctx.lineTo(xFinLigne, yMed);
     ctx.stroke();
 
-    // Badge de score
-    ctx.font = estRetenue ? 'bold 10px sans-serif' : '9px sans-serif';
-    ctx.fillStyle = estRetenue ? '#29B6F6' : '#8E8E93';
-    const texteScore = estRetenue
-      ? `⭐ ${z.zone.type === 'SUPPORT' ? 'Sup' : 'Res'} Retenu [${z.score} pts]`
-      : `${z.zone.type === 'SUPPORT' ? 'Sup' : 'Res'} [${z.score} pts]`;
-    ctx.fillText(texteScore, xDebutLigne + 4, yMed - 4);
+    // C. Badge d'identification du Support / Résistance
+    ctx.setLineDash([]);
+    if (estRetenue) {
+      // Badge très visible pour la zone retenue
+      const texteRetenu = `⭐ ${estSupport ? 'SUPPORT' : 'RÉSISTANCE'} UTILISÉ [${z.score} pts]`;
+      ctx.font = 'bold 10px sans-serif';
+      const wTexte = ctx.measureText(texteRetenu).width;
+
+      const badgeX = xDebutLigne + 4;
+      const badgeY = yMed - 18;
+
+      ctx.fillStyle = estSupport ? 'rgba(6, 44, 24, 0.92)' : 'rgba(8, 47, 73, 0.92)';
+      ctx.fillRect(badgeX, badgeY, wTexte + 12, 16);
+
+      ctx.strokeStyle = estSupport ? '#00E676' : '#00E5FF';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(badgeX, badgeY, wTexte + 12, 16);
+
+      ctx.fillStyle = estSupport ? '#00E676' : '#00E5FF';
+      ctx.fillText(texteRetenu, badgeX + 6, badgeY + 12);
+    } else {
+      // Badge discret pour les zones candidates écartées
+      const texteEcarte = `${estSupport ? 'Support' : 'Résistance'} écarté (${z.score} pts)`;
+      ctx.font = '9px sans-serif';
+      const wTexte = ctx.measureText(texteEcarte).width;
+
+      const badgeX = xDebutLigne + 4;
+      const badgeY = yMed - 15;
+
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.8)';
+      ctx.fillRect(badgeX, badgeY, wTexte + 8, 13);
+
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillText(texteEcarte, badgeX + 4, badgeY + 10);
+    }
   }
 
-  // 3️⃣ Tracé étendu des Paliers d'Overlap UOP
+  // ────────────────────────────────────────────────────────────────────────────
+  // 3️⃣ Quantité de Liquidité Balayée / Carburant Capté au Doji
+  // ────────────────────────────────────────────────────────────────────────────
+  const carburant = setup.carburantInitial ?? setup.detailsCarburant?.carburantTotal ?? 0;
+  if (xDoji !== null && carburant > 0) {
+    const ySL = series.priceToCoordinate(setup.prixSL);
+    if (ySL !== null) {
+      // Halo d'énergie de liquidation
+      ctx.beginPath();
+      ctx.arc(xDoji, ySL, 8, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+      ctx.fill();
+
+      // Badge d'information de liquidité
+      const badgeLiqX = xDoji + 10;
+      const badgeLiqY = estAchat ? ySL + 8 : ySL - 28;
+      const texteLiq = `⚡ Liquidation : ${carburant} pts pris`;
+
+      ctx.font = 'bold 10px sans-serif';
+      const wLiq = ctx.measureText(texteLiq).width;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.fillRect(badgeLiqX, badgeLiqY, wLiq + 12, 18);
+
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(badgeLiqX, badgeLiqY, wLiq + 12, 18);
+
+      ctx.fillStyle = '#FBBF24';
+      ctx.fillText(texteLiq, badgeLiqX + 6, badgeLiqY + 13);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 4️⃣ Profil de Chevauchement UOP (Paliers Percés vs Murs Bloquants)
+  // ────────────────────────────────────────────────────────────────────────────
   const etapesUOP = setup.etapesPaliersUOP || [];
   for (const etape of etapesUOP) {
     const yPalier = series.priceToCoordinate(etape.prixCible);
     if (yPalier === null) continue;
 
     const xDebutPalier = xDoji ?? 0;
-    const xFinPalier = Math.min(ctx.canvas.width, xDebutPalier + 140);
+    const xFinPalier = Math.min(ctx.canvas.width - 20, xDebutPalier + 160);
 
     ctx.beginPath();
-    ctx.strokeStyle = etape.estBloquant ? '#FFA726' : '#29B6F6';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = etape.estBloquant ? '#F97316' : '#38BDF8';
+    ctx.lineWidth = etape.estBloquant ? 2 : 1.5;
+    ctx.setLineDash(etape.estBloquant ? [6, 3] : [3, 3]);
     ctx.moveTo(xDebutPalier, yPalier);
     ctx.lineTo(xFinPalier, yPalier);
     ctx.stroke();
 
+    ctx.setLineDash([]);
     ctx.font = 'bold 9px sans-serif';
-    ctx.fillStyle = etape.estBloquant ? '#FFA726' : '#29B6F6';
     const labelPalier = etape.estBloquant
-      ? `🛑 Mur P${etape.ordre} (${etape.budgetApres}pts)`
-      : `✓ P${etape.ordre} [${etape.tauxChevauchement}x]`;
-    ctx.fillText(labelPalier, xFinPalier - 75, yPalier - 3);
+      ? `🛑 Mur Overlap P${etape.ordre} [${etape.tauxChevauchement}x] (-${etape.peagePalier}pts)`
+      : `✓ Palier P${etape.ordre} [${etape.tauxChevauchement}x] (${etape.budgetApres}pts restant)`;
+
+    const wLabel = ctx.measureText(labelPalier).width;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.fillRect(xFinPalier - wLabel - 6, yPalier - 13, wLabel + 8, 14);
+
+    ctx.fillStyle = etape.estBloquant ? '#FB923C' : '#38BDF8';
+    ctx.fillText(labelPalier, xFinPalier - wLabel - 2, yPalier - 2);
   }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 5️⃣ Take Profit (TP) Optimal et Stop Loss (SL) du Setup
+  // ────────────────────────────────────────────────────────────────────────────
+  const xDebutTrade = xDoji ?? 0;
+  const xFinTrade = Math.min(ctx.canvas.width - 20, xDebutTrade + 200);
+
+  const yEntree = series.priceToCoordinate(setup.prixEntree);
+  const ySL = series.priceToCoordinate(setup.prixSL);
+  const yTP = setup.prixTP !== undefined ? series.priceToCoordinate(setup.prixTP) : null;
+
+  // A. Ligne et Zone de Stop Loss (SL)
+  if (ySL !== null && yEntree !== null) {
+    // Ombrage rouge de risque
+    const yHautSL = Math.min(yEntree, ySL);
+    const hautSL = Math.max(2, Math.abs(yEntree - ySL));
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
+    ctx.fillRect(xDebutTrade, yHautSL, xFinTrade - xDebutTrade, hautSL);
+
+    // Ligne SL
+    ctx.beginPath();
+    ctx.strokeStyle = '#EF4444';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([5, 3]);
+    ctx.moveTo(xDebutTrade, ySL);
+    ctx.lineTo(xFinTrade, ySL);
+    ctx.stroke();
+
+    // Badge SL
+    ctx.setLineDash([]);
+    const texteSL = `🛑 SL : ${setup.prixSL.toFixed(2)}`;
+    ctx.font = 'bold 9.5px sans-serif';
+    const wSL = ctx.measureText(texteSL).width;
+
+    ctx.fillStyle = 'rgba(69, 10, 10, 0.9)';
+    ctx.fillRect(xFinTrade - wSL - 8, ySL - 14, wSL + 8, 15);
+    ctx.strokeStyle = '#EF4444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(xFinTrade - wSL - 8, ySL - 14, wSL + 8, 15);
+
+    ctx.fillStyle = '#FCA5A5';
+    ctx.fillText(texteSL, xFinTrade - wSL - 4, ySL - 2);
+  }
+
+  // B. Ligne et Zone de Take Profit Optimal (TP)
+  if (yTP !== null && yEntree !== null) {
+    // Ombrage vert de profit
+    const yHautTP = Math.min(yEntree, yTP);
+    const hautTP = Math.max(2, Math.abs(yEntree - yTP));
+    ctx.fillStyle = 'rgba(0, 230, 118, 0.09)';
+    ctx.fillRect(xDebutTrade, yHautTP, xFinTrade - xDebutTrade, hautTP);
+
+    // Ligne TP continue bien nette
+    ctx.beginPath();
+    ctx.strokeStyle = '#00E676';
+    ctx.lineWidth = 2.2;
+    ctx.setLineDash([]);
+    ctx.moveTo(xDebutTrade, yTP);
+    ctx.lineTo(xFinTrade, yTP);
+    ctx.stroke();
+
+    // Badge Take Profit lumineux
+    const texteTP = `🎯 TP OPTIMAL (UOP) : ${setup.prixTP?.toFixed(2)} (${setup.ratioRR}R)`;
+    ctx.font = 'bold 10.5px sans-serif';
+    const wTP = ctx.measureText(texteTP).width;
+
+    ctx.fillStyle = 'rgba(6, 44, 24, 0.95)';
+    ctx.fillRect(xFinTrade - wTP - 10, yTP - 16, wTP + 10, 18);
+    ctx.strokeStyle = '#00E676';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(xFinTrade - wTP - 10, yTP - 16, wTP + 10, 18);
+
+    ctx.fillStyle = '#69F0AE';
+    ctx.fillText(texteTP, xFinTrade - wTP - 5, yTP - 3);
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // 🚀 VECTEUR DE TRAJECTOIRE D'ÉNERGIE (FLÈCHE DE PROGRESSION ENTRE LES PALIERS)
+    // ────────────────────────────────────────────────────────────────────────────
+    // Matérialise l'ascension du trade depuis l'Entrée jusqu'au TP en traversant chaque palier
+    const xTrajectoire = xDebutTrade + 28;
+    const directionHaut = yTP < yEntree; // En pixel, monter = y diminue
+
+    // Faisceau lumineux vertical
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0, 230, 118, 0.5)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([]);
+    ctx.moveTo(xTrajectoire, yEntree);
+    ctx.lineTo(xTrajectoire, yTP);
+    ctx.stroke();
+
+    // Nœud lumineux de départ (Entrée)
+    ctx.beginPath();
+    ctx.arc(xTrajectoire, yEntree, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#00E676';
+    ctx.fill();
+
+    // Nœuds lumineux pour chaque palier UOP traversé sur la trajectoire
+    for (const etape of etapesUOP) {
+      const yP = series.priceToCoordinate(etape.prixCible);
+      if (yP !== null) {
+        ctx.beginPath();
+        ctx.arc(xTrajectoire, yP, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = etape.estBloquant ? '#F97316' : '#38BDF8';
+        ctx.fill();
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+
+    // Pointe de flèche terminale pointant vers le Take Profit
+    ctx.beginPath();
+    const tailleFleche = 6;
+    if (directionHaut) {
+      ctx.moveTo(xTrajectoire - tailleFleche, yTP + tailleFleche);
+      ctx.lineTo(xTrajectoire, yTP);
+      ctx.lineTo(xTrajectoire + tailleFleche, yTP + tailleFleche);
+    } else {
+      ctx.moveTo(xTrajectoire - tailleFleche, yTP - tailleFleche);
+      ctx.lineTo(xTrajectoire, yTP);
+      ctx.lineTo(xTrajectoire + tailleFleche, yTP - tailleFleche);
+    }
+    ctx.strokeStyle = '#00E676';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // ⚡ MINI-JAUGE VERTICALE D'ÉNERGIE & CARBURANT SUR LE GRAPHIQUE
+    // ────────────────────────────────────────────────────────────────────────────
+    // Dessinée sur la droite du bloc de trade pour visualiser le niveau de réservoir
+    const carbuInitial = setup.carburantInitial ?? setup.detailsCarburant?.carburantTotal ?? 0;
+    const carbuRestant = setup.carburantRestant ?? 0;
+    if (carbuInitial > 0) {
+      const xJauge = xFinTrade + 8;
+      const hautJauge = 70;
+      const largJauge = 12;
+      const yJauge = Math.min(yEntree, yTP) + Math.max(0, (Math.abs(yEntree - yTP) - hautJauge) / 2);
+
+      const ratioCarburant = Math.max(0, Math.min(1, carbuRestant / carbuInitial));
+      const hauteurRemplie = hautJauge * ratioCarburant;
+
+      // Boîte de la jauge (cadre)
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.fillRect(xJauge, yJauge, largJauge, hautJauge);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(xJauge, yJauge, largJauge, hautJauge);
+
+      // Niveau de carburant restant (remplissage vert/cyan dégradé)
+      const yRemplissage = yJauge + (hautJauge - hauteurRemplie);
+      ctx.fillStyle = ratioCarburant > 0.4 ? '#00E676' : (ratioCarburant > 0.15 ? '#FBBF24' : '#EF4444');
+      ctx.fillRect(xJauge + 1.5, yRemplissage, largJauge - 3, hauteurRemplie);
+
+      // Étiquette en haut de la jauge
+      ctx.font = 'bold 8px sans-serif';
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillText(`⚡${carbuInitial}`, xJauge - 2, yJauge - 4);
+
+      // Étiquette en bas (reste)
+      ctx.font = '8px sans-serif';
+      ctx.fillStyle = '#CBD5E1';
+      ctx.fillText(`${carbuRestant}p`, xJauge - 2, yJauge + hautJauge + 10);
+    }
+  }
+
+  // C. Ligne d'Entrée
+  if (yEntree !== null) {
+    ctx.beginPath();
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 3]);
+    ctx.moveTo(xDebutTrade, yEntree);
+    ctx.lineTo(xFinTrade, yEntree);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    ctx.font = '9px sans-serif';
+    ctx.fillStyle = '#CBD5E1';
+    ctx.fillText(`Entrée : ${setup.prixEntree.toFixed(2)}`, xDebutTrade + 6, yEntree - 3);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 6️⃣ Cartouche HUD Épuré en Haut du Canvas
+  // ────────────────────────────────────────────────────────────────────────────
+  const texteHUD = `🔍 DIAGNOSTIC GRAPHIQUE SMC #${setup.indexDoji} (${setup.type}) | S/R Retenu: ${setup.scoreShved}pts | Carburant: ${carburant}pts | TP: ${setup.prixTP ?? '-'} (${setup.ratioRR ?? '-'}R)`;
+  ctx.font = 'bold 10px sans-serif';
+  const wHUD = ctx.measureText(texteHUD).width;
+
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+  ctx.fillRect(10, 8, wHUD + 16, 20);
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(10, 8, wHUD + 16, 20);
+
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillText(texteHUD, 18, 22);
+
+  ctx.restore();
+}
+
+/**
+ * 🔍 Projette sur le canvas la surbrillance temporaire d'un setup Sandbox Doji Shved inspecté en diagnostic.
+ * Affiche la plage temporelle ciblée, TOUS les supports (Achat) ou résistances (Vente) candidats de la plage
+ * avec leurs scores, en mettant en valeur la zone retenue (étoilée) et la zone sélectionnée/cliquée.
+ */
+export function dessinerSurbrillanceDiagnosticSandbox(
+  ctx: CanvasRenderingContext2D,
+  signal: SignalSandboxPlage,
+  chart: IChartApi,
+  series: ISeriesApi<'Candlestick'>,
+  bougies: Bougie[],
+  zoneSelectionneeId?: string | null
+): void {
+  if (!signal || !chart || !series) return;
+  const timeScale = chart.timeScale();
+
+  const xDoji = obtenirXPourTemps(timeScale, signal.temps, bougies);
+  const xDebutPlage = signal.tempsDebutPlage ? obtenirXPourTemps(timeScale, signal.tempsDebutPlage, bougies) : null;
+  const estAchat = signal.type === 'ACHAT';
+
+  ctx.save();
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 1️⃣ Ombrage de la Plage Temporelle Ciblée [DebutPlage ➔ Doji]
+  // ────────────────────────────────────────────────────────────────────────────
+  if (xDebutPlage !== null && xDoji !== null && xDoji > xDebutPlage) {
+    const largeurPlage = xDoji - xDebutPlage;
+
+    // Fond subtil bleuté
+    ctx.fillStyle = 'rgba(41, 182, 246, 0.05)';
+    ctx.fillRect(xDebutPlage, 0, largeurPlage, ctx.canvas.height);
+
+    // Ligne verticale de début de plage
+    ctx.strokeStyle = 'rgba(41, 182, 246, 0.4)';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(xDebutPlage, 0);
+    ctx.lineTo(xDebutPlage, ctx.canvas.height);
+    ctx.stroke();
+
+    // Badge discret début de plage
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillRect(xDebutPlage + 2, 8, 126, 18);
+    ctx.strokeStyle = 'rgba(41, 182, 246, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(xDebutPlage + 2, 8, 126, 18);
+
+    ctx.fillStyle = '#38BDF8';
+    ctx.font = 'bold 9.5px sans-serif';
+    ctx.fillText('📍 Début Recherche S/R', xDebutPlage + 8, 20);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 2️⃣ Supports ou Résistances analysés dans la plage (TOUS les candidats)
+  // ────────────────────────────────────────────────────────────────────────────
+  const zonesCandidates = signal.toutesZonesCandidates || signal.niveauxShved || [];
+  const idZoneRetenue = signal.zoneRetenue?.zone?.id ?? (signal.niveauxShved && signal.niveauxShved.length > 0 ? signal.niveauxShved[0].zone.id : null);
+
+  for (const z of zonesCandidates) {
+    const estRetenue = idZoneRetenue === z.zone.id;
+    const estInspectee = Boolean(zoneSelectionneeId && zoneSelectionneeId === z.zone.id);
+    const yMed = series.priceToCoordinate(z.zone.prixMedian);
+    if (yMed === null) continue;
+
+    const yBas = series.priceToCoordinate(z.zone.prixBas);
+    const yHautCoord = series.priceToCoordinate(z.zone.prixHaut);
+
+    const xDebutLigne = obtenirXPourTemps(timeScale, z.zone.dateDebut, bougies) ?? (xDebutPlage ?? 0);
+    const xFinLigne = xDoji ?? ctx.canvas.width;
+    const largeurZone = Math.max(12, xFinLigne - xDebutLigne);
+    const estSupport = z.zone.type === 'SUPPORT';
+
+    // A. Boîte de la zone de prix [prixBas, prixHaut]
+    if (yBas !== null && yHautCoord !== null) {
+      const yHaut = Math.min(yBas, yHautCoord);
+      const hauteurZone = Math.max(4, Math.abs(yBas - yHautCoord));
+
+      if (estInspectee) {
+        // 🔍 ZONE CLIQUEE / INSPECTÉE : Halo doré éclatant
+        ctx.fillStyle = 'rgba(251, 191, 36, 0.28)';
+        ctx.fillRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+        ctx.strokeStyle = '#FBBF24';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+        ctx.strokeRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+      } else if (estRetenue) {
+        // ⭐ ZONE RETENUE (GAGNANTE DU TRI) : Vert émeraude éclatant pour support, Cyan pour résistance
+        const couleurFond = estSupport ? 'rgba(0, 230, 118, 0.20)' : 'rgba(0, 229, 255, 0.20)';
+        const couleurBord = estSupport ? '#00E676' : '#00E5FF';
+
+        ctx.fillStyle = couleurFond;
+        ctx.fillRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+        ctx.strokeStyle = couleurBord;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.strokeRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+      } else {
+        // ZONES ÉCARTÉES : Teinte douce ambre/ardoise avec bordure pointillée
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.07)';
+        ctx.fillRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.40)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(xDebutLigne, yHaut, largeurZone, hauteurZone);
+      }
+    }
+
+    // B. Ligne médiane
+    ctx.beginPath();
+    if (estInspectee) {
+      ctx.strokeStyle = '#FBBF24';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 3]);
+    } else if (estRetenue) {
+      ctx.strokeStyle = estSupport ? '#00E676' : '#00E5FF';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+    } else {
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.50)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+    }
+    ctx.moveTo(xDebutLigne, yMed);
+    ctx.lineTo(xFinLigne, yMed);
+    ctx.stroke();
+
+    // C. Badge d'identification
+    ctx.setLineDash([]);
+    if (estInspectee) {
+      const texteInspect = `🔍 ${estSupport ? 'SUPPORT' : 'RÉSISTANCE'} INSPECTÉ [${z.score} pts]`;
+      ctx.font = 'bold 10px sans-serif';
+      const wTexte = ctx.measureText(texteInspect).width;
+      const badgeX = xDebutLigne + 4;
+      const badgeY = yMed - 18;
+
+      ctx.fillStyle = 'rgba(30, 27, 75, 0.95)';
+      ctx.fillRect(badgeX, badgeY, wTexte + 12, 16);
+      ctx.strokeStyle = '#FBBF24';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(badgeX, badgeY, wTexte + 12, 16);
+
+      ctx.fillStyle = '#FBBF24';
+      ctx.fillText(texteInspect, badgeX + 6, badgeY + 12);
+    } else if (estRetenue) {
+      const texteRetenu = `⭐ ${estSupport ? 'SUPPORT' : 'RÉSISTANCE'} RETENU [${z.score} pts]`;
+      ctx.font = 'bold 10px sans-serif';
+      const wTexte = ctx.measureText(texteRetenu).width;
+      const badgeX = xDebutLigne + 4;
+      const badgeY = yMed - 18;
+
+      ctx.fillStyle = estSupport ? 'rgba(6, 44, 24, 0.92)' : 'rgba(8, 47, 73, 0.92)';
+      ctx.fillRect(badgeX, badgeY, wTexte + 12, 16);
+      ctx.strokeStyle = estSupport ? '#00E676' : '#00E5FF';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(badgeX, badgeY, wTexte + 12, 16);
+
+      ctx.fillStyle = estSupport ? '#00E676' : '#00E5FF';
+      ctx.fillText(texteRetenu, badgeX + 6, badgeY + 12);
+    } else {
+      const texteEcarte = `${estSupport ? 'Sup' : 'Res'} candidat (${z.score} pts)`;
+      ctx.font = '9px sans-serif';
+      const wTexte = ctx.measureText(texteEcarte).width;
+      const badgeX = xDebutLigne + 4;
+      const badgeY = yMed - 15;
+
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.8)';
+      ctx.fillRect(badgeX, badgeY, wTexte + 8, 13);
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillText(texteEcarte, badgeX + 4, badgeY + 10);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 3️⃣ Marqueur du Doji analysé
+  // ────────────────────────────────────────────────────────────────────────────
+  if (xDoji !== null) {
+    const yExtreme = series.priceToCoordinate(signal.prixExtreme);
+    if (yExtreme !== null) {
+      ctx.beginPath();
+      ctx.arc(xDoji, yExtreme, 7, 0, Math.PI * 2);
+      ctx.fillStyle = estAchat ? 'rgba(0, 230, 118, 0.35)' : 'rgba(242, 54, 69, 0.35)';
+      ctx.fill();
+      ctx.strokeStyle = estAchat ? '#00E676' : '#F23645';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      const badgeDojiX = xDoji + 10;
+      const badgeDojiY = estAchat ? yExtreme + 8 : yExtreme - 26;
+      const texteDoji = `🎯 Doji ${signal.type} (#${signal.indexBougie}) [${zonesCandidates.length} S/R candidats]`;
+
+      ctx.font = 'bold 10px sans-serif';
+      const wDoji = ctx.measureText(texteDoji).width;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.fillRect(badgeDojiX, badgeDojiY, wDoji + 12, 18);
+      ctx.strokeStyle = estAchat ? '#00E676' : '#F23645';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(badgeDojiX, badgeDojiY, wDoji + 12, 18);
+
+      ctx.fillStyle = '#F8FAFC';
+      ctx.fillText(texteDoji, badgeDojiX + 6, badgeDojiY + 13);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 4️⃣ Cartouche HUD en Haut du Canvas
+  // ────────────────────────────────────────────────────────────────────────────
+  const texteHUD = `🔍 DIAGNOSTIC SANDBOX DOJI #${signal.indexBougie} (${signal.type}) | S/R Retenu: ${signal.zoneRetenue ? signal.zoneRetenue.score + 'pts' : 'Aucun'} | ${zonesCandidates.length} niveaux analysés dans la plage`;
+  ctx.font = 'bold 10px sans-serif';
+  const wHUD = ctx.measureText(texteHUD).width;
+
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+  ctx.fillRect(10, 8, wHUD + 16, 20);
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(10, 8, wHUD + 16, 20);
+
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillText(texteHUD, 18, 22);
 
   ctx.restore();
 }

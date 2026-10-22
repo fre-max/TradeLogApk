@@ -39,6 +39,7 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     const resultat = calculerOrchestrateurSMC(bougies, {
       activerFiltreTaille: false,
       nbBougiesConfirmation: 3,
+      exigerAutorouteUOP: false, // Désactivé sur ces bougies synthétiques pour tester la confirmation
     });
 
     expect(resultat.setups.length).toBeGreaterThanOrEqual(1);
@@ -97,6 +98,7 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
       activerFiltreTaille: false,
       nbBougiesConfirmation: 3,
       afficherSetupsAnnules: true,
+      exigerAutorouteUOP: false, // Désactivé sur bougies synthétiques
     });
 
     const setupAchat = resultat.setups.find((s) => s.type === 'ACHAT');
@@ -128,6 +130,7 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     const resultat = calculerOrchestrateurSMC(bougies, {
       activerFiltreTaille: false,
       nbBougiesConfirmation: 3,
+      exigerAutorouteUOP: false, // Désactivé sur bougies synthétiques
     });
 
     const setupAchat = resultat.setups.find((s) => s.type === 'ACHAT');
@@ -191,6 +194,7 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
       activerFiltreTaille: false,
       nbBougiesConfirmation: 3,
       masquerSetupsTermines: true,
+      exigerAutorouteUOP: false, // Désactivé sur bougies synthétiques
     });
 
     const setupAchat = resMasque.setups.find((s) => s.type === 'ACHAT');
@@ -210,6 +214,7 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
       activerFiltreTaille: false,
       nbBougiesConfirmation: 3,
       masquerSetupsTermines: false,
+      exigerAutorouteUOP: false, // Désactivé sur bougies synthétiques
     });
     expect(resAffiche.primitives.points?.length).toBeGreaterThan(0);
   });
@@ -323,6 +328,7 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
       nbBougiesConfirmation: 3,
       afficherPointsLiquidation: true,
       afficherPaliersUOP: true,
+      exigerAutorouteUOP: false, // Désactivé sur bougies synthétiques
     });
 
     // 1. Badge de liquidité captée présent
@@ -336,5 +342,35 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(ligneSL).toBeDefined();
     expect(ligneTP).toBeDefined();
   });
+
+  it('rejette et n\'affiche absolument rien si aucune autoroute UOP fluide n\'est en face (exigerAutorouteUOP = true)', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 15; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+    // Doji Achat qui capte du carburant par liquidation
+    bougies.push(creerBougie(15000, 99.0, 99.0, 85.0, 86.0));
+    bougies.push(creerBougie(16000, 86.0, 99.0, 86.0, 98.8));
+    // 3 bougies de confirmation
+    bougies.push(creerBougie(17000, 98.8, 101.0, 95.0, 100.0));
+    bougies.push(creerBougie(18000, 100.0, 103.0, 96.0, 102.0));
+    bougies.push(creerBougie(19000, 102.0, 105.0, 99.0, 104.0));
+
+    // Avec la condition stricte d'autoroute activée (par défaut) :
+    // Même si le carburant a été capté, comme il n'y a pas d'autoroute UOP en face (tpsCandidats vide ou < seuil),
+    // le setup NE DOIT PAS être considéré comme un setup et NE DOIT PAS être affiché !
+    const resultatRejet = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      nbBougiesConfirmation: 3,
+      exigerAutorouteUOP: true, // Condition stricte activée
+    });
+
+    expect(resultatRejet.setups.length).toBe(0);
+    expect(resultatRejet.statistiques.totalDetectes).toBe(0);
+    expect(resultatRejet.statistiques.totalConfirmes).toBe(0);
+    expect(resultatRejet.primitives.points?.length || 0).toBe(0);
+    expect(resultatRejet.primitives.lignes?.length || 0).toBe(0);
+  });
 });
+
 

@@ -406,6 +406,10 @@ export interface ParametresOrchestrateurSMC {
   zigzagDepth?: number;                  // Sensibilité ZigZag UOP (défaut: 8)
   nbVaguesSuperposees?: number;          // Nombre de vagues superposées UOP (défaut: 4)
 
+  // ─── 🛣️ Condition d'Autoroute UOP Obligatoire ───
+  exigerAutorouteUOP?: boolean;          // [COND-UOP-04] Exiger une autoroute UOP en face du trade (rejette si faible chevauchement uniquement) (défaut: true)
+  minTauxChevauchementAutoroute?: number; // [COND-UOP-04] Taux minimum de bougies de chevauchement requis pour qualifier l'autoroute (défaut: 3.0)
+
   // ─── 🎨 Visuels Épurés & Minimalistes (Ergonomie Pro) ───
   modeVisuel?: 'EPURE' | 'COMPLET';      // 'EPURE' (point discret + micro-segments) ou 'COMPLET' (défaut: 'EPURE')
   afficherPointDoji?: boolean;           // Point discret sur la mèche du Doji (défaut: true)
@@ -627,19 +631,79 @@ export interface ResultatPorteeDynamique {
 }
 
 /**
- * Simule le parcours du prix à travers le profil UOP et détermine le TP optimal
- * en fonction du budget de carburant restant et des obstacles (paliers non-mitigés).
+ * ==============================================================================
+ * 🚀 MOTEUR D'ÉNERGIE & DÉTERMINATION DU TAKE PROFIT OPTIMAL (TP1 vs TP2)
+ * ==============================================================================
  * 
- * Exemple :
- * const portee = calculerPorteeDynamiqueUOP({
- *   prixEntree: 1.1000,
- *   prixSL: 1.0970,
- *   direction: 'ACHAT',
- *   carburantInitial: 450,
- *   tpsCandidats: tps,
- *   hauteurMoyenne: 0.0020
- * });
- * console.log('TP Optimal calculé :', portee.prixTPOptimal);
+ * 💡 COMMENT L'ORCHESTRATEUR CHOISIT-IL ENTRE TP1 ET TP2 ?
+ * 
+ * Lorsque l'indicateur UOP fournit la liste des cibles potentielles :
+ *   • `TP1` = Premier corridor de liquidité goudronnée (cible sécurisée et rapide).
+ *   • `TP2` = Deuxième corridor de liquidité situé au-delà du premier grand trou (grand mouvement).
+ * 
+ * Le Chef d'Orchestre SMC détermine le **TP Optimal** selon 2 modes possibles :
+ * 
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 🔹 MODE 1 : LE MODÈLE D'ÉNERGIE & FRICTION (`modeCalculTP = 'ENERGIE_FRICTION'`, DÉFAUT)
+ * ──────────────────────────────────────────────────────────────────────────────
+ * Ce modèle simule la physique réelle du carnet d'ordres :
+ * 
+ * 1. ⛽ PRODUCTION DU CARBURANT INITIAL (Réservoir B0 issu du balayage de liquidité) :
+ *    - `pointsRetests` = `nombreRetests * pointsParRetest` (défaut: 100 pts/retest, max 400 pts).
+ *    - `multiplicateurMeche` :
+ *        • Mèche profonde (> 1.2 x ATR)   ➔ x1.6 (liquidation massive d'ordres stop).
+ *        • Mèche normale (0.5 à 1.2 x ATR) ➔ x1.3.
+ *        • Mèche courte (< 0.5 x ATR)      ➔ x1.0.
+ *    - Carburant Total = `pointsRetests * multiplicateurMeche` (ex: 3 retests * 100 * 1.6 = 480 pts).
+ * 
+ * 2. 🛣️ CONSOMMATION CONTINUE PENDANT LA TRAJECTOIRE (Friction) :
+ *    - Le prix avance vers le TP et consomme du carburant selon la distance franchie (en ATR) :
+ *        • `coutParATR` (défaut: 50 pts/ATR).
+ *        • Multiplié par le type de terrain : x0.5 (fort overlap / autoroute), x1.0 (moyen), x2.0 (zone vierge).
+ * 
+ * 3. 🛑 PÉAGE DE PERCÉE DU TP1 & ACCÈS AU TP2 :
+ *    - Lorsqu'il arrive au niveau du premier palier non-mitigé (TP1) :
+ *        • **Péage requis** : `peagePalierUOP = 100 points`.
+ *        • **SI Budget Restant >= 100 pts** :
+ *            ➔ Le palier TP1 est **PERCÉ** ✅ ! Le marché absorbe l'obstacle.
+ *            ➔ Le prix continue sa route et **VISE LE TP2** !
+ *        • **SI Budget Restant < 100 pts** :
+ *            ➔ Le palier TP1 forme un **MUR INFRANCHISSABLE** 🛑 !
+ *            ➔ Le TP Optimal est ancré **juste devant le palier TP1** avec une marge de sécurité
+ *              (`margeSecuriteDevantPalier = 15% d'ATR`).
+ * 
+ * 4. 🚀 ATTEINTE DU TP2 :
+ *    - Si le prix a percé TP1 et a encore assez de carburant pour payer la distance jusqu'à TP2,
+ *      le TP Optimal devient **TP2** !
+ * 
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 🔹 MODE 2 : LE MODÈLE STANDARD PAR SCORE SHVED (`modeCalculTP = 'SCORE_SHVED'`)
+ * ──────────────────────────────────────────────────────────────────────────────
+ * Basé sur une règle proportionnelle simple :
+ *   • Si `scoreShved >= seuilScoreGrandMouvement` (défaut: 70 points) :
+ *       ➔ Liquidité majeure balayée ➔ On vise directement le **TP2** !
+ *   • Si `scoreShved < 70 points` :
+ *       ➔ Liquidité mineure ➔ On sécurise sur le **TP1**.
+ * 
+ * ──────────────────────────────────────────────────────────────────────────────
+ * ⚙️ LISTE DES VARIABLES CLÉS POUR AJUSTER TP1 / TP2 DANS VOS TESTS :
+ * ──────────────────────────────────────────────────────────────────────────────
+ * • `peagePalierUOP` (défaut: 100 pts) :
+ *     - Si abaissé à 50 : TP1 est percé beaucoup plus facilement ➔ vise plus souvent TP2.
+ *     - Si augmenté à 200 : TP1 est très dur à percer ➔ s'arrête presque toujours à TP1.
+ * 
+ * • `pointsParRetest` (défaut: 100 pts) :
+ *     - Quantité de carburant ajoutée par retest sur le support/résistance.
+ * 
+ * • `bonusMecheProfonde` (défaut: 1.6x) :
+ *     - Multiplicateur de carburant accordé aux mèches de balayage profondes.
+ * 
+ * • `seuilScoreGrandMouvement` (défaut: 70 pts) :
+ *     - Seuil du score Shved pour basculer de TP1 vers TP2 dans le modèle standard.
+ * 
+ * • `margeSecuriteDevantPalier` (défaut: 0.15, soit 15% d'ATR) :
+ *     - Distance de sécurité avant un mur bloquant pour garantir l'exécution de l'ordre.
+ * ==============================================================================
  */
 export function calculerPorteeDynamiqueUOP(options: {
   prixEntree: number;
@@ -929,6 +993,8 @@ export function calculerOrchestrateurSMC(
 
   const seuilScoreGrandMouvement = Math.max(10, Number(parametres.seuilScoreGrandMouvement ?? 70));
   const scoreMinimumShved = Math.max(0, Number(parametres.scoreMinimumShved ?? 0));
+  const exigerAutorouteUOP = parametres.exigerAutorouteUOP !== false; // [COND-UOP-04] Actif par défaut !
+  const minTauxChevauchementAutoroute = Math.max(0.5, Number(parametres.minTauxChevauchementAutoroute ?? 3.0));
   const bullColor = parametres.bullColor || '#00E676';
   const bearColor = parametres.bearColor || '#F23645';
 
@@ -990,7 +1056,6 @@ export function calculerOrchestrateurSMC(
 
   // 5️⃣ Traitement et Orchestration de chaque signal
   for (const doji of signauxDojis) {
-    totalDetectes++;
     const estAchat = doji.type === 'ACHAT';
     const indexDoji = doji.indexBougie;
     const prixEntree = doji.close2;
@@ -1018,6 +1083,37 @@ export function calculerOrchestrateurSMC(
     if (scoreShved < scoreMinimumShved) {
       continue;
     }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // 🛣️ [COND-UOP-04] CONDITION D'AUTOROUTE UOP OBLIGATOIRE EN FACE DU TRADE
+    // ────────────────────────────────────────────────────────────────────────────
+    // Même si le Doji a capté du carburant par liquidation, si en face de nous
+    // il n'y a PAS de vraie autoroute (uniquement un terrain à faible chevauchement
+    // ou aucun palier goudronné UOP), on ne considère PAS cela comme un setup !
+    const tpsCandidats = estAchat
+      ? (resultatUOP.tpOptimauxAchat || []).filter((tp) => tp.prixCible > prixEntree)
+      : (resultatUOP.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
+
+    if (exigerAutorouteUOP) {
+      // 1. S'il n'y a aucune route goudronnée UOP détectée en face : REJET DU SETUP !
+      if (!tpsCandidats || tpsCandidats.length === 0) {
+        continue;
+      }
+
+      // 2. Vérifier qu'au moins un palier UOP en face est une vraie autoroute fluide
+      // (taux moyen de chevauchement >= seuil minimal d'autoroute)
+      const aUneAutorouteFluide = tpsCandidats.some(
+        (tp) => tp.tauxMoyenChevauchement >= minTauxChevauchementAutoroute
+      );
+
+      if (!aUneAutorouteFluide) {
+        // En face, ce n'est qu'une zone à faible chevauchement ➔ REJET DU SETUP !
+        continue;
+      }
+    }
+
+    // Le setup est validé par tous les filtres géométriques & structurels : on le comptabilise
+    totalDetectes++;
 
     // B. Vérification du RANGE DE CONFIRMATION (les N bougies suivantes)
     let statut: StatutSetupSMC = 'CONFIRME';
@@ -1071,11 +1167,6 @@ export function calculerOrchestrateurSMC(
     let carburantRestant: number | undefined;
     let paliersTraverses: number | undefined;
     let estLimiteParPalier: boolean | undefined;
-
-    // Sélection des TP candidats selon la direction
-    const tpsCandidats = estAchat
-      ? (resultatUOP.tpOptimauxAchat || []).filter((tp) => tp.prixCible > prixEntree)
-      : (resultatUOP.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
 
     let paliersAnalyses: PalierUOPAnalyse[] = [];
     let etapesPaliersUOP: EtapePalierUOPDetail[] | undefined;

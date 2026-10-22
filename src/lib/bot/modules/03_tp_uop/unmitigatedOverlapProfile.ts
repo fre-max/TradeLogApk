@@ -440,23 +440,63 @@ export function construireSuperpositionVagues(
 }
 
 /**
- * Calcule les Take Profit Optimaux (TPO) Achat et Vente simultanément à partir du prix actuel,
- * en s'appuyant strictement sur les barres bleu foncé (Sweep / fort chevauchement)
- * issues de la superposition des vagues précédentes et de la vague courante.
+ * ==============================================================================
+ * 🎯 DÉTECTION DES TAKE PROFIT OPTIMAUX (TP1 & TP2) - PRINCIPE & CONDITIONS
+ * ==============================================================================
  * 
- * Règle de calcul :
- * 1. Part du prix actuel (cours de clôture de la dernière bougie).
- * 2. Pour l'Achat (vers le haut) et pour la Vente (vers le bas) :
- *    - Scrute les paliers de prix successifs dans les histogrammes superposés.
- *    - Dès qu'un palier est "bleu foncé" (atteint le Sweep), il intègre la zone de Take Profit.
- *    - Règle des 5% de marge : si une interruption ou un creux entre blocs bleu foncé
- *      représente <= seuilMargeTrouPourcent (ex: 5%) de la hauteur totale accumulée,
- *      on l'absorbe et ON AJOUTE LA PARTIE BLEU FONCÉ QUI SUIT !
- *    - Dès qu'un creux dépasse 5% (ou fin définitive des blocs bleu foncé),
- *      on fige le TP Optimal à la sortie de la zone bleu foncé accumulée (au sommet pour l'Achat, au plancher pour la Vente).
+ * 💡 D'OÙ VIENNENT LE PREMIER TP (TP1) ET LE DEUXIÈME TP (TP2) ?
  * 
- * Exemple :
- * const { tpOptimauxAchat, tpOptimauxVente } = calculerTPOptimaux(prixActuel, step, mapSuperposition, options);
+ * L'indicateur UOP (Unmitigated Overlap Profile) calcule les TP mathématiques non pas
+ * sur des ticks fictifs, mais sur les ZONES DE FORT CHEVAUCHEMENT HORIZONTAL
+ * (les zones "bleu foncé" ou "goudronnées" où les vagues ZigZag précédentes et actuelles
+ * ont superposé leurs corps et mèches, créant une autoroute de liquidité institutionnelle).
+ * 
+ * ------------------------------------------------------------------------------
+ * 🔹 ÉTAPE 1 : IDENTIFICATION DES PALIERS GOUDRONNÉS (BLEU FONCÉ)
+ * ------------------------------------------------------------------------------
+ * Un palier de prix (hauteur discrète `step`) est qualifié de "goudronné" si :
+ *   • `sommeBougies >= seuilBougiesBleuFonce` (Par défaut : 3 bougies cumulées).
+ *   • `nbVagues >= minVaguesSuperposition`   (Par défaut : au moins 1 vague ayant traversé).
+ * Les paliers contigus bleu foncé forment un "Tronçon Goudronné" (ex: AB).
+ * 
+ * ------------------------------------------------------------------------------
+ * 🔹 ÉTAPE 2 : LA CONDITION DE COUPURE DE LA ROUTE & NAISSANCE DU TP1
+ * ------------------------------------------------------------------------------
+ * Entre deux tronçons goudronnés successifs (ex: AB et CD), il existe un "trou" (zone blanche sans liquidité) :
+ *   • Formule du trou : `totalEntier = hauteurGoudron + hauteurTrou`
+ *   • Ratio du trou : `ratioTrou = (hauteurTrou / totalEntier) * 100`
+ * 
+ * 👉 RÈGLE DU SEUIL DE TOLÉRANCE DE 5% (`seuilMargeTrouPourcent = 5`) :
+ *   1. Si `ratioTrou <= 5%` : Le trou est considéré comme une imperfection mineure.
+ *      ➔ Le trou est ABSORBÉ et la route s'étend jusqu'au sommet du tronçon suivant (CD).
+ *   2. Si `ratioTrou > 5%` : La discontinuité est trop importante ! La route est COUPÉE NET !
+ *      ➔ La fin de cette première route goudronnée devient le **TP1 (Ordre 1)**.
+ * 
+ * ------------------------------------------------------------------------------
+ * 🔹 ÉTAPE 3 : COMMENT NAÎT LE DEUXIÈME TP (TP2) ?
+ * ------------------------------------------------------------------------------
+ * Lorsque la première route est coupée (> 5% de vide), l'algorithme ne s'arrête pas :
+ *   • Il saute le trou et cherche le PROCHAIN tronçon goudronné rencontré plus loin.
+ *   • Il réapplique la même règle de continuité (cumul des blocs suivants avec trous <= 5%).
+ *   • La fin de ce second corridor de liquidité devient le **TP2 (Ordre 2)** !
+ * 
+ * ------------------------------------------------------------------------------
+ * ⚙️ VARIABLES DE RÉGLAGE DIRECT (Pour ajuster TP1 et TP2 dans le code) :
+ * ------------------------------------------------------------------------------
+ * • `seuilBougiesBleuFonce` (défaut: 3) :
+ *     - Si tu l'augmentes (ex: 4 ou 5) : seuls les overlaps très denses sont goudronnés ➔ TP plus proches et sélectifs.
+ *     - Si tu le diminues (ex: 2) : plus de zones sont goudronnées ➔ TP plus éloignés.
+ * 
+ * • `seuilMargeTrouPourcent` (défaut: 5) :
+ *     - Si tu l'augmentes (ex: 10% ou 15%) : absorbe de plus grands trous ➔ fusionne TP1 et TP2 en un grand TP1 étendu.
+ *     - Si tu le diminues (ex: 2% ou 3%) : moindre trou coupe la route ➔ sépare plus vite TP1 de TP2.
+ * 
+ * • `maxTPAffiches` (défaut: 3) :
+ *     - Nombre maximal de TP calculés et renvoyés (TP1, TP2, TP3...).
+ * 
+ * • `nbVaguesSuperposees` (défaut: 4) :
+ *     - Profondeur des vagues ZigZag superposées pour construire le profil.
+ * ==============================================================================
  */
 export function calculerTPOptimaux(
   prixActuel: number,

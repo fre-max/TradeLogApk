@@ -46,6 +46,7 @@ import {
   dessinerResultatIndicateur,
   dessinerPrimitivesIndicateur,
   dessinerSurbrillanceDiagnosticSMC,
+  dessinerSurbrillanceDiagnosticSandbox,
 } from '@/lib/indicators/scriptRenderer';
 import type { IndicatorScript, IndicatorExecutionResult } from '@/types/indicatorScript';
 import { sonderSetupComplet } from '@/lib/bot/laboratoire/sondeurSetup';
@@ -55,7 +56,10 @@ import {
   type RapportDiagnosticDoji,
 } from '@/lib/indicators/liquidationReintegration';
 import { DiagnosticSetupSMCModal } from './DiagnosticSetupSMCModal';
+import { DiagnosticVoletLateralSMC } from './DiagnosticVoletLateralSMC';
+import { DiagnosticVoletLateralSandbox } from './DiagnosticVoletLateralSandbox';
 import type { SetupOrchestreSMC } from '@/lib/indicators/favoris/orchestrateurSMC';
+import type { SignalSandboxPlage, ZoneShvedAvecScore } from '@/lib/indicators/favoris/sandboxDojiShvedPlage';
 
 // ─── 🛠️ Seuils de détection tactile élargis ──────────────────────────────────
 // 30px de tolérance au lieu de 5px par défaut pour faciliter la sélection au doigt.
@@ -165,7 +169,7 @@ const CONFIG_OUTILS: Record<string, {
   },
   'inspect-setup': {
     ancres: 1,
-    instructions: ['🔍 Cliquez sur une bougie (B1 ou B2) pour diagnostiquer le setup Liq/Reint'],
+    instructions: ['🔍 Cliquez sur un setup ou utilisez les boutons ◀ / ▶ pour inspecter les S/R, UOP et TP'],
     couleurPreview: '#06b6d4',
   },
 };
@@ -650,7 +654,29 @@ export const BacktestChart = React.forwardRef<
 
   // 🔍 Diagnostic interactif de Setup Chef d'Orchestre SMC
   const [setupSMCDiagnostic, setSetupSMCDiagnostic] = useState<SetupOrchestreSMC | null>(null);
+  const [setupSMCSimule, setSetupSMCSimule] = useState<SetupOrchestreSMC | null>(null);
   const [surbrillanceSMCActive, setSurbrillanceSMCActive] = useState<boolean>(true);
+  const [modalSMCVisible, setModalSMCVisible] = useState<boolean>(false);
+
+  // 🔍 Diagnostic interactif de Setup Sandbox Doji Shved
+  const [setupSandboxDiagnostic, setSetupSandboxDiagnostic] = useState<SignalSandboxPlage | null>(null);
+  const [zoneSandboxSelectionneeId, setZoneSandboxSelectionneeId] = useState<string | null>(null);
+
+  // 🔍 Liste de tous les setups détectés par le Chef d'Orchestre SMC
+  const setupsSMCListe = useMemo<SetupOrchestreSMC[]>(() => {
+    const resSMC = resultatsScriptsActifs.find(
+      (r) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
+    );
+    return ((resSMC?.resultat?.donnees as any)?.setups as SetupOrchestreSMC[]) || [];
+  }, [resultatsScriptsActifs]);
+
+  // 🔍 Liste de tous les signaux détectés par la Sandbox Doji Shved Plage
+  const signauxSandboxListe = useMemo<SignalSandboxPlage[]>(() => {
+    const resSandbox = resultatsScriptsActifs.find(
+      (r) => r.script.id === 'script-sandbox-doji-shved-plage' || r.resultat?.typeSpecial === 'sandbox-doji-shved-plage'
+    );
+    return ((resSandbox?.resultat?.donnees as any)?.signaux as SignalSandboxPlage[]) || [];
+  }, [resultatsScriptsActifs]);
 
   // Réf stable pour les callbacks
   const stateRef = useRef({
@@ -664,7 +690,10 @@ export const BacktestChart = React.forwardRef<
     dragAction,
     resultatsScriptsActifs,
     setupSMCDiagnostic,
+    setupSMCSimule,
     surbrillanceSMCActive,
+    setupSandboxDiagnostic,
+    zoneSandboxSelectionneeId,
   });
 
   useEffect(() => {
@@ -679,7 +708,10 @@ export const BacktestChart = React.forwardRef<
       dragAction,
       resultatsScriptsActifs,
       setupSMCDiagnostic,
+      setupSMCSimule,
       surbrillanceSMCActive,
+      setupSandboxDiagnostic,
+      zoneSandboxSelectionneeId,
     };
     redessinerOverlay();
   }, [
@@ -693,7 +725,10 @@ export const BacktestChart = React.forwardRef<
     dragAction,
     resultatsScriptsActifs,
     setupSMCDiagnostic,
+    setupSMCSimule,
     surbrillanceSMCActive,
+    setupSandboxDiagnostic,
+    zoneSandboxSelectionneeId,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Rendu overlay : P&L actif + positions canvas + prévisualisation ─────────
@@ -714,6 +749,7 @@ export const BacktestChart = React.forwardRef<
       positionSelectionneeId: selectedId,
       resultatsScriptsActifs: currentScriptsResults,
       setupSMCDiagnostic: currentSMCSetup,
+      setupSMCSimule: currentSimulatedSetup,
       surbrillanceSMCActive: currentSurbrillance,
     } = stateRef.current;
 
@@ -741,17 +777,37 @@ export const BacktestChart = React.forwardRef<
     }
 
     // 0️⃣.bis Surbrillance temporaire haute fidélité du Setup SMC inspecté en diagnostic
-    if (currentSMCSetup && currentSurbrillance) {
+    // Utilise le setup simulé en priorité s'il y a une expérimentation active par le trader
+    const setupADessiner = currentSimulatedSetup || currentSMCSetup;
+    if (setupADessiner && currentSurbrillance) {
       try {
         dessinerSurbrillanceDiagnosticSMC(
           ctx,
-          currentSMCSetup,
+          setupADessiner,
           chart,
           series,
           bougiesVisibles
         );
       } catch (err) {
         console.warn('⚠️ [BacktestChart] Erreur de tracé surbrillance SMC:', err);
+      }
+    }
+
+    // 0️⃣.ter Surbrillance temporaire du Setup Sandbox Doji Shved inspecté en diagnostic
+    const currentSandboxSetup = stateRef.current.setupSandboxDiagnostic;
+    const currentSelectedZoneId = stateRef.current.zoneSandboxSelectionneeId;
+    if (currentSandboxSetup && currentSurbrillance) {
+      try {
+        dessinerSurbrillanceDiagnosticSandbox(
+          ctx,
+          currentSandboxSetup,
+          chart,
+          series,
+          bougiesVisibles,
+          currentSelectedZoneId
+        );
+      } catch (err) {
+        console.warn('⚠️ [BacktestChart] Erreur de tracé surbrillance Sandbox:', err);
       }
     }
 
@@ -833,6 +889,59 @@ export const BacktestChart = React.forwardRef<
       ctx.restore();
     }
   }, []);
+
+  // 🔍 Index du setup actuellement inspecté dans la liste globale
+  const indexSetupActuel = useMemo(() => {
+    if (!setupSMCDiagnostic) return -1;
+    return setupsSMCListe.findIndex((s) => s.id === setupSMCDiagnostic.id);
+  }, [setupSMCDiagnostic, setupsSMCListe]);
+
+  // ◀ Passer au setup SMC précédent
+  const passerAuSetupPrecedent = useCallback(() => {
+    if (setupsSMCListe.length === 0) return;
+    const nouvelIndex = indexSetupActuel > 0 ? indexSetupActuel - 1 : setupsSMCListe.length - 1;
+    const s = setupsSMCListe[nouvelIndex];
+    setSetupSMCDiagnostic(s);
+    setSurbrillanceSMCActive(true);
+    requestAnimationFrame(() => redessinerOverlay());
+  }, [indexSetupActuel, setupsSMCListe, redessinerOverlay]);
+
+  // ▶ Passer au setup SMC suivant
+  const passerAuSetupSuivant = useCallback(() => {
+    if (setupsSMCListe.length === 0) return;
+    const nouvelIndex = indexSetupActuel >= 0 && indexSetupActuel < setupsSMCListe.length - 1 ? indexSetupActuel + 1 : 0;
+    const s = setupsSMCListe[nouvelIndex];
+    setSetupSMCDiagnostic(s);
+    setSurbrillanceSMCActive(true);
+    requestAnimationFrame(() => redessinerOverlay());
+  }, [indexSetupActuel, setupsSMCListe, redessinerOverlay]);
+
+  // 🔍 Synchronisation automatique quand l'outil 'inspect-setup' est activé via la barre d'outils
+  useEffect(() => {
+    if (activeTool === 'inspect-setup') {
+      if (setupsSMCListe.length > 0) {
+        // Sélectionne le setup le plus proche de la position actuelle du replay, ou le dernier
+        const setupCible = [...setupsSMCListe].sort((a, b) => {
+          return Math.abs(a.indexDoji - indexCourant) - Math.abs(b.indexDoji - indexCourant);
+        })[0] || setupsSMCListe[setupsSMCListe.length - 1];
+
+        setSetupSMCDiagnostic(setupCible);
+        setSurbrillanceSMCActive(true);
+        requestAnimationFrame(() => redessinerOverlay());
+        useUIStore.getState().addToast(
+          `🔍 Setup SMC #${setupCible.indexDoji} (${setupCible.type}) inspecté sur le graphique`,
+          'info'
+        );
+      } else {
+        useUIStore.getState().addToast(
+          '🔍 Aucun setup SMC détecté pour l\'instant',
+          'info'
+        );
+      }
+    } else if (activeTool === null && setupSMCDiagnostic && !surbrillanceSMCActive) {
+      setSetupSMCDiagnostic(null);
+    }
+  }, [activeTool, setupsSMCListe, indexCourant, redessinerOverlay]);
 
   /**
    * Dessine une position custom (Long/Short) sur le canvas overlay.
@@ -1726,44 +1835,92 @@ export const BacktestChart = React.forwardRef<
       if (activeTool === 'inspect-setup') {
         const rect = conteneur.getBoundingClientRect();
         const px = event.clientX - rect.left;
+        const py = event.clientY - rect.top;
         const logical = chart.timeScale().coordinateToLogical(px);
+        const clickPrice = series.coordinateToPrice(py);
+
+        // 1️⃣ Si un diagnostic Sandbox est déjà ouvert, le clic peut viser un support/résistance précis dans la plage
+        if (stateRef.current.setupSandboxDiagnostic && clickPrice !== null && logical !== null) {
+          const currentDiag = stateRef.current.setupSandboxDiagnostic;
+          const candidates = currentDiag.toutesZonesCandidates || currentDiag.niveauxShved || [];
+          const targetIndex = Math.round(logical);
+
+          if (targetIndex >= currentDiag.indexDebutPlage - 2 && targetIndex <= currentDiag.indexBougie + 2) {
+            let zoneTrouvee: ZoneShvedAvecScore | null = null;
+            let distMin = Infinity;
+
+            for (const cand of candidates) {
+              const yMed = cand.zone.prixMedian;
+              const epaisseur = Math.max(0.0005, Math.abs(cand.zone.prixHaut - cand.zone.prixBas) * 1.5);
+              const dist = Math.abs(clickPrice - yMed);
+              if (dist <= epaisseur && dist < distMin) {
+                distMin = dist;
+                zoneTrouvee = cand;
+              }
+            }
+
+            if (zoneTrouvee) {
+              console.log(`🔍 [BacktestChart] Clic inspect-setup sur niveau Shved #${zoneTrouvee.zone.id} (${zoneTrouvee.score} pts)`);
+              setZoneSandboxSelectionneeId((prev) => prev === zoneTrouvee!.zone.id ? null : zoneTrouvee!.zone.id);
+              requestAnimationFrame(() => redessinerOverlay());
+              return;
+            }
+          }
+        }
+
+        // 2️⃣ Sélection d'un setup Sandbox ou SMC
         if (logical !== null) {
           const targetIndex = Math.round(logical);
-          const completes = stateRef.current.donneesCompletes;
 
-          // 1️⃣ Priorité : Vérifier si un setup du Chef d'Orchestre SMC se trouve sur ou près de cette bougie
-          const resSMC = stateRef.current.resultatsScriptsActifs?.find(
-            (r: any) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
-          );
-          const setupsSMCDisponibles: SetupOrchestreSMC[] = (resSMC?.resultat?.donnees as any)?.setups || [];
-          const setupSMCTrouve = setupsSMCDisponibles.find(
-            (s) => Math.abs(s.indexDoji - targetIndex) <= 1 || (targetIndex >= s.indexDoji && targetIndex <= s.indexDoji + 3)
-          );
+          // A. Vérifier d'abord si la Sandbox est présente et si le clic vise un Doji Sandbox
+          if (signauxSandboxListe.length > 0) {
+            const sandboxProche = signauxSandboxListe.find((s) => {
+              return targetIndex >= s.indexDebutPlage - 1 && targetIndex <= s.indexBougie + 2;
+            }) || [...signauxSandboxListe].sort((a, b) => {
+              return Math.abs(a.indexBougie - targetIndex) - Math.abs(b.indexBougie - targetIndex);
+            }).find((s) => Math.abs(s.indexBougie - targetIndex) <= 4);
 
-          if (setupSMCTrouve) {
-            console.log(`🔍 [BacktestChart] Diagnostic Setup SMC sélectionné sur bougie #${setupSMCTrouve.indexDoji}`);
-            setSetupSMCDiagnostic(setupSMCTrouve);
-            setSurbrillanceSMCActive(true);
-            useUIStore.getState().addToast(
-              `Diagnostic Setup SMC #${setupSMCTrouve.indexDoji} (${setupSMCTrouve.type}) ouvert !`,
-              'info'
-            );
-            return;
+            if (sandboxProche) {
+              console.log(`🔍 [BacktestChart] Clic inspect-setup sur Doji Sandbox #${sandboxProche.indexBougie}`);
+              setSetupSandboxDiagnostic(sandboxProche);
+              setZoneSandboxSelectionneeId(null);
+              setSetupSMCDiagnostic(null);
+              setSetupSMCSimule(null);
+              setSurbrillanceSMCActive(true);
+              useUIStore.getState().addToast(
+                `Diagnostic Sandbox Doji #${sandboxProche.indexBougie} (${sandboxProche.type}) affiché`,
+                'info'
+              );
+              requestAnimationFrame(() => redessinerOverlay());
+              return;
+            }
           }
 
-          // 2️⃣ Sinon : Diagnostic classique de l'indicateur Doji Liq/Reint
-          if (targetIndex >= 0 && targetIndex < completes.length) {
-            console.log(`🔍 [BacktestChart] Diagnostic Doji demandé sur la bougie #${targetIndex}`);
-            const scriptLiq = scriptsIndicateurs.find((s) => s.id === 'script-liquidation-reintegration');
-            const rapport = diagnostiquerBougieDoji(completes, targetIndex, scriptLiq?.parametres);
-            if (rapport) {
-              setDiagnosticDoji(rapport);
+          // B. Sinon, vérifier les setups du Chef d'Orchestre SMC
+          if (setupsSMCListe.length > 0) {
+            const setupLePlusProche = setupsSMCListe.find((s) => {
+              const debutSeq = s.indexDoji - 1;
+              const finSeq = s.indexSortieTrade
+                ? Math.max(s.indexDoji + 3, s.indexSortieTrade)
+                : s.indexDoji + 3;
+              return targetIndex >= debutSeq - 0.5 && targetIndex <= finSeq + 0.5;
+            }) || [...setupsSMCListe].sort((a, b) => {
+              return Math.abs(a.indexDoji - targetIndex) - Math.abs(b.indexDoji - targetIndex);
+            })[0];
+
+            if (setupLePlusProche) {
+              console.log(`🔍 [BacktestChart] Clic inspect-setup sur Setup SMC #${setupLePlusProche.indexDoji}`);
+              setSetupSMCDiagnostic(setupLePlusProche);
+              setSetupSandboxDiagnostic(null);
+              setZoneSandboxSelectionneeId(null);
+              setSetupSMCSimule(null);
+              setSurbrillanceSMCActive(true);
               useUIStore.getState().addToast(
-                rapport.estValide
-                  ? `Setup #${targetIndex} validé (${rapport.typeCandidat})`
-                  : `Diagnostic #${targetIndex} affiché en haut à droite`,
-                rapport.estValide ? 'success' : 'info'
+                `Détails Setup SMC #${setupLePlusProche.indexDoji} (${setupLePlusProche.type}) affichés sur le graphique`,
+                'info'
               );
+              requestAnimationFrame(() => redessinerOverlay());
+              return;
             }
           }
         }
@@ -1784,27 +1941,109 @@ export const BacktestChart = React.forwardRef<
           return;
         }
 
-        // Clic direct sur un setup SMC existant pour ouvrir son diagnostic instantanément ?
         const rect = conteneur.getBoundingClientRect();
         const px = event.clientX - rect.left;
+        const py = event.clientY - rect.top;
         const logical = chart.timeScale().coordinateToLogical(px);
+        const clickPrice = series.coordinateToPrice(py);
+
+        // 1️⃣ Si le diagnostic Sandbox est actif, clic pour inspecter un niveau Shved candidat
+        if (stateRef.current.setupSandboxDiagnostic && clickPrice !== null && logical !== null) {
+          const currentDiag = stateRef.current.setupSandboxDiagnostic;
+          const candidates = currentDiag.toutesZonesCandidates || currentDiag.niveauxShved || [];
+          const targetIndex = Math.round(logical);
+
+          if (targetIndex >= currentDiag.indexDebutPlage - 2 && targetIndex <= currentDiag.indexBougie + 2) {
+            let zoneTrouvee: ZoneShvedAvecScore | null = null;
+            let distMin = Infinity;
+
+            for (const cand of candidates) {
+              const yMed = cand.zone.prixMedian;
+              const epaisseur = Math.max(0.0005, Math.abs(cand.zone.prixHaut - cand.zone.prixBas) * 1.5);
+              const dist = Math.abs(clickPrice - yMed);
+              if (dist <= epaisseur && dist < distMin) {
+                distMin = dist;
+                zoneTrouvee = cand;
+              }
+            }
+
+            if (zoneTrouvee) {
+              console.log(`🔍 [BacktestChart] Clic direct sur niveau Shved #${zoneTrouvee.zone.id}`);
+              setZoneSandboxSelectionneeId((prev) => prev === zoneTrouvee!.zone.id ? null : zoneTrouvee!.zone.id);
+              requestAnimationFrame(() => redessinerOverlay());
+              return;
+            }
+          }
+        }
+
+        // 2️⃣ Clic direct sur un Doji Sandbox
         if (logical !== null) {
           const targetIndex = Math.round(logical);
+          const resSandbox = stateRef.current.resultatsScriptsActifs?.find(
+            (r: any) => r.script.id === 'script-sandbox-doji-shved-plage' || r.resultat?.typeSpecial === 'sandbox-doji-shved-plage'
+          );
+          const signauxSandboxDisponibles: SignalSandboxPlage[] = (resSandbox?.resultat?.donnees as any)?.signaux || [];
+
+          const sandboxTrouve = signauxSandboxDisponibles.find((s) => {
+            return targetIndex >= s.indexDebutPlage - 1 && targetIndex <= s.indexBougie + 2;
+          }) || [...signauxSandboxDisponibles].sort((a, b) => {
+            return Math.abs(a.indexBougie - targetIndex) - Math.abs(b.indexBougie - targetIndex);
+          }).find((s) => Math.abs(s.indexBougie - targetIndex) <= 3);
+
+          if (sandboxTrouve) {
+            console.log(`🔍 [BacktestChart] Clic direct sur Doji Sandbox #${sandboxTrouve.indexBougie}`);
+            if (setupSandboxDiagnostic?.indexBougie === sandboxTrouve.indexBougie) {
+              setSetupSandboxDiagnostic(null);
+              setZoneSandboxSelectionneeId(null);
+              setSurbrillanceSMCActive(false);
+              useUIStore.getState().addToast('Vue diagnostic masquée', 'info');
+            } else {
+              setSetupSandboxDiagnostic(sandboxTrouve);
+              setZoneSandboxSelectionneeId(null);
+              setSetupSMCDiagnostic(null);
+              setSetupSMCSimule(null);
+              setSurbrillanceSMCActive(true);
+              useUIStore.getState().addToast(`Diagnostic Sandbox Doji #${sandboxTrouve.indexBougie} affiché`, 'info');
+            }
+            requestAnimationFrame(() => redessinerOverlay());
+            return;
+          }
+
+          // 3️⃣ Clic direct sur n'importe quelle bougie d'un setup SMC
           const resSMC = stateRef.current.resultatsScriptsActifs?.find(
             (r: any) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
           );
           const setupsSMCDisponibles: SetupOrchestreSMC[] = (resSMC?.resultat?.donnees as any)?.setups || [];
-          const setupSMCTrouve = setupsSMCDisponibles.find(
-            (s) => Math.abs(s.indexDoji - targetIndex) <= 1
-          );
+          
+          const setupSMCTrouve = setupsSMCDisponibles.find((s) => {
+            const debutSeq = s.indexDoji - 1;
+            const finSeq = s.indexSortieTrade
+              ? Math.max(s.indexDoji + 3, s.indexSortieTrade)
+              : s.indexDoji + 3;
+            return targetIndex >= debutSeq - 0.5 && targetIndex <= finSeq + 0.5;
+          }) || [...setupsSMCDisponibles].sort((a, b) => {
+            return Math.abs(a.indexDoji - targetIndex) - Math.abs(b.indexDoji - targetIndex);
+          }).find((s) => Math.abs(s.indexDoji - targetIndex) <= 3);
 
           if (setupSMCTrouve) {
-            setSetupSMCDiagnostic(setupSMCTrouve);
-            setSurbrillanceSMCActive(true);
-            useUIStore.getState().addToast(
-              `Diagnostic Setup SMC #${setupSMCTrouve.indexDoji} (${setupSMCTrouve.type}) ouvert !`,
-              'info'
-            );
+            console.log(`🔍 [BacktestChart] Clic direct sur Setup SMC #${setupSMCTrouve.indexDoji}`);
+            if (setupSMCDiagnostic?.id === setupSMCTrouve.id) {
+              setSetupSMCDiagnostic(null);
+              setSetupSMCSimule(null);
+              setSurbrillanceSMCActive(false);
+              useUIStore.getState().addToast('Vue détaillée masquée', 'info');
+            } else {
+              setSetupSMCDiagnostic(setupSMCTrouve);
+              setSetupSandboxDiagnostic(null);
+              setZoneSandboxSelectionneeId(null);
+              setSetupSMCSimule(null);
+              setSurbrillanceSMCActive(true);
+              useUIStore.getState().addToast(
+                `Détails Setup SMC #${setupSMCTrouve.indexDoji} affichés sur le graphique`,
+                'info'
+              );
+            }
+            requestAnimationFrame(() => redessinerOverlay());
             return;
           }
         }
@@ -1971,13 +2210,6 @@ export const BacktestChart = React.forwardRef<
     ? config.instructions[Math.min(etapeActuelle, config.instructions.length - 1)]
     : null;
   const progresseAncres = config ? `${etapeActuelle}/${config.ancres}` : null;
-  // 🔍 Liste de tous les setups détectés par le Chef d'Orchestre SMC
-  const setupsSMCListe = useMemo<SetupOrchestreSMC[]>(() => {
-    const resSMC = resultatsScriptsActifs.find(
-      (r) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
-    );
-    return ((resSMC?.resultat?.donnees as any)?.setups as SetupOrchestreSMC[]) || [];
-  }, [resultatsScriptsActifs]);
 
   const estOutil = activeTool === 'pos-long' || activeTool === 'pos-short';
 
@@ -2045,12 +2277,30 @@ export const BacktestChart = React.forwardRef<
                   onClick={() => {
                     const dernier = setupsSMCListe[setupsSMCListe.length - 1];
                     setSetupSMCDiagnostic(dernier);
+                    setSetupSandboxDiagnostic(null);
+                    setZoneSandboxSelectionneeId(null);
                     setSurbrillanceSMCActive(true);
                   }}
                   className="px-1.5 py-0.5 rounded bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/50 text-[10px] text-cyan-300 font-bold transition-all shadow-xs"
                   title={`Ouvrir le diagnostic détaillé des setups SMC (${setupsSMCListe.length} détecté${setupsSMCListe.length > 1 ? 's' : ''})`}
                 >
                   🔍 Diag ({setupsSMCListe.length})
+                </button>
+              )}
+              {/* 🔍 Bouton Diag Sandbox dédié si c'est la Sandbox et qu'il y a des signaux */}
+              {(script.id === 'script-sandbox-doji-shved-plage' || script.id.includes('sandbox')) && signauxSandboxListe.length > 0 && (
+                <button
+                  onClick={() => {
+                    const dernier = signauxSandboxListe[signauxSandboxListe.length - 1];
+                    setSetupSandboxDiagnostic(dernier);
+                    setSetupSMCDiagnostic(null);
+                    setZoneSandboxSelectionneeId(null);
+                    setSurbrillanceSMCActive(true);
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-amber-950/90 hover:bg-amber-900 border border-amber-500/50 text-[10px] text-amber-300 font-bold transition-all shadow-xs"
+                  title={`Ouvrir le diagnostic Sandbox Doji & S/R (${signauxSandboxListe.length} détecté${signauxSandboxListe.length > 1 ? 's' : ''})`}
+                >
+                  🔍 Diag ({signauxSandboxListe.length})
                 </button>
               )}
               {onOpenIndicatorModal && (
@@ -2234,8 +2484,140 @@ export const BacktestChart = React.forwardRef<
           </div>
         )}
 
-        {/* ── 🔍 Diagnostic Haute Fidélité du Setup Chef d'Orchestre SMC ── */}
-        {setupSMCDiagnostic && (
+        {/* ── 🔍 Barre de Contrôle Flottante Diagnostic SMC (Sur le graphique, non-bloquante) ── */}
+        {setupSMCDiagnostic && surbrillanceSMCActive && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-cyan-500/40 text-white text-xs shadow-xl animate-in fade-in slide-in-from-top-2 pointer-events-auto select-none">
+            {/* Bouton Setup Précédent */}
+            {setupsSMCListe.length > 1 && (
+              <button
+                onClick={passerAuSetupPrecedent}
+                className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors text-[10px]"
+                title="Setup SMC précédent"
+              >
+                ◀
+              </button>
+            )}
+
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+            </span>
+
+            <span className="font-bold text-cyan-300">
+              Setup #{setupSMCDiagnostic.indexDoji} ({setupSMCDiagnostic.type})
+              {setupsSMCListe.length > 1 && indexSetupActuel >= 0 && (
+                <span className="ml-1 text-[10px] text-slate-400 font-normal">
+                  [{indexSetupActuel + 1}/{setupsSMCListe.length}]
+                </span>
+              )}
+            </span>
+
+            {/* Bouton Setup Suivant */}
+            {setupsSMCListe.length > 1 && (
+              <button
+                onClick={passerAuSetupSuivant}
+                className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors text-[10px]"
+                title="Setup SMC suivant"
+              >
+                ▶
+              </button>
+            )}
+
+            <span className="text-slate-400">|</span>
+
+            <span className="text-[11px] text-emerald-400 font-medium">
+              S/R: {setupSMCDiagnostic.scoreShved} pts
+            </span>
+
+            <span className="text-slate-400">|</span>
+
+            <span className="text-[11px] text-amber-300 font-medium">
+              ⚡ Liq: {setupSMCDiagnostic.carburantInitial ?? setupSMCDiagnostic.detailsCarburant?.carburantTotal ?? 0} pts
+            </span>
+
+            {setupSMCDiagnostic.prixTP !== undefined && (
+              <>
+                <span className="text-slate-400">|</span>
+                <span className="text-[11px] text-emerald-300 font-bold">
+                  🎯 TP: {setupSMCDiagnostic.prixTP} ({setupSMCDiagnostic.ratioRR}R)
+                </span>
+              </>
+            )}
+
+            <button
+              onClick={() => setModalSMCVisible(true)}
+              className="ml-1 px-2 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-800 border border-cyan-600/40 text-[10px] text-cyan-200 transition-colors"
+              title="Ouvrir le rapport d'analyse textuel complet en modale"
+            >
+              📋 Tableau
+            </button>
+
+            <button
+              onClick={() => {
+                setSetupSMCDiagnostic(null);
+                setSetupSMCSimule(null);
+                setSurbrillanceSMCActive(false);
+                requestAnimationFrame(() => redessinerOverlay());
+              }}
+              className="ml-1 p-0.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Fermer la vue diagnostic détaillée"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {/* ── 🔍 Volet Latéral Rétractable Diagnostic & Simulation TP (Option A) ── */}
+        {setupSMCDiagnostic && surbrillanceSMCActive && (
+          <DiagnosticVoletLateralSMC
+            setup={setupSMCDiagnostic}
+            setupsTotaux={setupsSMCListe}
+            onSelectSetup={(s) => {
+              setSetupSMCDiagnostic(s);
+              setSetupSMCSimule(null);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+            onClose={() => {
+              setSetupSMCDiagnostic(null);
+              setSetupSMCSimule(null);
+              setSurbrillanceSMCActive(false);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+            onSimulationChange={(simule) => {
+              setSetupSMCSimule(simule);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+          />
+        )}
+
+        {/* ── 🔍 Volet Latéral Rétractable Diagnostic Sandbox Doji & S/R ── */}
+        {setupSandboxDiagnostic && surbrillanceSMCActive && (
+          <DiagnosticVoletLateralSandbox
+            signal={setupSandboxDiagnostic}
+            signauxTotaux={signauxSandboxListe}
+            zoneSelectionneeId={zoneSandboxSelectionneeId}
+            onSelectZone={(zoneId) => {
+              setZoneSandboxSelectionneeId(zoneId);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+            onSelectSignal={(s) => {
+              setSetupSandboxDiagnostic(s);
+              setZoneSandboxSelectionneeId(null);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+            onClose={() => {
+              setSetupSandboxDiagnostic(null);
+              setZoneSandboxSelectionneeId(null);
+              setSurbrillanceSMCActive(false);
+              requestAnimationFrame(() => redessinerOverlay());
+            }}
+          />
+        )}
+
+        {/* ── 🔍 Diagnostic Détaillé en Modale (Uniquement sur clic explicite "Tableau") ── */}
+        {modalSMCVisible && setupSMCDiagnostic && (
           <DiagnosticSetupSMCModal
             setup={setupSMCDiagnostic}
             setupsTotaux={setupsSMCListe}
@@ -2243,10 +2625,7 @@ export const BacktestChart = React.forwardRef<
               setSetupSMCDiagnostic(s);
               requestAnimationFrame(() => redessinerOverlay());
             }}
-            onClose={() => {
-              setSetupSMCDiagnostic(null);
-              requestAnimationFrame(() => redessinerOverlay());
-            }}
+            onClose={() => setModalSMCVisible(false)}
             surbrillanceActive={surbrillanceSMCActive}
             onToggleSurbrillance={(actif) => {
               setSurbrillanceSMCActive(actif);

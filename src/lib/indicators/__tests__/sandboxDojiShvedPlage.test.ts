@@ -5,6 +5,7 @@ import {
   calculerSandboxDojiShvedPlage,
   calculerScoreZoneShved,
   detecterDojisAvecPlage,
+  evaluerNiveauxShvedDansPlage,
 } from '../favoris/sandboxDojiShvedPlage';
 
 function creerBougie(
@@ -311,6 +312,138 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
     expect(dojis[0].type).toBe('ACHAT');
     expect(dojis[0].tailleLiquidation).toBeGreaterThan(0);
     expect(dojis[0].tempsDebutPlage).toBeDefined();
+  });
+
+  it('calcule et enrichit chaque signal avec toutesZonesCandidates et zoneRetenue pour le diagnostic', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 25; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+    // Doji Achat
+    bougies.push(creerBougie(25000, 99.0, 99.0, 85.0, 86.0));
+    bougies.push(creerBougie(26000, 86.0, 99.0, 86.0, 98.8));
+
+    const res = calculerSandboxDojiShvedPlage(bougies, { activerFiltreTaille: false });
+    expect(res.signaux.length).toBeGreaterThanOrEqual(1);
+
+    const sig = res.signaux[0];
+    expect(sig.id).toBeDefined();
+    expect(sig.toutesZonesCandidates).toBeDefined();
+    expect(Array.isArray(sig.toutesZonesCandidates)).toBe(true);
+
+    if (sig.toutesZonesCandidates && sig.toutesZonesCandidates.length > 0) {
+      const cand = sig.toutesZonesCandidates[0];
+      expect(cand.score).toBeDefined();
+      expect(cand.pointsRetests).toBeDefined();
+      expect(cand.pointsRejets).toBeDefined();
+      expect(cand.pointsProportionnalite).toBeDefined();
+      expect(cand.pointsIntegrite).toBeDefined();
+      expect(cand.motifSelection).toBeDefined();
+    }
+  });
+
+  it('définit periodeATR à 2 et zoneFuzzFactor à 0.01 par défaut dans le script officiel', async () => {
+    const { INDICATEURS_PAR_DEFAUT } = await import('../indicatorEngine');
+    const scriptSandbox = INDICATEURS_PAR_DEFAUT.find(
+      (s) => s.id === 'script-sandbox-doji-shved-plage'
+    );
+    expect(scriptSandbox).toBeDefined();
+    expect(scriptSandbox?.parametres?.periodeATR).toBe(2);
+    expect(scriptSandbox?.parametres?.zoneFuzzFactor).toBe(0.01);
+
+    // Vérifie la présence des variables dans definitionsVariables
+    const varATR = scriptSandbox?.definitionsVariables?.find((v) => v.cle === 'periodeATR');
+    const varFuzz = scriptSandbox?.definitionsVariables?.find((v) => v.cle === 'zoneFuzzFactor');
+    const varSection = scriptSandbox?.definitionsVariables?.find((v) => v.cle === 'sectionnerNiveauxAnterieurs');
+
+    expect(varATR).toBeDefined();
+    expect(varATR?.valeurParDefaut).toBe(2);
+    expect(varFuzz).toBeDefined();
+    expect(varFuzz?.valeurParDefaut).toBe(0.01);
+    expect(varSection).toBeDefined();
+    expect(varSection?.valeurParDefaut).toBe(true);
+  });
+
+  it('sectionne un support né avant la plage ayant des retests dans la plage (Option A + Option 1)', () => {
+    const bougies: Bougie[] = [];
+
+    // Bougie 0 à 9 : passé lointain
+    for (let k = 0; k < 10; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Bougie 10 : creux de référence créant le début de la plage temporelle (temps = 10000)
+    bougies.push(creerBougie(10000, 100, 101, 80.0, 90.0));
+
+    // Bougies 11 à 19 : retests du niveau 95.0 à l'intérieur de la plage (à k=13 et k=16)
+    for (let k = 11; k < 20; k++) {
+      if (k === 13 || k === 16) {
+        bougies.push(creerBougie(k * 1000, 96, 98, 94.5, 96));
+      } else {
+        bougies.push(creerBougie(k * 1000, 100, 105, 98, 102));
+      }
+    }
+
+    // Formation du Doji Achat à 20000 et 21000
+    bougies.push(creerBougie(20000, 100, 100, 81.0, 82.0));
+    bougies.push(creerBougie(21000, 82.0, 101.0, 82.0, 100.5));
+
+    // Simulation d'une zone Shved née bien avant (index 2, dateDebut = 2000)
+    const zoneAncienne: ZoneShved = {
+      id: 'shved-sup-ancien-2',
+      type: 'SUPPORT',
+      prixHaut: 95.5,
+      prixBas: 94.5,
+      prixMedian: 95.0,
+      retests: 5, // 3 passés + 2 dans la plage
+      force: 'PROVEN',
+      estFaible: false,
+      estCassee: false,
+      indexOrigine: 2,
+      dateDebut: 2000,
+      dateFin: 21000,
+      datesTouches: [3000, 5000, 7000, 13000, 16000],
+    };
+
+    const signalDoji = {
+      type: 'ACHAT' as const,
+      indexBougie: 21,
+      temps: 21000,
+      prixExtreme: 81.0,
+      open1: 100,
+      close2: 100.5,
+      tailleLiquidation: 19.0,
+      indexDebutPlage: 10,
+      tempsDebutPlage: 10000,
+      prixExtremePrecedent: 80.0,
+      moyenneHauteur: 5.0,
+    };
+
+    // 1. Avec sectionnement actif (défaut) : le niveau ancien est sectionné et retenu
+    const zonesAvecSection = evaluerNiveauxShvedDansPlage(
+      [zoneAncienne],
+      signalDoji,
+      bougies,
+      { exigerDebutEtFinDansPlage: true, sectionnerNiveauxAnterieurs: true }
+    );
+
+    expect(zonesAvecSection.length).toBe(1);
+    const retenue = zonesAvecSection[0];
+    expect(retenue.estSectionnee).toBe(true);
+    // Option A : La date de début est ramenée au début de la plage temporelle
+    expect(retenue.zone.dateDebut).toBe(10000);
+    expect(retenue.zone.indexOrigine).toBe(10);
+    // Option 1 : Les retests locaux comptabilisés sont uniquement les 2 survenus dans la plage
+    expect(retenue.retestsAvant).toBe(2);
+
+    // 2. Avec sectionnement désactivé : l'épuration totale élimine le niveau ancien
+    const zonesSansSection = evaluerNiveauxShvedDansPlage(
+      [zoneAncienne],
+      signalDoji,
+      bougies,
+      { exigerDebutEtFinDansPlage: true, sectionnerNiveauxAnterieurs: false }
+    );
+    expect(zonesSansSection.length).toBe(0);
   });
 });
 
