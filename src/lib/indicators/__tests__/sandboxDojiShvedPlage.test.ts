@@ -6,6 +6,7 @@ import {
   calculerScoreZoneShved,
   detecterDojisAvecPlage,
   evaluerNiveauxShvedDansPlage,
+  validerDojiAvecZigzag,
 } from '../favoris/sandboxDojiShvedPlage';
 
 function creerBougie(
@@ -188,6 +189,7 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
 
     const resAchat = calculerSandboxDojiShvedPlage(bougies, {
       activerFiltreTaille: false,
+      activerFiltreZigzag: false,
       filtrerParDirectionSetup: true,
       timeframeSource: 'ACTUEL',
     });
@@ -267,6 +269,7 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
     // Test avec Top 1 et affichage du score sur la ligne
     const resTop1 = calculerSandboxDojiShvedPlage(bougies, {
       activerFiltreTaille: false,
+      activerFiltreZigzag: false,
       topNiveauxScore: 1,
       afficherScoreSurLigne: true,
       exigerDebutEtFinDansPlage: false,
@@ -444,6 +447,80 @@ describe('Sandbox : Doji Liq/Reint + S/R Shved (Plage Ciblée)', () => {
       { exigerDebutEtFinDansPlage: true, sectionnerNiveauxAnterieurs: false }
     );
     expect(zonesSansSection.length).toBe(0);
+  });
+
+  it('valide le filtre ZigZag : Règle 1 (sens de vague) et Règle 2 (extrême absolu de vague)', () => {
+    // Construction de 20 bougies simulant une baisse depuis un sommet (index 5) jusqu'à un Doji d'achat (index 15 et 16)
+    const bougies: Bougie[] = [];
+    for (let k = 0; k <= 20; k++) {
+      if (k === 5) {
+        // Sommet ZigZag majeur à l'index 5 (High = 120)
+        bougies.push(creerBougie(k * 1000, 110, 120, 108, 115));
+      } else if (k < 15) {
+        // Vague baissière progressive de 115 à 95
+        const base = 115 - (k - 5) * 2;
+        bougies.push(creerBougie(k * 1000, base, base + 2, base - 2, base));
+      } else if (k === 15) {
+        // Bougie 1 du Doji d'achat : liquidation vers 80 (Low = 80)
+        bougies.push(creerBougie(15000, 95, 95, 80, 82));
+      } else if (k === 16) {
+        // Bougie 2 du Doji d'achat : réintégration haussière (Close = 96)
+        bougies.push(creerBougie(16000, 82, 97, 82, 96));
+      } else {
+        bougies.push(creerBougie(k * 1000, 96, 98, 95, 97));
+      }
+    }
+
+    // 1️⃣ Cas Valide Achat : Vague baissière (dernier pivot est un sommet à index 5) et Doji est le plus bas absolu (80)
+    const pivotsBaissiers = [
+      { index: 5, prix: 120, estHaut: true, temps: 5000, labelSMC: 'HH' as const },
+    ];
+    const verifValide = validerDojiAvecZigzag(pivotsBaissiers, bougies, 16, 'ACHAT');
+    expect(verifValide.estValide).toBe(true);
+    expect(verifValide.directionVague).toBe('BAISSIERE');
+    expect(verifValide.prixExtremeDoji).toBe(80);
+
+    // 2️⃣ Cas Rejet Achat : Le dernier pivot est un creux (estHaut = false) => vague haussière => refusé
+    const pivotsHaussiers = [
+      { index: 5, prix: 75, estHaut: false, temps: 5000, labelSMC: 'LL' as const },
+    ];
+    const verifRefusSens = validerDojiAvecZigzag(pivotsHaussiers, bougies, 16, 'ACHAT');
+    expect(verifRefusSens.estValide).toBe(false);
+    expect(verifRefusSens.motif).toContain('vague en cours est HAUSSIÈRE');
+
+    // 3️⃣ Cas Rejet Achat : Vague baissière mais une bougie intermédiaire était encore plus basse que le Doji
+    bougies[10].low = 70; // 70 < 80
+    const verifRefusExtreme = validerDojiAvecZigzag(pivotsBaissiers, bougies, 16, 'ACHAT');
+    expect(verifRefusExtreme.estValide).toBe(false);
+    expect(verifRefusExtreme.motif).toContain("n'est pas le plus bas absolu de la vague");
+    expect(verifRefusExtreme.prixExtremeVague).toBe(70);
+  });
+
+  it('expose les paramètres et variables UI ZigZag dans le script officiel', async () => {
+    const { INDICATEURS_PAR_DEFAUT } = await import('../indicatorEngine');
+    const scriptSandbox = INDICATEURS_PAR_DEFAUT.find(
+      (s) => s.id === 'script-sandbox-doji-shved-plage'
+    );
+    expect(scriptSandbox).toBeDefined();
+    expect(scriptSandbox?.parametres?.activerFiltreZigzag).toBe(true);
+    expect(scriptSandbox?.parametres?.profondeurZigzag).toBe(5);
+    expect(scriptSandbox?.parametres?.afficherLignesZigzag).toBe(false);
+    expect(scriptSandbox?.parametres?.couleurZigzag).toBe('#FFA726');
+
+    // Définitions de variables
+    const varActiver = scriptSandbox?.definitionsVariables?.find((v) => v.cle === 'activerFiltreZigzag');
+    const varProf = scriptSandbox?.definitionsVariables?.find((v) => v.cle === 'profondeurZigzag');
+    const varAfficher = scriptSandbox?.definitionsVariables?.find((v) => v.cle === 'afficherLignesZigzag');
+    const varCoul = scriptSandbox?.definitionsVariables?.find((v) => v.cle === 'couleurZigzag');
+
+    expect(varActiver).toBeDefined();
+    expect(varActiver?.groupe).toBe('Filtre Structurel ZigZag');
+    expect(varProf).toBeDefined();
+    expect(varProf?.valeurParDefaut).toBe(5);
+    expect(varAfficher).toBeDefined();
+    expect(varAfficher?.valeurParDefaut).toBe(false);
+    expect(varCoul).toBeDefined();
+    expect(varCoul?.valeurParDefaut).toBe('#FFA726');
   });
 });
 

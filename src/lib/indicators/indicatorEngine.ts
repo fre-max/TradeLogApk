@@ -38,7 +38,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.30.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.31.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4851,6 +4851,10 @@ return {
       bullColor: '#00E676',
       bearColor: '#F23645',
       texteLabel: 'Liq/Reint',
+      activerFiltreZigzag: true,
+      profondeurZigzag: 5,
+      afficherLignesZigzag: false,
+      couleurZigzag: '#FFA726',
     },
     definitionsVariables: [
       {
@@ -5079,6 +5083,41 @@ return {
         type: 'string',
         valeurParDefaut: 'Liq/Reint',
         groupe: 'Couleurs',
+      },
+      {
+        cle: 'activerFiltreZigzag',
+        label: 'Activer Filtre Vague ZigZag',
+        description: 'Exige que le setup soit dans le sens inverse de la dernière vague (Achat sur Vague Baissière, Vente sur Vague Haussière) et forme l\'extrême absolu de la vague',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre Structurel ZigZag',
+      },
+      {
+        cle: 'profondeurZigzag',
+        label: 'Profondeur ZigZag (Sensibilité)',
+        description: 'Nombre de bougies pour identifier un sommet ou un creux ZigZag',
+        type: 'number',
+        valeurParDefaut: 5,
+        min: 2,
+        max: 20,
+        step: 1,
+        groupe: 'Filtre Structurel ZigZag',
+      },
+      {
+        cle: 'afficherLignesZigzag',
+        label: 'Afficher Lignes ZigZag sur Graphique',
+        description: 'Affiche visuellement les vagues ZigZag directement sur le graphique',
+        type: 'boolean',
+        valeurParDefaut: false,
+        groupe: 'Filtre Structurel ZigZag',
+      },
+      {
+        cle: 'couleurZigzag',
+        label: 'Couleur des Lignes ZigZag',
+        description: 'Couleur de tracé des segments de vague ZigZag',
+        type: 'string',
+        valeurParDefaut: '#FFA726',
+        groupe: 'Filtre Structurel ZigZag',
       },
     ],
     creeLe: '2026-10-18T00:00:00.000Z',
@@ -5740,6 +5779,22 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
           }
           if (paramsMigres.sectionnerNiveauxAnterieurs === undefined) {
             paramsMigres.sectionnerNiveauxAnterieurs = true;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.activerFiltreZigzag === undefined) {
+            paramsMigres.activerFiltreZigzag = true;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.profondeurZigzag === undefined) {
+            paramsMigres.profondeurZigzag = 5;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.afficherLignesZigzag === undefined) {
+            paramsMigres.afficherLignesZigzag = false;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.couleurZigzag === undefined) {
+            paramsMigres.couleurZigzag = '#FFA726';
             aModifieAuVol = true;
           }
         }

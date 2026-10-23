@@ -174,6 +174,27 @@ export function DiagnosticVoletLateralSandbox({
               ? `Recherche en recul jusqu'au creux antérieur le plus bas (bougie #${signal.indexDebutPlage}).`
               : `Recherche en recul jusqu'au sommet antérieur le plus haut (bougie #${signal.indexDebutPlage}).`}
           </div>
+
+          {/* ─── 📐 Validation Vague ZigZag ─── */}
+          {signal.infoZigzag && (
+            <div className="p-2 rounded bg-amber-950/20 border border-amber-500/30 text-[10px] space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-300 flex items-center gap-1">
+                  <span>📐 Vague ZigZag :</span>
+                </span>
+                <span className="font-mono text-[9.5px] px-1.5 py-0.2 rounded bg-black/40 text-cyan-300 border border-cyan-500/30">
+                  {signal.infoZigzag.directionVague === 'BAISSIERE' ? '📉 Vague Baissière' : '📈 Vague Haussière'}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-300 text-[9px] font-mono">
+                <span>Pivot départ (bougie #{signal.infoZigzag.pivotDepartIndex}) :</span>
+                <span className="font-bold text-white">{signal.infoZigzag.pivotDepartPrix}</span>
+              </div>
+              <div className="text-emerald-400 text-[9px] font-medium pt-0.5 border-t border-white/5">
+                {signal.infoZigzag.motif}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ─── ⭐ Niveau Retenu (Gagnant du Tri) ─── */}
