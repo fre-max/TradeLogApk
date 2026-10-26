@@ -38,7 +38,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.31.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.32.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -4851,10 +4851,6 @@ return {
       bullColor: '#00E676',
       bearColor: '#F23645',
       texteLabel: 'Liq/Reint',
-      activerFiltreZigzag: true,
-      profondeurZigzag: 5,
-      afficherLignesZigzag: false,
-      couleurZigzag: '#FFA726',
     },
     definitionsVariables: [
       {
@@ -5084,41 +5080,6 @@ return {
         valeurParDefaut: 'Liq/Reint',
         groupe: 'Couleurs',
       },
-      {
-        cle: 'activerFiltreZigzag',
-        label: 'Activer Filtre Vague ZigZag',
-        description: 'Exige que le setup soit dans le sens inverse de la dernière vague (Achat sur Vague Baissière, Vente sur Vague Haussière) et forme l\'extrême absolu de la vague',
-        type: 'boolean',
-        valeurParDefaut: true,
-        groupe: 'Filtre Structurel ZigZag',
-      },
-      {
-        cle: 'profondeurZigzag',
-        label: 'Profondeur ZigZag (Sensibilité)',
-        description: 'Nombre de bougies pour identifier un sommet ou un creux ZigZag',
-        type: 'number',
-        valeurParDefaut: 5,
-        min: 2,
-        max: 20,
-        step: 1,
-        groupe: 'Filtre Structurel ZigZag',
-      },
-      {
-        cle: 'afficherLignesZigzag',
-        label: 'Afficher Lignes ZigZag sur Graphique',
-        description: 'Affiche visuellement les vagues ZigZag directement sur le graphique',
-        type: 'boolean',
-        valeurParDefaut: false,
-        groupe: 'Filtre Structurel ZigZag',
-      },
-      {
-        cle: 'couleurZigzag',
-        label: 'Couleur des Lignes ZigZag',
-        description: 'Couleur de tracé des segments de vague ZigZag',
-        type: 'string',
-        valeurParDefaut: '#FFA726',
-        groupe: 'Filtre Structurel ZigZag',
-      },
     ],
     creeLe: '2026-10-18T00:00:00.000Z',
     misAJourLe: '2026-10-18T00:00:00.000Z',
@@ -5156,6 +5117,7 @@ return {
       afficherSetupsAnnules: false,
       masquerSetupsTermines: true,
       modeCalculTP: 'ENERGIE_FRICTION',
+      palierTPVise: 'AUTO',
       peagePalierUOP: 100,
       coutParATR: 50,
       coutFrictionFortOverlap: 0.5,
@@ -5191,6 +5153,8 @@ return {
       timeframeSource: 'M15',
       exigerAutorouteUOP: true,
       minTauxChevauchementAutoroute: 3.0,
+      activerFiltrePlageTP: true,
+      maxReculPlageTP: 100,
       bullColor: '#00E676',
       bearColor: '#F23645',
     },
@@ -5458,6 +5422,20 @@ return {
         groupe: "Moteur d'Énergie & Coût des Péages UOP",
       },
       {
+        cle: 'palierTPVise',
+        label: 'Palier TP Visé',
+        description: 'AUTO (calcul dynamique selon énergie ou score), TP1 (1er palier garanti), TP2 (2ème palier), TP3 (3ème palier)',
+        type: 'select',
+        valeurParDefaut: 'AUTO',
+        options: [
+          { label: 'Automatique (Dynamique / Moteur Énergie)', value: 'AUTO' },
+          { label: '1er Palier (TP1 - Objectif Rapide)', value: 'TP1' },
+          { label: '2ème Palier (TP2 - Grand Mouvement)', value: 'TP2' },
+          { label: '3ème Palier (TP3 - Extension Maximale)', value: 'TP3' },
+        ],
+        groupe: 'Take Profit Optimal & Proportionnalité',
+      },
+      {
         cle: 'seuilScoreGrandMouvement',
         label: 'Seuil Score pour Grand Mouvement (TP2 en Mode Standard)',
         description: 'Score Shved à partir duquel on vise TP2 au lieu de TP1 grâce à la liquidité massive (défaut: 70 pts)',
@@ -5510,6 +5488,26 @@ return {
         type: 'string',
         valeurParDefaut: '#F23645',
         groupe: 'Couleurs',
+      },
+      // ─── 🎯 Filtre Plage TP UOP ───
+      {
+        cle: 'activerFiltrePlageTP',
+        label: 'Activer Filtre Plage TP UOP',
+        description: 'Exige que le Doji forme l\'extrême absolu de toute la plage entre la bougie contenant le prix du TP UOP et le Doji',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Filtre Plage TP UOP',
+      },
+      {
+        cle: 'maxReculPlageTP',
+        label: 'Recul Max Recherche Bougie TP',
+        description: 'Nombre maximal de bougies de recul dans le passé pour identifier la bougie contenant le TP',
+        type: 'number',
+        valeurParDefaut: 100,
+        min: 10,
+        max: 300,
+        step: 10,
+        groupe: 'Filtre Plage TP UOP',
       },
     ],
     creeLe: '2026-10-18T00:00:00.000Z',

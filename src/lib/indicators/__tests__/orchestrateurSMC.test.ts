@@ -4,6 +4,9 @@ import {
   calculerOrchestrateurSMC,
   calculerCarburantLiquidation,
   calculerPorteeDynamiqueUOP,
+  trouverBougieContenantPrixTP,
+  validerDojiAvecPlageTP,
+  type InfoValidationPlageTP,
 } from '../favoris/orchestrateurSMC';
 
 function creerBougie(
@@ -370,6 +373,186 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(resultatRejet.statistiques.totalConfirmes).toBe(0);
     expect(resultatRejet.primitives.points?.length || 0).toBe(0);
     expect(resultatRejet.primitives.lignes?.length || 0).toBe(0);
+  });
+
+  it('valide ou rejette un setup selon le filtre Plage TP (trouverBougieContenantPrixTP & validerDojiAvecPlageTP)', () => {
+    // Construction d'un historique de 20 bougies
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 20; k++) {
+      if (k === 5) {
+        // Bougie 5 : Contient le prix du TP (ex: TP = 115, High = 120, Low = 110)
+        bougies.push(creerBougie(5000, 112, 120, 110, 118));
+      } else if (k > 5 && k < 15) {
+        // Descente progressive vers 95
+        const base = 108 - (k - 5) * 1.5;
+        bougies.push(creerBougie(k * 1000, base, base + 1, base - 1, base));
+      } else if (k === 15) {
+        // Bougie 1 du Doji d'achat : liquidation avec Low = 80
+        bougies.push(creerBougie(15000, 95, 95, 80, 82));
+      } else if (k === 16) {
+        // Bougie 2 du Doji d'achat : réintégration (Close = 96)
+        bougies.push(creerBougie(16000, 82, 97, 82, 96));
+      } else {
+        bougies.push(creerBougie(k * 1000, 96, 98, 95, 97));
+      }
+    }
+
+    // 1️⃣ Trouver la bougie contenant le prix du TP (115)
+    const repereTP = trouverBougieContenantPrixTP(bougies, 16, 115, 100);
+    expect(repereTP).toBeDefined();
+    expect(repereTP?.index).toBe(5);
+
+    // 2️⃣ Validation Achat réussie : le Low du Doji (80) est le plus bas de toute la plage [5 -> 16]
+    const verifValide = validerDojiAvecPlageTP(bougies, 16, 'ACHAT', 115, 100);
+    expect(verifValide.estValide).toBe(true);
+    expect(verifValide.bougieTPIndex).toBe(5);
+    expect(verifValide.prixExtremeDoji).toBe(80);
+    expect(verifValide.motif).toContain('creux ultime de la plage depuis le TP');
+
+    // 3️⃣ Rejet Achat : Une bougie intermédiaire (index 10) fait un Low encore plus bas que le Doji (75 < 80)
+    bougies[10].low = 75;
+    const verifRejet = validerDojiAvecPlageTP(bougies, 16, 'ACHAT', 115, 100);
+    expect(verifRejet.estValide).toBe(false);
+    expect(verifRejet.motif).toContain("n'est pas le plus bas absolu de la plage");
+    expect(verifRejet.prixExtremePlage).toBe(75);
+
+    // 4️⃣ Validation Vente (symétrique) : le High du Doji (130) doit être le plus haut absolu jusqu'à la bougie du TP
+    const bougiesVente: Bougie[] = [];
+    for (let k = 0; k < 20; k++) {
+      if (k === 4) {
+        // Bougie 4 contenant le prix du TP Vente (TP = 85, Low = 80, High = 90)
+        bougiesVente.push(creerBougie(4000, 88, 90, 80, 86));
+      } else if (k === 15) {
+        // B1 Doji vente : High = 130
+        bougiesVente.push(creerBougie(15000, 110, 130, 108, 128));
+      } else if (k === 16) {
+        // B2 Doji vente : Close = 109 (réintégration)
+        bougiesVente.push(creerBougie(16000, 128, 128, 108, 109));
+      } else {
+        bougiesVente.push(creerBougie(k * 1000, 100, 105, 95, 102));
+      }
+    }
+
+    const verifVenteValide = validerDojiAvecPlageTP(bougiesVente, 16, 'VENTE', 85, 100);
+    expect(verifVenteValide.estValide).toBe(true);
+    expect(verifVenteValide.bougieTPIndex).toBe(4);
+    expect(verifVenteValide.prixExtremeDoji).toBe(130);
+    expect(verifVenteValide.motif).toContain('sommet ultime de la plage depuis le TP');
+
+    // Rejet Vente si bougie intermédiaire a un High plus haut (ex: 135 > 130)
+    bougiesVente[8].high = 135;
+    const verifVenteRejet = validerDojiAvecPlageTP(bougiesVente, 16, 'VENTE', 85, 100);
+    expect(verifVenteRejet.estValide).toBe(false);
+    expect(verifVenteRejet.motif).toContain("n'est pas le plus haut absolu de la plage");
+  });
+
+  it('expose les variables UI du Filtre Plage TP UOP dans le script orchestrateur officiel', async () => {
+    const { INDICATEURS_PAR_DEFAUT } = await import('../indicatorEngine');
+    const scriptOrchestre = INDICATEURS_PAR_DEFAUT.find(
+      (s) => s.id === 'script-orchestrateur-smc'
+    );
+    expect(scriptOrchestre).toBeDefined();
+    expect(scriptOrchestre?.parametres?.activerFiltrePlageTP).toBe(true);
+    expect(scriptOrchestre?.parametres?.maxReculPlageTP).toBe(100);
+
+    // Définitions de variables
+    const varActiver = scriptOrchestre?.definitionsVariables?.find(
+      (v) => v.cle === 'activerFiltrePlageTP'
+    );
+    const varRecul = scriptOrchestre?.definitionsVariables?.find(
+      (v) => v.cle === 'maxReculPlageTP'
+    );
+
+    expect(varActiver).toBeDefined();
+    expect(varActiver?.groupe).toBe('Filtre Plage TP UOP');
+    expect(varActiver?.valeurParDefaut).toBe(true);
+
+    expect(varRecul).toBeDefined();
+    expect(varRecul?.groupe).toBe('Filtre Plage TP UOP');
+    expect(varRecul?.valeurParDefaut).toBe(100);
+  });
+
+  it('permet à l\'utilisateur de forcer le palier TP visé (TP1, TP2, TP3)', () => {
+    const bougies: Bougie[] = [];
+
+    // 15 bougies plates initiales
+    for (let k = 0; k < 15; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Doji Achat (Spring) aux bougies 15 et 16
+    // SL = 85, Entrée = 98.8, Risque = 13.8
+    bougies.push(creerBougie(15000, 99.0, 99.0, 85.0, 86.0));
+    bougies.push(creerBougie(16000, 86.0, 99.0, 86.0, 98.8));
+
+    // Confirmation 3 bougies
+    bougies.push(creerBougie(17000, 98.8, 101.0, 95.0, 100.0));
+    bougies.push(creerBougie(18000, 100.0, 103.0, 96.0, 102.0));
+    bougies.push(creerBougie(19000, 102.0, 105.0, 99.0, 104.0));
+
+    // 1️⃣ Test avec choix forcé TP1
+    const resTP1 = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      palierTPVise: 'TP1',
+    });
+
+    expect(resTP1.setups.length).toBeGreaterThanOrEqual(1);
+    const setupTP1 = resTP1.setups[0];
+    expect(setupTP1.palierTPVise).toBe('TP1');
+    expect(setupTP1.ordreTP).toBe(1);
+    // Prix TP1 secours = 98.8 + 13.8 * 1.5 = 119.5
+    expect(setupTP1.prixTP).toBeCloseTo(98.8 + 13.8 * 1.5, 1);
+
+    // 2️⃣ Test avec choix forcé TP2
+    const resTP2 = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      palierTPVise: 'TP2',
+    });
+
+    expect(resTP2.setups.length).toBeGreaterThanOrEqual(1);
+    const setupTP2 = resTP2.setups[0];
+    expect(setupTP2.palierTPVise).toBe('TP2');
+    expect(setupTP2.ordreTP).toBe(2);
+    // Prix TP2 secours = 98.8 + 13.8 * 2.5 = 133.3
+    expect(setupTP2.prixTP).toBeCloseTo(98.8 + 13.8 * 2.5, 1);
+    expect(setupTP2.prixTP).toBeGreaterThan(setupTP1.prixTP ?? 0);
+
+    // 3️⃣ Test avec choix forcé TP3
+    const resTP3 = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      palierTPVise: 'TP3',
+    });
+
+    expect(resTP3.setups.length).toBeGreaterThanOrEqual(1);
+    const setupTP3 = resTP3.setups[0];
+    expect(setupTP3.palierTPVise).toBe('TP3');
+    expect(setupTP3.ordreTP).toBe(3);
+    // Prix TP3 secours = 98.8 + 13.8 * 3.5 = 147.1
+    expect(setupTP3.prixTP).toBeCloseTo(98.8 + 13.8 * 3.5, 1);
+    expect(setupTP3.prixTP).toBeGreaterThan(setupTP2.prixTP ?? 0);
+  });
+
+  it('expose le paramètre palierTPVise dans le catalogue officiel', async () => {
+    const { INDICATEURS_PAR_DEFAUT } = await import('../indicatorEngine');
+    const scriptOrchestre = INDICATEURS_PAR_DEFAUT.find(
+      (s) => s.id === 'script-orchestrateur-smc'
+    );
+    expect(scriptOrchestre).toBeDefined();
+    expect(scriptOrchestre?.parametres?.palierTPVise).toBe('AUTO');
+
+    const varPalier = scriptOrchestre?.definitionsVariables?.find(
+      (v) => v.cle === 'palierTPVise'
+    );
+    expect(varPalier).toBeDefined();
+    expect(varPalier?.type).toBe('select');
+    expect(varPalier?.valeurParDefaut).toBe('AUTO');
+    expect(varPalier?.options?.map((o) => o.value)).toEqual(['AUTO', 'TP1', 'TP2', 'TP3']);
   });
 });
 

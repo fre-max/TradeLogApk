@@ -4,10 +4,6 @@ import {
   calculerShvedSupplyDemand,
   type ZoneShved,
 } from '@/lib/bot/modules/01_liquidite/shvedSupplyDemand';
-import {
-  calculerZigZag,
-  type PivotZigZag,
-} from '../zigzag';
 
 /**
  * ==============================================================================
@@ -70,29 +66,12 @@ export interface ParametresSandboxDojiShvedPlage {
   epaisseurLignes?: number;                   // Épaisseur des segments (défaut: 2)
   bornerALaPlage?: boolean;                   // Limiter la ligne aux bornes temporelles de la plage (défaut: true)
 
-  // ─── 📐 Filtre ZigZag & Extrême de Vague ───
-  activerFiltreZigzag?: boolean;       // Filtre les Dojis par la dernière vague ZigZag (défaut: true)
-  profondeurZigzag?: number;           // Profondeur de calcul des pivots ZigZag (défaut: 5)
-  afficherLignesZigzag?: boolean;      // Affiche les segments ZigZag sur le graphique (défaut: false)
-  couleurZigzag?: string;              // Couleur des segments ZigZag (défaut: '#FFA726')
-
   bullColor?: string;                // Couleur Achat / Support (défaut: '#00E676')
   bearColor?: string;                // Couleur Vente / Résistance (défaut: '#F23645')
   texteLabel?: string;               // Texte du signal (défaut: 'Liq/Reint')
-}
 
-/**
- * Informations de validation et de contexte de la vague ZigZag associée à un signal
- */
-export interface InfoValidationZigzag {
-  estValide: boolean;
-  motif: string;
-  directionVague: 'HAUSSIERE' | 'BAISSIERE';
-  pivotDepartIndex: number;
-  pivotDepartPrix: number;
-  pivotDepartTemps: number | string;
-  prixExtremeVague: number;
-  prixExtremeDoji: number;
+  // ─── Rétro-compatibilité optionnelle ───
+  activerFiltreZigzag?: boolean;     // Option rétro-compatible ignorée dans la sandbox
 }
 
 /**
@@ -110,7 +89,6 @@ export interface SignalDojiAvecPlage {
   tempsDebutPlage: number | string;
   prixExtremePrecedent: number;
   moyenneHauteur: number;
-  infoZigzag?: InfoValidationZigzag;
 }
 
 /**
@@ -151,7 +129,6 @@ export interface SignalSandboxPlage {
   meilleurScore?: number;
   scoresNiveauxDansPlage?: number[];
   niveauxShved?: ZoneShvedAvecScore[];
-  infoZigzag?: InfoValidationZigzag;
   // 🔍 Diagnostic interactif complet :
   toutesZonesCandidates?: ZoneShvedAvecScore[]; // Tous les S/R du sens présents dans la plage
   zoneRetenue?: ZoneShvedAvecScore | null;       // La zone sélectionnée comme étant la meilleure
@@ -312,153 +289,11 @@ export function trouverBougieExtremePrecedente(
 }
 
 /**
- * Vérifie si le Doji personnalisé valide les critères de la vague ZigZag :
- * 
- * 1. Règle du sens de la vague (Trading de retournement à l'épuisement) :
- *    - Setup ACHAT (Spring) : La dernière vague ZigZag doit être BAISSIÈRE (venant d'un sommet).
- *    - Setup VENTE (UTAD) : La dernière vague ZigZag doit être HAUSSIÈRE (venant d'un creux).
- * 
- * 2. Règle de l'extrême absolu de la vague :
- *    - Setup ACHAT : Le plus bas de toute la vague doit correspondre au Low du Doji (B1 ou B2).
- *    - Setup VENTE : Le plus haut de toute la vague doit correspondre au High du Doji (B1 ou B2).
- * 
- * Exemple :
- * const verif = validerDojiAvecZigzag(pivotsZigzag, bougies, indexBougie2, 'ACHAT');
- * if (!verif.estValide) console.log(verif.motif);
- */
-export function validerDojiAvecZigzag(
-  pivotsZigzag: PivotZigZag[],
-  bougies: Bougie[],
-  indexBougie2: number,
-  typeSetup: 'ACHAT' | 'VENTE'
-): {
-  estValide: boolean;
-  motif: string;
-  directionVague?: 'HAUSSIERE' | 'BAISSIERE';
-  pivotDepart?: PivotZigZag;
-  prixExtremeVague?: number;
-  prixExtremeDoji?: number;
-} {
-  const indexB1 = indexBougie2 - 1;
-  const b1 = bougies[indexB1];
-  const b2 = bougies[indexBougie2];
-
-  if (!b1 || !b2) {
-    return { estValide: false, motif: 'Bougies du Doji introuvables' };
-  }
-
-  // 1️⃣ Trouver le dernier pivot ZigZag strictement antérieur au Doji (avant b1)
-  let dernierPivot: PivotZigZag | null = null;
-  for (let k = pivotsZigzag.length - 1; k >= 0; k--) {
-    if (pivotsZigzag[k].index < indexB1) {
-      dernierPivot = pivotsZigzag[k];
-      break;
-    }
-  }
-
-  // Si aucun pivot antérieur n'est trouvé (début d'historique), on valide
-  if (!dernierPivot) {
-    return { estValide: true, motif: "Aucun pivot ZigZag antérieur (début d'historique)" };
-  }
-
-  // Si le dernier pivot est un sommet (estHaut = true), la vague descend vers le Doji -> Vague BAISSIÈRE
-  // Si le dernier pivot est un creux (estHaut = false), la vague monte vers le Doji -> Vague HAUSSIÈRE
-  const directionVague: 'HAUSSIERE' | 'BAISSIERE' = dernierPivot.estHaut ? 'BAISSIERE' : 'HAUSSIERE';
-
-  // 2️⃣ Règle 1 : Contrôle du sens de la vague
-  if (typeSetup === 'ACHAT' && directionVague !== 'BAISSIERE') {
-    return {
-      estValide: false,
-      motif: 'Rejeté par ZigZag : la vague en cours est HAUSSIÈRE (seuls les setups Vente sont autorisés)',
-      directionVague,
-      pivotDepart: dernierPivot,
-    };
-  }
-
-  if (typeSetup === 'VENTE' && directionVague !== 'HAUSSIERE') {
-    return {
-      estValide: false,
-      motif: 'Rejeté par ZigZag : la vague en cours est BAISSIÈRE (seuls les setups Achat sont autorisés)',
-      directionVague,
-      pivotDepart: dernierPivot,
-    };
-  }
-
-  // 3️⃣ Règle 2 : Le Doji doit former l'extrême absolu de toute la vague
-  const indexDepart = dernierPivot.index;
-  const margeFlottante = 1e-6;
-
-  if (typeSetup === 'ACHAT') {
-    // Vague baissière : recherche du Low le plus bas sur toute la vague [indexDepart -> indexBougie2]
-    let plusBasVague = Infinity;
-    for (let k = indexDepart; k <= indexBougie2; k++) {
-      if (bougies[k].low < plusBasVague) {
-        plusBasVague = bougies[k].low;
-      }
-    }
-
-    const plusBasDoji = Math.min(b1.low, b2.low);
-    const estExtremeDoji = (plusBasDoji <= plusBasVague + margeFlottante);
-
-    if (!estExtremeDoji) {
-      return {
-        estValide: false,
-        motif: `Rejeté par ZigZag : le Low du Doji (${plusBasDoji}) n'est pas le plus bas absolu de la vague (${plusBasVague})`,
-        directionVague,
-        pivotDepart: dernierPivot,
-        prixExtremeVague: plusBasVague,
-        prixExtremeDoji: plusBasDoji,
-      };
-    }
-
-    return {
-      estValide: true,
-      motif: `✅ Validé par ZigZag : creux ultime de la vague baissière (${plusBasDoji})`,
-      directionVague,
-      pivotDepart: dernierPivot,
-      prixExtremeVague: plusBasVague,
-      prixExtremeDoji: plusBasDoji,
-    };
-  } else {
-    // Vague haussière : recherche du High le plus haut sur toute la vague [indexDepart -> indexBougie2]
-    let plusHautVague = -Infinity;
-    for (let k = indexDepart; k <= indexBougie2; k++) {
-      if (bougies[k].high > plusHautVague) {
-        plusHautVague = bougies[k].high;
-      }
-    }
-
-    const plusHautDoji = Math.max(b1.high, b2.high);
-    const estExtremeDoji = (plusHautDoji >= plusHautVague - margeFlottante);
-
-    if (!estExtremeDoji) {
-      return {
-        estValide: false,
-        motif: `Rejeté par ZigZag : le High du Doji (${plusHautDoji}) n'est pas le plus haut absolu de la vague (${plusHautVague})`,
-        directionVague,
-        pivotDepart: dernierPivot,
-        prixExtremeVague: plusHautVague,
-        prixExtremeDoji: plusHautDoji,
-      };
-    }
-
-    return {
-      estValide: true,
-      motif: `✅ Validé par ZigZag : sommet ultime de la vague haussière (${plusHautDoji})`,
-      directionVague,
-      pivotDepart: dernierPivot,
-      prixExtremeVague: plusHautVague,
-      prixExtremeDoji: plusHautDoji,
-    };
-  }
-}
-
-/**
  * 🌟 FONCTION PRINCIPALE DU BLOC 1 : Détecte tous les Dojis et calcule leur plage temporelle.
  * Cette fonction est 100% autonome et peut être appelée directement par le Chef d'Orchestre !
  * 
  * Exemple :
- * const dojis = detecterDojisAvecPlage(bougies, { maxReculRecherche: 100, activerFiltreZigzag: true });
+ * const dojis = detecterDojisAvecPlage(bougies, { maxReculRecherche: 100 });
  * console.log('Nombre de Dojis trouvés :', dojis.length);
  */
 export function detecterDojisAvecPlage(
@@ -473,8 +308,6 @@ export function detecterDojisAvecPlage(
     toleranceDeficit?: number;
     toleranceDepassement?: number;
     maxReculRecherche?: number;
-    activerFiltreZigzag?: boolean;
-    profondeurZigzag?: number;
   } = {}
 ): SignalDojiAvecPlage[] {
   const resultats: SignalDojiAvecPlage[] = [];
@@ -489,13 +322,6 @@ export function detecterDojisAvecPlage(
   const toleranceDeficit = Number(options.toleranceDeficit ?? 0.30);
   const toleranceDepassement = Number(options.toleranceDepassement ?? 2.0);
   const maxReculRecherche = Math.max(10, Number(options.maxReculRecherche ?? 100));
-  const activerFiltreZigzag = options.activerFiltreZigzag !== false;
-  const profondeurZigzag = Math.max(2, Number(options.profondeurZigzag ?? 5));
-
-  // 1️⃣ Calcul préalable du ZigZag si le filtre est actif
-  const pivotsZigzag = (activerFiltreZigzag && bougies.length >= profondeurZigzag * 2)
-    ? calculerZigZag(bougies, { depth: profondeurZigzag }).pivots
-    : [];
 
   for (let i = 2; i < bougies.length; i++) {
     const b1 = bougies[i - 1];
@@ -527,26 +353,9 @@ export function detecterDojisAvecPlage(
 
     if (!verification.estValide) continue;
 
-    // 2️⃣ Validation par la vague ZigZag (Filtre Direction + Extrême de vague)
-    let infoZigzag: InfoValidationZigzag | undefined = undefined;
-    if (activerFiltreZigzag && pivotsZigzag.length > 0) {
-      const verifZigzag = validerDojiAvecZigzag(pivotsZigzag, bougies, i, verification.type);
-      if (!verifZigzag.estValide) {
-        continue; // Écarté par le filtre ZigZag !
-      }
-      infoZigzag = {
-        estValide: true,
-        motif: verifZigzag.motif,
-        directionVague: verifZigzag.directionVague!,
-        pivotDepartIndex: verifZigzag.pivotDepart!.index,
-        pivotDepartPrix: verifZigzag.pivotDepart!.prix,
-        pivotDepartTemps: verifZigzag.pivotDepart!.temps,
-        prixExtremeVague: verifZigzag.prixExtremeVague!,
-        prixExtremeDoji: verifZigzag.prixExtremeDoji!,
-      };
-    }
+    const estAchat = verification.type === 'ACHAT';
 
-    // Détermination de la bougie extrême précédente (début de la plage ciblée)
+    // Détermination de la bougie extrême précédente (début de la plage ciblée Shved)
     const extremePrecedent = trouverBougieExtremePrecedente(
       bougies,
       i,
@@ -556,7 +365,7 @@ export function detecterDojisAvecPlage(
     );
 
     // Taille de la liquidation (Bougie 1)
-    const tailleLiquidation = verification.type === 'ACHAT'
+    const tailleLiquidation = estAchat
       ? Math.abs(b1.open - b1.low)
       : Math.abs(b1.high - b1.open);
 
@@ -572,7 +381,6 @@ export function detecterDojisAvecPlage(
       tempsDebutPlage: extremePrecedent.temps,
       prixExtremePrecedent: extremePrecedent.prix,
       moyenneHauteur: moyHauteur,
-      infoZigzag,
     });
   }
 
@@ -928,30 +736,6 @@ export function calculerSandboxDojiShvedPlage(
   const bornerALaPlage = parametres.bornerALaPlage !== false;
   const afficherScoreSurLigne = parametres.afficherScoreSurLigne !== false;
 
-  // 0️⃣ Tracé optionnel des segments ZigZag sur le graphique
-  const afficherLignesZigzag = Boolean(parametres.afficherLignesZigzag);
-  const couleurZigzag = parametres.couleurZigzag || '#FFA726';
-  const profondeurZigzag = Math.max(2, Number(parametres.profondeurZigzag ?? 5));
-
-  if (afficherLignesZigzag && bougies.length >= profondeurZigzag * 2) {
-    const resZigzag = calculerZigZag(bougies, { depth: profondeurZigzag });
-    if (resZigzag.pivots && resZigzag.pivots.length >= 2) {
-      for (let k = 1; k < resZigzag.pivots.length; k++) {
-        const p1 = resZigzag.pivots[k - 1];
-        const p2 = resZigzag.pivots[k];
-        lignes.push({
-          id: `sandbox-zigzag-${k}`,
-          prix: p1.prix,
-          prixFin: p2.prix,
-          dateDebut: p1.temps,
-          dateFin: p2.temps,
-          couleur: couleurZigzag,
-          epaisseur: 2,
-          style: 'solid',
-        });
-      }
-    }
-  }
 
   // 1️⃣ Calcul des Niveaux Shved sur l'historique
   const resultatShved = calculerShvedSupplyDemand(bougies, {
@@ -1156,7 +940,6 @@ export function calculerSandboxDojiShvedPlage(
       meilleurScore,
       scoresNiveauxDansPlage: zonesSelectionnees.map(z => z.score),
       niveauxShved: zonesSelectionnees,
-      infoZigzag: signalDoji.infoZigzag,
       toutesZonesCandidates,
       zoneRetenue,
     });

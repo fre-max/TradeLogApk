@@ -390,6 +390,7 @@ export interface ParametresOrchestrateurSMC {
 
   // ─── 🚀 Moteur d'Énergie & Coût des Péages UOP (Variables Externes Réglables) ───
   modeCalculTP?: 'STANDARD_SHVED' | 'ENERGIE_FRICTION'; // Méthode de calcul du TP optimal (défaut: 'ENERGIE_FRICTION')
+  palierTPVise?: 'AUTO' | 'TP1' | 'TP2' | 'TP3'; // Choix forcé du palier TP ('AUTO', 'TP1', 'TP2', 'TP3') (défaut: 'AUTO')
   peagePalierUOP?: number;               // [COND-FRICTION-02] Forfait en points de carburant pour franchir un palier UOP (défaut: 100)
   coutParATR?: number;                   // [COND-FRICTION-01] Consommation de base en points de carburant par unité d'ATR parcourue (défaut: 50)
   coutFrictionFortOverlap?: number;      // [COND-FRICTION-01] Multiplicateur de coût en zone à Fort Overlap / autoroute (défaut: 0.5)
@@ -409,6 +410,10 @@ export interface ParametresOrchestrateurSMC {
   // ─── 🛣️ Condition d'Autoroute UOP Obligatoire ───
   exigerAutorouteUOP?: boolean;          // [COND-UOP-04] Exiger une autoroute UOP en face du trade (rejette si faible chevauchement uniquement) (défaut: true)
   minTauxChevauchementAutoroute?: number; // [COND-UOP-04] Taux minimum de bougies de chevauchement requis pour qualifier l'autoroute (défaut: 3.0)
+
+  // ─── 🎯 Filtre Plage Temporelle TP UOP ───
+  activerFiltrePlageTP?: boolean;        // [COND-PLAGE-TP-01] Exige que le Doji soit l'extrême absolu de toute la plage entre la bougie contenant le TP et le Doji (défaut: true)
+  maxReculPlageTP?: number;              // Nombre max de bougies de recul pour trouver la bougie contenant le prix du TP (défaut: 100)
 
   // ─── 🎨 Visuels Épurés & Minimalistes (Ergonomie Pro) ───
   modeVisuel?: 'EPURE' | 'COMPLET';      // 'EPURE' (point discret + micro-segments) ou 'COMPLET' (défaut: 'EPURE')
@@ -503,7 +508,8 @@ export interface SetupOrchestreSMC {
 
   // Cible Take Profit Optimal (UOP)
   prixTP?: number;              // Prix cible du Take Profit
-  ordreTP?: number;             // Ordre du TP choisi (1 pour TP1, 2 pour TP2)
+  ordreTP?: number;             // Ordre du TP choisi (1 pour TP1, 2 pour TP2, 3 pour TP3)
+  palierTPVise?: 'AUTO' | 'TP1' | 'TP2' | 'TP3'; // Choix forcé ou automatique du palier
   distanceTP?: number;          // Distance en points entre entrée et TP
   ratioRR?: number;             // Ratio Risque/Rendement (R:R)
   tpSelectionne?: TPOptimalUOP;
@@ -517,6 +523,9 @@ export interface SetupOrchestreSMC {
   etapesPaliersUOP?: EtapePalierUOPDetail[]; // Trajet pas-à-pas à travers chaque palier UOP
   detailsCarburant?: DetailsCarburantLiquidation; // Détails du calcul du carburant initial
   tousPaliersUOPCandidats?: TPOptimalUOP[]; // Tous les paliers UOP candidats disponibles
+
+  // 🎯 Filtre Plage Temporelle TP UOP
+  infoPlageTP?: InfoValidationPlageTP; // Détails de validation de la plage temporelle du TP
 
   // Cycle de vie post-confirmation
   estTermine: boolean;          // Vrai si le TP ou le SL a été touché par la suite
@@ -541,6 +550,190 @@ export interface ResultatOrchestrateurSMC {
     ratioMoyenRR: number;
     tauxReussiteTP: number;      // % de trades gagnants parmi les terminés
   };
+}
+
+// ─── 🎯 FILTRE PLAGE TEMPORELLE DU TAKE PROFIT UOP ───────────────────────────
+
+/**
+ * Informations de validation et de contexte de la plage TP associée à un setup SMC
+ */
+export interface InfoValidationPlageTP {
+  estValide: boolean;
+  motif: string;
+  prixTP: number;
+  bougieTPIndex?: number;
+  bougieTPTemps?: number | string;
+  prixExtremePlage?: number;
+  prixExtremeDoji?: number;
+}
+
+/**
+ * Recherche dans le passé la première bougie antérieure dont le range (Low..High)
+ * contient le niveau de prix du Take Profit (TP).
+ * 
+ * Exemple :
+ * const repere = trouverBougieContenantPrixTP(bougies, indexDoji, 1.0925, 100);
+ * if (repere) console.log('Bougie TP trouvée à l\'index :', repere.index);
+ */
+export function trouverBougieContenantPrixTP(
+  bougies: Bougie[],
+  indexDoji: number,
+  prixTP: number,
+  maxRecul: number = 100
+): { index: number; temps: number | string; prix: number } | null {
+  const debutScan = Math.max(0, indexDoji - 2);
+  const finScan = Math.max(0, indexDoji - 2 - maxRecul);
+
+  // 1️⃣ Recherche de la première bougie antérieure dont le range traverse le prix du TP
+  for (let k = debutScan; k >= finScan; k--) {
+    const b = bougies[k];
+    if (b.low <= prixTP && b.high >= prixTP) {
+      return { index: k, temps: b.time, prix: prixTP };
+    }
+  }
+
+  // 2️⃣ Secours : si aucune bougie ne traverse exactement le cours, on cherche celle dont
+  // l'amplitude est la plus proche du prix TP
+  let plusProcheIndex = -1;
+  let ecartMin = Infinity;
+  for (let k = debutScan; k >= finScan; k--) {
+    const b = bougies[k];
+    const ecart = Math.min(Math.abs(b.high - prixTP), Math.abs(b.low - prixTP));
+    if (ecart < ecartMin) {
+      ecartMin = ecart;
+      plusProcheIndex = k;
+    }
+  }
+
+  if (plusProcheIndex >= 0) {
+    const b = bougies[plusProcheIndex];
+    return { index: plusProcheIndex, temps: b.time, prix: prixTP };
+  }
+
+  return null;
+}
+
+/**
+ * 🎯 Vérifie si le Doji personnalisé valide les critères de la Plage TP UOP.
+ * 
+ * Règle de l'extrême absolu sur la plage temporelle [Bougie TP -> Doji] :
+ * - Setup ACHAT (Spring) : Le Low du Doji (Math.min(b1.low, b2.low)) doit être
+ *   le prix le plus bas de TOUTE la plage entre la bougie contenant le TP et le Doji.
+ * - Setup VENTE (UTAD) : Le High du Doji (Math.max(b1.high, b2.high)) doit être
+ *   le prix le plus haut de TOUTE la plage entre la bougie contenant le TP et le Doji.
+ * 
+ * Exemple :
+ * const verif = validerDojiAvecPlageTP(bougies, indexDoji, 'ACHAT', 1.0920, 100);
+ * if (!verif.estValide) console.log(verif.motif);
+ */
+export function validerDojiAvecPlageTP(
+  bougies: Bougie[],
+  indexBougie2: number,
+  typeSetup: 'ACHAT' | 'VENTE',
+  prixTP: number,
+  maxRecul: number = 100
+): {
+  estValide: boolean;
+  motif: string;
+  prixTP: number;
+  bougieTPIndex?: number;
+  bougieTPTemps?: number | string;
+  prixExtremePlage?: number;
+  prixExtremeDoji?: number;
+} {
+  const indexB1 = indexBougie2 - 1;
+  const b1 = bougies[indexB1];
+  const b2 = bougies[indexBougie2];
+
+  if (!b1 || !b2) {
+    return { estValide: false, motif: 'Bougies du Doji introuvables', prixTP };
+  }
+
+  // 1️⃣ Trouver la bougie dans le passé contenant le prix du TP
+  const repereTP = trouverBougieContenantPrixTP(bougies, indexBougie2, prixTP, maxRecul);
+  if (!repereTP) {
+    return {
+      estValide: false,
+      motif: `Rejeté : aucune bougie antérieure contenant le prix TP (${prixTP}) trouvée dans les ${maxRecul} bougies de recul`,
+      prixTP,
+    };
+  }
+
+  const margeFlottante = 1e-6;
+
+  // 2️⃣ Vérifier que le Doji est l'extrême absolu de toute la plage [repereTP.index -> indexBougie2]
+  if (typeSetup === 'ACHAT') {
+    const lowDoji = Math.min(b1.low, b2.low);
+    let plusBasPlage = Infinity;
+    let indexPlusBas = -1;
+
+    for (let k = repereTP.index; k <= indexBougie2; k++) {
+      if (bougies[k].low < plusBasPlage) {
+        plusBasPlage = bougies[k].low;
+        indexPlusBas = k;
+      }
+    }
+
+    const estExtremeDoji = (lowDoji <= plusBasPlage + margeFlottante);
+
+    if (!estExtremeDoji) {
+      return {
+        estValide: false,
+        motif: `Rejeté par filtre Plage TP : le Low du Doji (${lowDoji}) n'est pas le plus bas absolu de la plage (${plusBasPlage} à la bougie #${indexPlusBas})`,
+        prixTP,
+        bougieTPIndex: repereTP.index,
+        bougieTPTemps: repereTP.temps,
+        prixExtremePlage: plusBasPlage,
+        prixExtremeDoji: lowDoji,
+      };
+    }
+
+    return {
+      estValide: true,
+      motif: `✅ Validé par filtre Plage TP : creux ultime de la plage depuis le TP (bougie #${repereTP.index})`,
+      prixTP,
+      bougieTPIndex: repereTP.index,
+      bougieTPTemps: repereTP.temps,
+      prixExtremePlage: plusBasPlage,
+      prixExtremeDoji: lowDoji,
+    };
+  } else {
+    // VENTE : High du Doji doit être le plus haut de toute la plage
+    const highDoji = Math.max(b1.high, b2.high);
+    let plusHautPlage = -Infinity;
+    let indexPlusHaut = -1;
+
+    for (let k = repereTP.index; k <= indexBougie2; k++) {
+      if (bougies[k].high > plusHautPlage) {
+        plusHautPlage = bougies[k].high;
+        indexPlusHaut = k;
+      }
+    }
+
+    const estExtremeDoji = (highDoji >= plusHautPlage - margeFlottante);
+
+    if (!estExtremeDoji) {
+      return {
+        estValide: false,
+        motif: `Rejeté par filtre Plage TP : le High du Doji (${highDoji}) n'est pas le plus haut absolu de la plage (${plusHautPlage} à la bougie #${indexPlusHaut})`,
+        prixTP,
+        bougieTPIndex: repereTP.index,
+        bougieTPTemps: repereTP.temps,
+        prixExtremePlage: plusHautPlage,
+        prixExtremeDoji: highDoji,
+      };
+    }
+
+    return {
+      estValide: true,
+      motif: `✅ Validé par filtre Plage TP : sommet ultime de la plage depuis le TP (bougie #${repereTP.index})`,
+      prixTP,
+      bougieTPIndex: repereTP.index,
+      bougieTPTemps: repereTP.temps,
+      prixExtremePlage: plusHautPlage,
+      prixExtremeDoji: highDoji,
+    };
+  }
 }
 
 // ─── ⚡ MOTEUR D'ÉNERGIE & PORTÉE DYNAMIQUE UOP (CARBURANT VS FRICTION) ─────────
@@ -1112,54 +1305,8 @@ export function calculerOrchestrateurSMC(
       }
     }
 
-    // Le setup est validé par tous les filtres géométriques & structurels : on le comptabilise
-    totalDetectes++;
-
-    // B. Vérification du RANGE DE CONFIRMATION (les N bougies suivantes)
-    let statut: StatutSetupSMC = 'CONFIRME';
-    let bougiesObservees = 0;
-    let bougieInvalidationIndex: number | undefined;
-
-    const indexFinVerification = Math.min(indexDoji + nbBougiesConfirmation, bougies.length - 1);
-
-    for (let k = indexDoji + 1; k <= indexFinVerification; k++) {
-      bougiesObservees++;
-      const bougieActuelle = bougies[k];
-
-      if (estAchat) {
-        // En Achat : si une bougie passe SOUS le plus bas du Doji (prixSL), le setup est invalidé
-        if (bougieActuelle.low <= prixSL) {
-          statut = 'ANNULE';
-          bougieInvalidationIndex = k;
-          break;
-        }
-      } else {
-        // En Vente : si une bougie passe AU-DESSUS du plus haut du Doji (prixSL), le setup est invalidé
-        if (bougieActuelle.high >= prixSL) {
-          statut = 'ANNULE';
-          bougieInvalidationIndex = k;
-          break;
-        }
-      }
-    }
-
-    // Si on est encore dans les 3 bougies en fin d'historique et pas encore invalidé
-    if (statut !== 'ANNULE' && bougiesObservees < nbBougiesConfirmation) {
-      statut = 'EN_COURS';
-    }
-
-    // Comptabilisation initiale des statuts
-    if (statut === 'CONFIRME') {
-      totalConfirmes++;
-      if (estAchat) totalAchatsConfirmes++;
-      else totalVentesConfirmees++;
-    } else if (statut === 'ANNULE') {
-      totalAnnules++;
-    } else {
-      totalEnCours++;
-    }
-
-    // C. CIBLE TP OPTIMAL & MOTEUR D'ÉNERGIE UOP (CARBURANT VS FRICTION)
+    // B. CIBLE TP OPTIMAL & MOTEUR D'ÉNERGIE UOP (CARBURANT VS FRICTION)
+    const palierTPVise = parametres.palierTPVise || 'AUTO';
     let tpSelectionne: TPOptimalUOP | undefined;
     let prixTP: number | undefined;
     let ordreTP: number = 1;
@@ -1172,7 +1319,77 @@ export function calculerOrchestrateurSMC(
     let etapesPaliersUOP: EtapePalierUOPDetail[] | undefined;
     let detailsCarburant: DetailsCarburantLiquidation | undefined;
 
-    if (modeCalculTP === 'ENERGIE_FRICTION') {
+    if (palierTPVise !== 'AUTO') {
+      // 🎯 SÉLECTION DU PALIER FORCÉE PAR L'UTILISATEUR ('TP1', 'TP2', 'TP3')
+      // 1. Calcul indicatif du carburant initial de liquidation pour le diagnostic visuel
+      let profondeurMeche = distanceSL;
+      if (meilleureZone) {
+        profondeurMeche = estAchat
+          ? Math.max(0, meilleureZone.zone.prixMedian - prixSL)
+          : Math.max(0, prixSL - meilleureZone.zone.prixMedian);
+      }
+
+      const nombreRetests = meilleureZone?.retestsAvant ?? 0;
+      const resCarburant = calculerCarburantLiquidation({
+        nombreRetests,
+        profondeurMeche,
+        hauteurMoyenne: doji.moyenneHauteur,
+        pointsParRetest,
+        plafondCarburantRetests,
+        bonusMecheProfonde,
+        bonusMecheNormale,
+      });
+
+      carburantInitial = resCarburant.carburantTotal;
+      detailsCarburant = {
+        pointsRetests: resCarburant.pointsRetests,
+        nombreRetests,
+        multiplicateurMeche: resCarburant.multiplicateurMeche,
+        profondeurMeche,
+        hauteurMoyenneATR: doji.moyenneHauteur,
+        carburantTotal: resCarburant.carburantTotal,
+      };
+
+      // 2. Ordonner les paliers UOP candidats par distance croissante depuis le prix d'entrée
+      const paliersTries = [...tpsCandidats].sort(
+        (a, b) => Math.abs(a.prixCible - prixEntree) - Math.abs(b.prixCible - prixEntree)
+      );
+
+      let indexVise = 0;
+      let ordreVise = 1;
+      if (palierTPVise === 'TP2') {
+        indexVise = 1;
+        ordreVise = 2;
+      } else if (palierTPVise === 'TP3') {
+        indexVise = 2;
+        ordreVise = 3;
+      }
+
+      if (paliersTries.length > 0) {
+        // Ciblage du palier configuré (avec repli sur le plus éloigné si moins de paliers disponibles)
+        const indexEffectif = Math.min(indexVise, paliersTries.length - 1);
+        tpSelectionne = paliersTries[indexEffectif];
+        ordreTP = indexEffectif + 1;
+        prixTP = tpSelectionne.prixCible;
+        paliersTraverses = ordreTP - 1;
+        estLimiteParPalier = true;
+
+        paliersAnalyses = paliersTries.slice(0, ordreTP).map((tp, idx) => ({
+          prix: tp.prixCible,
+          ordre: idx + 1,
+          estPerce: idx < ordreTP - 1,
+          estBloquant: idx === ordreTP - 1,
+          tauxChevauchement: tp.tauxMoyenChevauchement,
+        }));
+      } else {
+        // Formule de repli sécurisée si aucun palier UOP n'est détecté
+        const multiplicateurSecours = ordreVise === 3 ? 3.5 : (ordreVise === 2 ? 2.5 : 1.5);
+        prixTP = estAchat
+          ? prixEntree + distanceSL * multiplicateurSecours
+          : prixEntree - distanceSL * multiplicateurSecours;
+        ordreTP = ordreVise;
+      }
+    } else if (modeCalculTP === 'ENERGIE_FRICTION') {
       // 🚀 MODÈLE D'ÉNERGIE : Liquidité engrangée vs Résistance UOP
       // 1. Calcul de la profondeur de pénétration de la mèche de balayage
       let profondeurMeche = distanceSL;
@@ -1259,11 +1476,83 @@ export function calculerOrchestrateurSMC(
       }
     }
 
+    // ────────────────────────────────────────────────────────────────────────────
+    // 🎯 [COND-PLAGE-TP-01] FILTRE PLAGE TEMPORELLE DU TP UOP (ORCHESTRATEUR)
+    // ────────────────────────────────────────────────────────────────────────────
+    // Vérification que le Doji forme l'extrême absolu de toute la plage entre la bougie
+    // qui contient le niveau de prix du TP et la bougie actuelle du Doji :
+    // - Achat : Le Low du Doji doit être le prix le plus bas de toute la plage.
+    // - Vente : Le High du Doji doit être le prix le plus haut de toute la plage.
+    let infoPlageTP: InfoValidationPlageTP | undefined;
+    const activerFiltrePlageTP = parametres.activerFiltrePlageTP !== false;
+    const maxReculPlageTP = Math.max(10, Number(parametres.maxReculPlageTP ?? parametres.maxReculRecherche ?? 100));
+
+    if (activerFiltrePlageTP && prixTP !== undefined) {
+      const verifTP = validerDojiAvecPlageTP(
+        bougies,
+        indexDoji,
+        doji.type,
+        prixTP,
+        maxReculPlageTP
+      );
+
+      if (!verifTP.estValide) {
+        // Le setup n'est pas l'extrême absolu sur la plage temporelle du TP ➔ REJET !
+        continue;
+      }
+
+      infoPlageTP = verifTP;
+    }
+
     const distanceTP = Math.abs(prixTP - prixEntree);
     const ratioRR = Number((distanceTP / distanceSL).toFixed(2));
 
+    // Le setup est validé par tous les filtres géométriques & structurels : on le comptabilise
+    totalDetectes++;
+
+    // C. Vérification du RANGE DE CONFIRMATION (les N bougies suivantes)
+    let statut: StatutSetupSMC = 'CONFIRME';
+    let bougiesObservees = 0;
+    let bougieInvalidationIndex: number | undefined;
+
+    const indexFinVerification = Math.min(indexDoji + nbBougiesConfirmation, bougies.length - 1);
+
+    for (let k = indexDoji + 1; k <= indexFinVerification; k++) {
+      bougiesObservees++;
+      const bougieActuelle = bougies[k];
+
+      if (estAchat) {
+        // En Achat : si une bougie passe SOUS le plus bas du Doji (prixSL), le setup est invalidé
+        if (bougieActuelle.low <= prixSL) {
+          statut = 'ANNULE';
+          bougieInvalidationIndex = k;
+          break;
+        }
+      } else {
+        // En Vente : si une bougie passe AU-DESSUS du plus haut du Doji (prixSL), le setup est invalidé
+        if (bougieActuelle.high >= prixSL) {
+          statut = 'ANNULE';
+          bougieInvalidationIndex = k;
+          break;
+        }
+      }
+    }
+
+    // Si on est encore dans les 3 bougies en fin d'historique et pas encore invalidé
+    if (statut !== 'ANNULE' && bougiesObservees < nbBougiesConfirmation) {
+      statut = 'EN_COURS';
+    }
+
+    // Comptabilisation initiale des statuts
     if (statut === 'CONFIRME') {
+      totalConfirmes++;
       sommeRRConfirmes += ratioRR;
+      if (estAchat) totalAchatsConfirmes++;
+      else totalVentesConfirmees++;
+    } else if (statut === 'ANNULE') {
+      totalAnnules++;
+    } else {
+      totalEnCours++;
     }
 
     // D. SUIVI POST-CONFIRMATION : VÉRIFICATION DU TP OU DU SL TOUCHÉ DANS LE FUTUR
@@ -1336,6 +1625,7 @@ export function calculerOrchestrateurSMC(
       bougieInvalidationIndex,
       prixTP,
       ordreTP,
+      palierTPVise,
       distanceTP,
       ratioRR,
       tpSelectionne,
@@ -1347,6 +1637,7 @@ export function calculerOrchestrateurSMC(
       paliersAnalyses,
       etapesPaliersUOP,
       tousPaliersUOPCandidats: tpsCandidats,
+      infoPlageTP,
       estTermine,
       resultatTrade,
       indexSortieTrade,

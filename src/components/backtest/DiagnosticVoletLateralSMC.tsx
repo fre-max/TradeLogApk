@@ -240,6 +240,23 @@ export function DiagnosticVoletLateralSMC({
         {/* ═══════════════ ONGLET SIMULATION TP & UOP ═══════════════ */}
         {ongletActif === 'simulation' && (
           <>
+            {/* 🎯 Validation Plage TP UOP */}
+            {setupAffiche.infoPlageTP && (
+              <div className="p-2.5 rounded-xl bg-cyan-950/25 border border-cyan-500/40 text-[10.5px] space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-cyan-300 flex items-center gap-1">
+                    🎯 Validation Plage TP :
+                  </span>
+                  <span className="font-mono text-[9.5px] px-1.5 py-0.5 rounded bg-black/40 text-emerald-300 border border-emerald-500/30">
+                    Bougie TP #{setupAffiche.infoPlageTP.bougieTPIndex}
+                  </span>
+                </div>
+                <div className="text-[9.5px] text-emerald-300 font-medium">
+                  {setupAffiche.infoPlageTP.motif}
+                </div>
+              </div>
+            )}
+
             {/* Résumé de l'Objectif TP Optimal */}
             <div className="p-3 rounded-xl bg-gradient-to-br from-emerald-950/30 to-slate-900/60 border border-emerald-500/40 space-y-1.5">
               <div className="flex items-center justify-between">
@@ -253,6 +270,14 @@ export function DiagnosticVoletLateralSMC({
               <div className="flex items-center justify-between text-[10.5px] text-slate-300 font-mono">
                 <span>Ratio Risque/Rendement :</span>
                 <span className="font-bold text-emerald-400">{setupAffiche.ratioRR} R</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <span>Palier ciblé :</span>
+                <span className="text-cyan-300 font-bold">
+                  {setupAffiche.palierTPVise && setupAffiche.palierTPVise !== 'AUTO'
+                    ? `Forcé (${setupAffiche.palierTPVise})`
+                    : `TP${setupAffiche.ordreTP ?? 1} (Auto)`}
+                </span>
               </div>
               <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
                 <span>Paliers UOP traversés :</span>
