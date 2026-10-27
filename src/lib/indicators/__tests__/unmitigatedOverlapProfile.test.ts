@@ -33,7 +33,11 @@ describe('Unmitigated Overlap Profile (UOP) - Volume Profile de Chevauchement & 
     // Vérifie que les paliers comptent des bougies et non du volume tick arbitraire
     const palierAvecBougies = premiereVague.paliers.find(p => p.nbBougiesChevauchement > 0);
     expect(palierAvecBougies).toBeDefined();
-    expect(palierAvecBougies?.nbBougiesChevauchement).toBeGreaterThanOrEqual(1);
+    expect(palierAvecBougies?.nbBougiesChevauchement).toBeGreaterThan(0);
+
+    // Un palier au niveau des corps doit avoir au moins 1 bougie pleine
+    const palierCorps = premiereVague.paliers.find(p => p.nbBougiesChevauchement >= 1);
+    expect(palierCorps).toBeDefined();
   });
 
   it('superpose les vagues précédentes et la vague courante du ZigZag', () => {
@@ -55,7 +59,7 @@ describe('Unmitigated Overlap Profile (UOP) - Volume Profile de Chevauchement & 
     const palierMultiVagues = res.paliersSuperposition.find(p => p.nbVagues >= 2);
     expect(palierMultiVagues).toBeDefined();
     if (palierMultiVagues) {
-      expect(palierMultiVagues.sommeBougies).toBeGreaterThanOrEqual(palierMultiVagues.nbVagues);
+      expect(palierMultiVagues.sommeBougies).toBeGreaterThan(0);
       expect(palierMultiVagues.vaguesIndices.length).toBe(palierMultiVagues.nbVagues);
     }
   });
@@ -181,5 +185,54 @@ describe('Unmitigated Overlap Profile (UOP) - Volume Profile de Chevauchement & 
     }
 
     expect(res.primitives.lignes?.length).toBe(totalTP);
+  });
+
+  it('différencie le corps des mèches selon typeChevauchementUOP (PONDERE vs CORPS_SEUL)', () => {
+    // Bougies de test : bougies avec un corps compact et de longues mèches
+    // Open = 1.0800, Close = 1.0802 (corps de 2 pips entre 1.0800 et 1.0802)
+    // High = 1.0820, Low = 1.0780 (mèches longues de part et d'autre)
+    const bougiesMeches: Bougie[] = Array.from({ length: 40 }, (_, i) => ({
+      time: 1700000000 + i * 3600,
+      open: 1.0800,
+      high: 1.0820,
+      low: 1.0780,
+      close: 1.0802,
+    }));
+
+    // 1️⃣ En mode PONDERE : le corps pèse 1.0 et les mèches pèsent 0.25
+    const resPondere = calculerUnmitigatedOverlapProfile(bougiesMeches, {
+      zigzagDepth: 4,
+      typeChevauchementUOP: 'PONDERE',
+      poidsCorps: 1.0,
+      poidsMeche: 0.25,
+      lookbackBars: 40,
+    });
+
+    if (resPondere.vagues.length > 0) {
+      const vague = resPondere.vagues[0];
+      // Palier dans la mèche haute (ex: 1.0815)
+      const palierMeche = vague.paliers.find(p => p.price >= 1.0810);
+      // Palier dans le corps (ex: 1.0801)
+      const palierCorps = vague.paliers.find(p => p.price >= 1.0800 && p.price <= 1.0802);
+
+      if (palierMeche && palierCorps) {
+        // Le palier du corps doit avoir un score de chevauchement strictement supérieur à la mèche
+        expect(palierCorps.nbBougiesChevauchement).toBeGreaterThan(palierMeche.nbBougiesChevauchement);
+      }
+    }
+
+    // 2️⃣ En mode CORPS_SEUL : les paliers dans les mèches ne doivent avoir aucun chevauchement
+    const resCorpsSeul = calculerUnmitigatedOverlapProfile(bougiesMeches, {
+      zigzagDepth: 4,
+      typeChevauchementUOP: 'CORPS_SEUL',
+      lookbackBars: 40,
+    });
+
+    if (resCorpsSeul.vagues.length > 0) {
+      const vague = resCorpsSeul.vagues[0];
+      const palierMeche = vague.paliers.find(p => p.price >= 1.0815);
+      // Le palier dans la mèche ne doit pas exister ou avoir 0 bougies
+      expect(palierMeche === undefined || palierMeche.nbBougiesChevauchement === 0).toBe(true);
+    }
   });
 });

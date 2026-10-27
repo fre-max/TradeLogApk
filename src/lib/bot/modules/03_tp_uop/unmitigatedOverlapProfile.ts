@@ -170,6 +170,11 @@ export interface OptionsUOP {
 
   // ─── 🔍 Mode Debug Visuel des TP Optimaux ─────────────────────────────────────
   afficherDebugTP?: boolean;      // Afficher les zones de debug (tronçons goudronnés, trous, ratios) sur le graphique (défaut: false)
+
+  // ─── 🕯️ Traitement Anatomique des Bougies (Corps vs Mèches) ───────────────────
+  typeChevauchementUOP?: 'PONDERE' | 'CORPS_SEUL' | 'CORPS_ET_MECHES'; // PONDERE (Corps=1.0, Mèches=0.25), CORPS_SEUL ou CORPS_ET_MECHES (défaut: 'PONDERE')
+  poidsCorps?: number;            // Poids attribué au corps de la bougie (défaut: 1.0)
+  poidsMeche?: number;            // Poids attribué aux mèches de la bougie (défaut: 0.25)
 }
 
 /**
@@ -909,6 +914,9 @@ export function calculerUnmitigatedOverlapProfile(
     seuilMargeTrouPourcent = 5,
     maxTPAffiches = 3,
     afficherDebugTP = false,
+    typeChevauchementUOP = 'PONDERE',
+    poidsCorps = 1.0,
+    poidsMeche = 0.25,
   } = options;
 
   // Détermination du nombre effectif de vagues à superposer
@@ -975,13 +983,30 @@ export function calculerUnmitigatedOverlapProfile(
       const candleRange = bougie.high - bougie.low;
       if (candleRange <= 0) continue;
 
-      for (let p = bougie.low; p <= bougie.high; p += step) {
+      const corpsBas = Math.min(bougie.open, bougie.close);
+      const corpsHaut = Math.max(bougie.open, bougie.close);
+
+      // Si mode 'CORPS_SEUL' : on ignore les mèches éphémères et on ne parcourt que le corps de la bougie
+      const scanMin = typeChevauchementUOP === 'CORPS_SEUL' ? corpsBas : bougie.low;
+      const scanMax = typeChevauchementUOP === 'CORPS_SEUL' ? corpsHaut : bougie.high;
+      const borneDebut = Math.min(scanMin, scanMax);
+      const borneFin = Math.max(scanMin, scanMax);
+
+      for (let p = borneDebut; p <= borneFin; p += step) {
         const palierPrix = Math.round(p / step) * step;
         const arrondi = Number(palierPrix.toFixed(5));
 
+        // Poids attribué à ce palier selon son appartenance au corps ou aux mèches
+        let poids = 1.0;
+        if (typeChevauchementUOP === 'PONDERE') {
+          // Si le prix p est situé à l'intérieur du corps réel de la bougie
+          const estDansCorps = p >= corpsBas && p <= corpsHaut;
+          poids = estDansCorps ? poidsCorps : poidsMeche;
+        }
+
         const existant = bucketsMap.get(arrondi) || { nbBougies: 0, dernierIdx: b };
         bucketsMap.set(arrondi, {
-          nbBougies: existant.nbBougies + 1,
+          nbBougies: Number((existant.nbBougies + poids).toFixed(2)),
           dernierIdx: Math.max(existant.dernierIdx, b),
         });
       }

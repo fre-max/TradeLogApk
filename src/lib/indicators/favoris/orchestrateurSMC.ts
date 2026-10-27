@@ -415,6 +415,11 @@ export interface ParametresOrchestrateurSMC {
   activerFiltrePlageTP?: boolean;        // [COND-PLAGE-TP-01] Exige que le Doji soit l'extrême absolu de toute la plage entre la bougie contenant le TP et le Doji (défaut: true)
   maxReculPlageTP?: number;              // Nombre max de bougies de recul pour trouver la bougie contenant le prix du TP (défaut: 100)
 
+  // ─── 🕯️ Traitement Anatomique des Bougies UOP (Corps vs Mèches) ───
+  typeChevauchementUOP?: 'PONDERE' | 'CORPS_SEUL' | 'CORPS_ET_MECHES'; // Traitement anatomique du chevauchement dans l'UOP (défaut: 'PONDERE')
+  poidsCorpsUOP?: number;               // Poids attribué au corps de la bougie (défaut: 1.0)
+  poidsMecheUOP?: number;               // Poids attribué aux mèches de la bougie (défaut: 0.25)
+
   // ─── 🎨 Visuels Épurés & Minimalistes (Ergonomie Pro) ───
   modeVisuel?: 'EPURE' | 'COMPLET';      // 'EPURE' (point discret + micro-segments) ou 'COMPLET' (défaut: 'EPURE')
   afficherPointDoji?: boolean;           // Point discret sur la mèche du Doji (défaut: true)
@@ -1225,6 +1230,9 @@ export function calculerOrchestrateurSMC(
   const resultatUOP: ResultatUOP = calculerUnmitigatedOverlapProfile(bougies, {
     zigzagDepth: Number(parametres.zigzagDepth ?? 8),
     nbVaguesSuperposees: Number(parametres.nbVaguesSuperposees ?? 4),
+    typeChevauchementUOP: parametres.typeChevauchementUOP ?? 'PONDERE',
+    poidsCorps: parametres.poidsCorpsUOP ?? 1.0,
+    poidsMeche: parametres.poidsMecheUOP ?? 0.25,
     inclureVagueCourante: true,
     afficherTPOptimaux: true,
     afficherZigZag: false,

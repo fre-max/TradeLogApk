@@ -554,6 +554,25 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(varPalier?.valeurParDefaut).toBe('AUTO');
     expect(varPalier?.options?.map((o) => o.value)).toEqual(['AUTO', 'TP1', 'TP2', 'TP3']);
   });
+
+  it('expose le paramètre typeChevauchementUOP et ses pondérations anatomiques', async () => {
+    const { INDICATEURS_PAR_DEFAUT } = await import('../indicatorEngine');
+    const scriptOrchestre = INDICATEURS_PAR_DEFAUT.find(
+      (s) => s.id === 'script-orchestrateur-smc'
+    );
+    expect(scriptOrchestre).toBeDefined();
+    expect(scriptOrchestre?.parametres?.typeChevauchementUOP).toBe('PONDERE');
+    expect(scriptOrchestre?.parametres?.poidsCorpsUOP).toBe(1.0);
+    expect(scriptOrchestre?.parametres?.poidsMecheUOP).toBe(0.25);
+
+    const varType = scriptOrchestre?.definitionsVariables?.find(
+      (v) => v.cle === 'typeChevauchementUOP'
+    );
+    expect(varType).toBeDefined();
+    expect(varType?.type).toBe('select');
+    expect(varType?.valeurParDefaut).toBe('PONDERE');
+    expect(varType?.options?.map((o) => o.value)).toEqual(['PONDERE', 'CORPS_SEUL', 'CORPS_ET_MECHES']);
+  });
 });
 
 

@@ -38,7 +38,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.32.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.33.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -2263,8 +2263,46 @@ return {
       afficherTPOptimaux: true,
       seuilMargeTrouPourcent: 5,
       maxTPAffiches: 3,
+      typeChevauchementUOP: 'PONDERE',
+      poidsCorps: 1.0,
+      poidsMeche: 0.25,
     },
     definitionsVariables: [
+      {
+        cle: 'typeChevauchementUOP',
+        label: 'Traitement Anatomique des Bougies',
+        description: 'PONDERE (Corps=1.0, Mèches=0.25 : filtre le bruit), CORPS_SEUL (Ignore 100% des mèches) ou CORPS_ET_MECHES (Égalitaire)',
+        type: 'select',
+        valeurParDefaut: 'PONDERE',
+        options: [
+          { label: 'Pondéré (Corps = 1.0, Mèches = 0.25 - Recommandé)', value: 'PONDERE' },
+          { label: 'Corps Seul (Ignore les mèches éphémères)', value: 'CORPS_SEUL' },
+          { label: 'Corps et Mèches (Classique / Égalitaire)', value: 'CORPS_ET_MECHES' },
+        ],
+        groupe: 'Traitement Anatomique des Bougies',
+      },
+      {
+        cle: 'poidsCorps',
+        label: 'Poids du Corps de Bougie',
+        description: 'Poids accordé au corps de la bougie (défaut: 1.0)',
+        type: 'number',
+        valeurParDefaut: 1.0,
+        min: 0.5,
+        max: 3.0,
+        step: 0.1,
+        groupe: 'Traitement Anatomique des Bougies',
+      },
+      {
+        cle: 'poidsMeche',
+        label: 'Poids des Mèches Éphémères',
+        description: 'Poids accordé aux mèches (défaut: 0.25)',
+        type: 'number',
+        valeurParDefaut: 0.25,
+        min: 0.0,
+        max: 1.0,
+        step: 0.05,
+        groupe: 'Traitement Anatomique des Bougies',
+      },
       {
         cle: 'zigzagDepth',
         label: 'Sensibilité Pivots ZigZag',
@@ -2464,6 +2502,9 @@ return {
       afficherTPOptimaux: parametres.afficherTPOptimaux !== false,
       seuilMargeTrouPourcent: Number(parametres.seuilMargeTrouPourcent || 5),
       maxTPAffiches: Number(parametres.maxTPAffiches || 3),
+      typeChevauchementUOP: parametres.typeChevauchementUOP || 'PONDERE',
+      poidsCorps: Number(parametres.poidsCorps ?? 1.0),
+      poidsMeche: Number(parametres.poidsMeche ?? 0.25),
     });
 
     return {
@@ -5155,6 +5196,9 @@ return {
       minTauxChevauchementAutoroute: 3.0,
       activerFiltrePlageTP: true,
       maxReculPlageTP: 100,
+      typeChevauchementUOP: 'PONDERE',
+      poidsCorpsUOP: 1.0,
+      poidsMecheUOP: 0.25,
       bullColor: '#00E676',
       bearColor: '#F23645',
     },
@@ -5433,6 +5477,41 @@ return {
           { label: '2ème Palier (TP2 - Grand Mouvement)', value: 'TP2' },
           { label: '3ème Palier (TP3 - Extension Maximale)', value: 'TP3' },
         ],
+        groupe: 'Take Profit Optimal & Proportionnalité',
+      },
+      {
+        cle: 'typeChevauchementUOP',
+        label: 'Traitement Anatomique des Bougies UOP',
+        description: 'PONDERE (Corps=1.0, Mèches=0.25 : filtre le bruit), CORPS_SEUL (Ignore 100% des mèches) ou CORPS_ET_MECHES (Égalitaire)',
+        type: 'select',
+        valeurParDefaut: 'PONDERE',
+        options: [
+          { label: 'Pondéré (Corps = 1.0, Mèches = 0.25 - Recommandé)', value: 'PONDERE' },
+          { label: 'Corps Seul (Ignore les mèches éphémères)', value: 'CORPS_SEUL' },
+          { label: 'Corps et Mèches (Classique / Égalitaire)', value: 'CORPS_ET_MECHES' },
+        ],
+        groupe: 'Take Profit Optimal & Proportionnalité',
+      },
+      {
+        cle: 'poidsCorpsUOP',
+        label: 'Poids du Corps de Bougie UOP',
+        description: 'Densité de liquidité accordée au corps réel de la bougie (défaut: 1.0)',
+        type: 'number',
+        valeurParDefaut: 1.0,
+        min: 0.5,
+        max: 3.0,
+        step: 0.1,
+        groupe: 'Take Profit Optimal & Proportionnalité',
+      },
+      {
+        cle: 'poidsMecheUOP',
+        label: 'Poids des Mèches Éphémères UOP',
+        description: 'Densité de liquidité accordée aux mèches de passage (défaut: 0.25)',
+        type: 'number',
+        valeurParDefaut: 0.25,
+        min: 0.0,
+        max: 1.0,
+        step: 0.05,
         groupe: 'Take Profit Optimal & Proportionnalité',
       },
       {
