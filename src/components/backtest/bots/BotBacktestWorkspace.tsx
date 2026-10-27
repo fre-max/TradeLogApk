@@ -46,6 +46,7 @@ export function BotBacktestWorkspace() {
 
   // ─── Données de marché du Backtest Store ──────────────────────────────────
   const donneesCompletes = useBacktestStore((s) => s.donneesCompletes);
+  const donneesM1 = useBacktestStore((s) => s.donneesM1);
   const paireCloud = useBacktestStore((s) => s.paireCloud);
   const anneeCloud = useBacktestStore((s) => s.anneeCloud);
   const actif = useBacktestStore((s) => s.actif);
@@ -130,6 +131,13 @@ export function BotBacktestWorkspace() {
     }
   };
 
+  // ─── Chargement automatique au montage si aucune bougie n'est chargée ────
+  React.useEffect(() => {
+    if (!donneesCompletes || donneesCompletes.length === 0) {
+      telechargerDonnees();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ─── Action : Lancement de la simulation du Bot ──────────────────────────
   const lancerSimulation = () => {
     if (!donneesCompletes || donneesCompletes.length < 30) {
@@ -143,12 +151,13 @@ export function BotBacktestWorkspace() {
     setEnSimulation(true);
 
     try {
-      // 1. Exécution du moteur de simulation batch
+      // 1. Exécution du moteur de simulation batch avec donneesM1
       const rapport = executerSimulationOrchestrateurSMC(donneesCompletes, {
         capitalInitial,
         risquePourcent,
         paire: paireActuelle,
         timeframe: timeframeActuel,
+        donneesM1: donneesM1 && donneesM1.length > 0 ? donneesM1 : donneesCompletes,
         parametresSMC: {
           palierTPVise,
           typeChevauchementUOP: typeChevauchement,
@@ -359,6 +368,7 @@ export function BotBacktestWorkspace() {
           {/* Bouton de chargement */}
           <div className="flex items-end">
             <button
+              id="btn-charger-bougies"
               onClick={telechargerDonnees}
               disabled={enTelechargement}
               className={cn(
@@ -486,6 +496,7 @@ export function BotBacktestWorkspace() {
           </div>
 
           <button
+            id="btn-lancer-backtest-bot"
             onClick={lancerSimulation}
             disabled={enSimulation || !donneesCompletes || donneesCompletes.length < 30}
             className={cn(
@@ -642,6 +653,7 @@ export function BotBacktestWorkspace() {
           <div className="flex items-center justify-between border-b border-border px-4 py-2.5 bg-surface2/50 flex-wrap gap-2">
             <div className="flex items-center gap-1.5">
               <button
+                id="tab-journal-trades"
                 onClick={() => setOngletVue('journal')}
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5',
@@ -655,6 +667,7 @@ export function BotBacktestWorkspace() {
               </button>
 
               <button
+                id="tab-courbe-equity"
                 onClick={() => setOngletVue('equity')}
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5',
@@ -668,6 +681,7 @@ export function BotBacktestWorkspace() {
               </button>
 
               <button
+                id="tab-historique-sessions"
                 onClick={() => setOngletVue('historique')}
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5',

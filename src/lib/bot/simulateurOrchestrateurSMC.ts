@@ -30,6 +30,7 @@ export function executerSimulationOrchestrateurSMC(
     risquePourcent?: number;
     paire?: string;
     timeframe?: string;
+    donneesM1?: Bougie[];
   } = {}
 ): RapportPerformance {
   const capitalInitial = options.capitalInitial ?? 10000;
@@ -66,12 +67,13 @@ export function executerSimulationOrchestrateurSMC(
   const resultatSMC = calculerOrchestrateurSMC(bougies, {
     ...parametresSMC,
     masquerSetupsTermines: false, // On conserve tous les setups pour le journal
-    donneesM1: bougies,
+    donneesM1: options.donneesM1 || bougies,
+    chartTimeframe: options.timeframe || '15m',
   });
 
-  // 2️⃣ Filtrage des setups réels confirmés
+  // 2️⃣ Filtrage des setups réels confirmés (ou en cours avec SL/TP calculés)
   const setupsConfirmes = (resultatSMC.setups || []).filter(
-    (s) => s.statut === 'CONFIRME' && s.prixTP !== undefined
+    (s) => s.prixTP !== undefined && s.prixSL !== undefined && s.statut !== 'ANNULE'
   );
 
   const trades: TradeBotSimule[] = [];
