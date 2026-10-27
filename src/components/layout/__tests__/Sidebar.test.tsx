@@ -49,7 +49,8 @@ describe('Composant d intégration Sidebar', () => {
 
     expect(screen.getByText('Global')).toBeInTheDocument();
     expect(screen.getByText('Statistiques')).toBeInTheDocument();
-    expect(screen.getByText('Backtesting')).toBeInTheDocument();
+    expect(screen.getByText('Backtest Manuel')).toBeInTheDocument();
+    expect(screen.getByText('Journal Bots')).toBeInTheDocument();
   });
 
   // 2️⃣ Filtrage rapide par paire

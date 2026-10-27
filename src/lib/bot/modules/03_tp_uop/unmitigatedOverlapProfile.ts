@@ -172,10 +172,15 @@ export interface OptionsUOP {
   afficherDebugTP?: boolean;      // Afficher les zones de debug (tronçons goudronnés, trous, ratios) sur le graphique (défaut: false)
 
   // ─── 🕯️ Traitement Anatomique des Bougies (Corps vs Mèches) ───────────────────
-  typeChevauchementUOP?: 'PONDERE' | 'CORPS_SEUL' | 'CORPS_ET_MECHES'; // PONDERE (Corps=1.0, Mèches=0.25), CORPS_SEUL ou CORPS_ET_MECHES (défaut: 'PONDERE')
+  typeChevauchementUOP?: TypeChevauchementUOP; // PONDERE (Corps=1.0, Mèches=0.25), CORPS_SEUL ou CORPS_ET_MECHES (défaut: 'PONDERE')
   poidsCorps?: number;            // Poids attribué au corps de la bougie (défaut: 1.0)
   poidsMeche?: number;            // Poids attribué aux mèches de la bougie (défaut: 0.25)
 }
+
+/**
+ * Type de pondération anatomique appliquée par l'UOP
+ */
+export type TypeChevauchementUOP = 'PONDERE' | 'CORPS_SEUL' | 'CORPS_ET_MECHES';
 
 /**
  * Résultat complet retourné par le moteur UOP

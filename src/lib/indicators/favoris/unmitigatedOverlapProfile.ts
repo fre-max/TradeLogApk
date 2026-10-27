@@ -23,6 +23,7 @@ import {
   type VagueOverlapProfile,
   type TPOptimalUOP,
   type NiveauOuvertUOP,
+  type TypeChevauchementUOP,
 } from '@/lib/bot/modules/03_tp_uop/unmitigatedOverlapProfile';
 
 // Alias clairs pour la lisibilité
@@ -39,4 +40,5 @@ export {
   type VagueOverlapProfile,
   type TPOptimalUOP,
   type NiveauOuvertUOP,
+  type TypeChevauchementUOP,
 };

@@ -18,7 +18,8 @@ const NAV_ITEMS = [
   { icon: '📊', label: 'Statistiques', path: '/stats' },
   { icon: '📖', label: 'Playbook', path: '/playbook' },
   { icon: '📚', label: 'Catalogue raisons', path: '/catalog' },
-  { icon: '🔁', label: 'Backtesting', path: '/backtest' },
+  { icon: '🔁', label: 'Backtest Manuel', path: '/backtest?mode=manuel' },
+  { icon: '🤖', label: 'Journal Bots', path: '/backtest?mode=bots' },
 ]
 
 export function Sidebar() {
@@ -104,15 +105,23 @@ export function Sidebar() {
           <div>
             <p className="text-[11px] font-semibold text-txt3 uppercase tracking-wider px-2 mb-1.5">Outils</p>
             <div className="space-y-0.5">
-              {NAV_ITEMS.map((item) => (
-                <NavItem
-                  key={item.path}
-                  icon={item.icon}
-                  label={item.label}
-                  active={location.pathname === item.path}
-                  onClick={() => naviguerVers(item.path)}
-                />
-              ))}
+              {NAV_ITEMS.map((item) => {
+                // Gestion de l'état actif même avec query params (?mode=bots ou ?mode=manuel)
+                const estActif = item.path.includes('?')
+                  ? `${location.pathname}${location.search}` === item.path ||
+                    (item.path.includes('mode=manuel') && location.pathname === '/backtest' && !location.search.includes('mode=bots'))
+                  : location.pathname === item.path;
+
+                return (
+                  <NavItem
+                    key={item.path}
+                    icon={item.icon}
+                    label={item.label}
+                    active={estActif}
+                    onClick={() => naviguerVers(item.path)}
+                  />
+                );
+              })}
             </div>
           </div>
 
