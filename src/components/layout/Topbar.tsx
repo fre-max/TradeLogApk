@@ -1,15 +1,15 @@
 import { useUIStore } from '@/store'
 import { useTrades } from '@/hooks/useTrades'
 import { cn } from '@/lib/utils'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { SyncCloudBadge } from '@/components/sync/SyncCloudBadge'
 
 // ─── Topbar ───────────────────────────────────────────────
 // Barre horizontale en haut avec :
 // - Bouton burger mobile (ouvre la sidebar)
-// - Titre de la page
-// - Stats rapides (masquées sur mobile)
-// - Bouton "+ Nouveau" (uniquement sur la page Journal)
+// - Titre de la page (ou sélecteur Backtest Manuel / Bots quand on est dans le backtest)
+// - Stats rapides (masquées sur mobile et sur backtest)
+// - Bouton "+ Nouveau" (uniquement sur les journaux de trading)
 
 interface TopbarProps {
   title: string
@@ -23,8 +23,11 @@ export function Topbar({ title, onMenuClick, showBack }: TopbarProps) {
   const { data: trades = [] } = useTrades()
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   
   const estBacktest = location.pathname === '/backtest'
+  const modeParam = searchParams.get('mode')
+  const modeActif: 'manuel' | 'bots' = modeParam === 'bots' ? 'bots' : 'manuel'
 
   console.log('🔝 [Topbar] Rendu du composant')
 
@@ -62,36 +65,79 @@ export function Topbar({ title, onMenuClick, showBack }: TopbarProps) {
         </button>
       )}
 
-      {/* Titre de la page */}
-      <span className="text-txt font-medium text-[15px] flex-1">{title}</span>
+      {/* 2️⃣ Titre standard OU Switch de Backtest (Manuel / Bots) directement dans la Navbar */}
+      {estBacktest ? (
+        <div className="flex items-center gap-2 flex-1 overflow-x-auto py-1">
+          {/* Sélecteur compact de mode Backtest pour économiser l'espace vertical */}
+          <div className="flex items-center gap-1 bg-surface2 p-1 rounded-lg border border-border">
+            <button
+              id="navbar-btn-backtest-manuel"
+              onClick={() => setSearchParams({ mode: 'manuel' })}
+              className={cn(
+                'px-2.5 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5',
+                modeActif === 'manuel'
+                  ? 'bg-surface text-txt shadow-xs font-bold border border-border/80'
+                  : 'text-txt3 hover:text-txt'
+              )}
+            >
+              <span>🎯</span>
+              <span>Manuel</span>
+            </button>
 
-      {/* Stats rapides — masquées sur mobile pour gagner de l'espace */}
-      <div className="hidden md:flex items-center gap-4">
-        <Stat label="Win rate" value={`${winRate}%`} color="text-win" />
-        <Stat label="Moy. R:R" value={avgRR === '—' ? '—' : `${avgRR}R`} color="text-accent" />
-        <Stat label="Trades" value={String(totalTrades)} />
-      </div>
+            <button
+              id="navbar-btn-backtest-bots"
+              onClick={() => setSearchParams({ mode: 'bots' })}
+              className={cn(
+                'px-2.5 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5',
+                modeActif === 'bots'
+                  ? 'bg-accent text-white shadow-xs font-bold'
+                  : 'text-txt3 hover:text-txt'
+              )}
+            >
+              <span>🤖</span>
+              <span>Bots</span>
+              <span className="text-[9px] bg-white/20 px-1 py-0.2 rounded-full font-bold uppercase">
+                SMC
+              </span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <span className="text-txt font-medium text-[15px] flex-1">{title}</span>
+      )}
 
-      {/* Compteur compact mobile — juste le nombre de trades */}
-      <span className="md:hidden text-txt3 text-[12px]">
-        {totalTrades} trade{totalTrades !== 1 ? 's' : ''}
-      </span>
+      {/* 3️⃣ Stats rapides — masquées en mode Backtest et sur mobile */}
+      {!estBacktest && (
+        <>
+          <div className="hidden md:flex items-center gap-4">
+            <Stat label="Win rate" value={`${winRate}%`} color="text-win" />
+            <Stat label="Moy. R:R" value={avgRR === '—' ? '—' : `${avgRR}R`} color="text-accent" />
+            <Stat label="Trades" value={String(totalTrades)} />
+          </div>
 
-      {/* Badge de synchronisation Cloud — visible sur toutes les pages */}
-      {/* Indique si les données du téléphone sont bien synchronisées avec le cloud */}
+          {/* Compteur compact mobile — juste le nombre de trades */}
+          <span className="md:hidden text-txt3 text-[12px]">
+            {totalTrades} trade{totalTrades !== 1 ? 's' : ''}
+          </span>
+        </>
+      )}
+
+      {/* 4️⃣ Badge de synchronisation Cloud — visible sur toutes les pages */}
       <SyncCloudBadge />
 
-      {/* Bouton nouveau trade */}
-      <button
-        onClick={() => {
-          console.log('🔝 [Topbar] Clic bouton + Nouveau')
-          openNewTrade()
-        }}
-        className="bg-accent text-white px-3 py-1.5 rounded-md text-[13px] font-medium hover:bg-accent/90 transition-colors"
-      >
-        <span className="hidden sm:inline">+ Nouveau</span>
-        <span className="sm:hidden">+</span>
-      </button>
+      {/* 5️⃣ Bouton nouveau trade — masqué dans l'espace Backtest pour libérer de l'espace */}
+      {!estBacktest && (
+        <button
+          onClick={() => {
+            console.log('🔝 [Topbar] Clic bouton + Nouveau')
+            openNewTrade()
+          }}
+          className="bg-accent text-white px-3 py-1.5 rounded-md text-[13px] font-medium hover:bg-accent/90 transition-colors"
+        >
+          <span className="hidden sm:inline">+ Nouveau</span>
+          <span className="sm:hidden">+</span>
+        </button>
+      )}
     </header>
   )
 }

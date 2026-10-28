@@ -24,6 +24,12 @@ import { TradeDrawer } from '@/components/trade/TradeDrawer';
 import { supabase } from '@/lib/supabase';
 import { uploadImage, compresserEtConvertirEnBase64 } from '@/lib/storage';
 import { sauvegarderBougiesM1Cache, recupererBougiesM1Cache } from '@/lib/backtestCache';
+import {
+  chargerBougiesM1,
+  PAIRES_CLOUD_DISPONIBLES,
+  PRESETS_MULTI_ANNEES,
+  ANNEES_CLOUD_DISPONIBLES,
+} from '@/lib/cloudDataLoader';
 import { ModalInspecteurSetup } from '@/components/laboratoire/ModalInspecteurSetup';
 import { ModalBanqueSetups } from '@/components/laboratoire/ModalBanqueSetups';
 import { useLaboratoireStore } from '@/store/laboratoireStore';
@@ -1161,29 +1167,13 @@ export function BacktestWorkspace() {
     setErreur(null);
     try {
       const activeTf = targetTimeframe || timeframe;
-      let bougiesM1: Bougie[] | null = null;
-
-      // 1️⃣ Tentative de lecture depuis le cache IndexedDB local (Mode Offline First)
-      bougiesM1 = await recupererBougiesM1Cache(paireSel, anneeSel);
-
-      // 2️⃣ Si les données ne sont pas en cache local, on les télécharge depuis le Cloud
-      if (!bougiesM1 || bougiesM1.length === 0) {
-        const nomFichier = `${paireSel.toUpperCase()}_M1_${anneeSel}.csv.gz`;
-        
-        console.log(`📡 [Cloud Loader] Début du téléchargement de ${nomFichier}...`);
-        const reponse = await telechargerFichierCloud(nomFichier);
-        const texteCsv = await decompresserGzipEnTexte(reponse);
-        bougiesM1 = parserCsvPrix(texteCsv);
-
-        // 3️⃣ Enregistrement dans IndexedDB pour les prochaines fois (et le mode offline)
-        await sauvegarderBougiesM1Cache(paireSel, anneeSel, bougiesM1);
-      } else {
-        console.log(`⚡ [Cloud Loader] Données M1 de ${paireSel} (${anneeSel}) chargées directement depuis le cache offline IndexedDB.`);
-      }
+      
+      // 1️⃣ Chargement depuis le cache local IndexedDB ou le Cloud (supporte aussi les plages multi-années '2023-2025')
+      const bougiesM1 = await chargerBougiesM1(paireSel, anneeSel);
 
       setDonneesM1Chargees(bougiesM1);
       setDonneesM1(bougiesM1);
-      const anneeInt = parseInt(anneeSel);
+      const anneeInt = parseInt(anneeSel.split('-')[0], 10);
       setAnneeMinimumChargee(anneeInt);
 
       // Mémoriser la paire et l'année dans le store (persisté en sessionStorage)
@@ -1194,7 +1184,7 @@ export function BacktestWorkspace() {
       const bougiesAgregees = agregerBougies(bougiesM1, activeTf);
       chargerDonnees(bougiesAgregees, paireSel.toUpperCase());
 
-      // Si un timestamp de ciblage est spécifié (restauration de trade)
+      // Si un timestamp de ciblage est spécifié (restauration de trade / Replay Link)
       if (targetTimestamp !== undefined) {
         const targetTimeVal = targetTimestamp;
         let indexTrouve = -1;
@@ -1253,11 +1243,17 @@ export function BacktestWorkspace() {
           });
 
           // 4. Cadrage du graphique sur la bougie d'entrée avec du recul à gauche pour voir le setup
+          // Double temporisation pour garantir le cadrage même lors du premier montage du canvas
           setTimeout(() => {
             if (chartRef.current) {
               chartRef.current.cadrerSurIndex(indexCible, 50);
             }
-          }, 200);
+          }, 150);
+          setTimeout(() => {
+            if (chartRef.current) {
+              chartRef.current.cadrerSurIndex(indexCible, 50);
+            }
+          }, 500);
         } else {
           console.warn(`[Replay Link] Impossible de trouver la bougie pour le timestamp ${targetTimestamp}`);
         }
@@ -1552,7 +1548,7 @@ export function BacktestWorkspace() {
             className={`border-0 rounded px-1.5 py-1 text-[12px] font-semibold outline-none focus:ring-1 focus:ring-[#2962ff] cursor-pointer ${C.select}`}
             title="Sélectionner l'actif Forex à charger depuis le Cloud"
           >
-            {['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'GBPJPY', 'EURJPY', 'EURGBP', 'AUDJPY', 'GBPAUD', 'EURAUD', 'EURCAD', 'AUDNZD', 'CADJPY', 'CHFJPY'].map((p) => (
+            {PAIRES_CLOUD_DISPONIBLES.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
@@ -1561,11 +1557,20 @@ export function BacktestWorkspace() {
             value={anneeCloud}
             onChange={(e) => setAnneeCloud(e.target.value)}
             className={`border-0 rounded px-1.5 py-1 text-[12px] font-semibold outline-none focus:ring-1 focus:ring-[#2962ff] cursor-pointer ${C.select}`}
-            title="Sélectionner l'année de l'historique M1"
+            title="Sélectionner l'année ou la période cumulée multi-années"
           >
-            {Array.from({ length: 26 }, (_, i) => String(2025 - i)).map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
+            <optgroup label="✨ Séances Multi-Années Cumulées">
+              {PRESETS_MULTI_ANNEES.map((preset) => (
+                <option key={preset.valeur} value={preset.valeur}>
+                  {preset.label}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="📅 Années Individuelles">
+              {ANNEES_CLOUD_DISPONIBLES.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </optgroup>
           </select>
  
           <button

@@ -8,11 +8,14 @@ import { useLocalDatabase } from '@/store/useLocalDatabase';
 import { cn } from '@/lib/utils';
 import type { TradeBotSimule } from '@/types/bot';
 import type { TypeChevauchementUOP } from '@/lib/bot/modules/03_tp_uop/unmitigatedOverlapProfile';
-import { chargerBougiesM1 } from '@/lib/cloudDataLoader';
+import {
+  chargerBougiesM1,
+  PAIRES_CLOUD_DISPONIBLES,
+  ANNEES_CLOUD_DISPONIBLES,
+  PRESETS_MULTI_ANNEES,
+} from '@/lib/cloudDataLoader';
 import { agregerBougies } from '@/lib/chartDataHelper';
 
-const PAIRES_DISPONIBLES = ['XAUUSD', 'EURUSD', 'GBPUSD', 'NAS100', 'US30', 'BTCUSD'];
-const ANNEES_DISPONIBLES = ['2025', '2024', '2023'];
 const TIMEFRAMES_DISPONIBLES = [
   { label: 'M1', value: '1m' },
   { label: 'M5', value: '5m' },
@@ -93,8 +96,37 @@ export function BotBacktestWorkspace() {
   const [typeChevauchement, setTypeChevauchement] = useState<TypeChevauchementUOP>('PONDERE');
   const [capitalInitial, setCapitalInitial] = useState<number>(10000);
   const [risquePourcent, setRisquePourcent] = useState<number>(1.0);
-  const [scoreShvedMin, setScoreShvedMin] = useState<number>(15);
+  
+  // ─── Réglages de Fréquence des Setups SMC (Répond à la rareté des positions) ───
+  const [modeFrequence, setModeFrequence] = useState<'DYNAMIQUE' | 'EQUILIBRE' | 'STRICT' | 'PERSONNALISE'>('DYNAMIQUE');
+  const [scoreShvedMin, setScoreShvedMin] = useState<number>(10);
+  const [exigerAutoroute, setExigerAutoroute] = useState<boolean>(false);
+  const [seuilAutoroute, setSeuilAutoroute] = useState<number>(1.5);
+  const [activerFiltrePlageTP, setActiverFiltrePlageTP] = useState<boolean>(false);
   const [enSimulation, setEnSimulation] = useState<boolean>(false);
+
+  // Sélecteur de mode de fréquence en 1 clic
+  const changerModeFrequence = (nouveauMode: 'DYNAMIQUE' | 'EQUILIBRE' | 'STRICT') => {
+    setModeFrequence(nouveauMode);
+    if (nouveauMode === 'DYNAMIQUE') {
+      setScoreShvedMin(10);
+      setExigerAutoroute(false);
+      setActiverFiltrePlageTP(false);
+      addToast('⚡ Mode Dynamique : Filtres assouplis pour capturer un grand nombre de positions.', 'info');
+    } else if (nouveauMode === 'EQUILIBRE') {
+      setScoreShvedMin(15);
+      setExigerAutoroute(true);
+      setSeuilAutoroute(1.5);
+      setActiverFiltrePlageTP(false);
+      addToast('🎯 Mode Équilibré : Filtres calibrés (Autoroute fluide seuil 1.5).', 'info');
+    } else if (nouveauMode === 'STRICT') {
+      setScoreShvedMin(25);
+      setExigerAutoroute(true);
+      setSeuilAutoroute(2.5);
+      setActiverFiltrePlageTP(true);
+      addToast('🏛️ Mode Strict : Filtres institutionnels stricts (très peu de positions, ultra-sélectif).', 'info');
+    }
+  };
 
   // ─── Filtre et recherche dans le tableau des trades ─────────────────────
   const [filtreResultat, setFiltreResultat] = useState<'tous' | 'win' | 'loss' | 'breakeven'>('tous');
@@ -102,13 +134,22 @@ export function BotBacktestWorkspace() {
   const [ongletVue, setOngletVue] = useState<'journal' | 'equity' | 'historique'>('journal');
   const [tradeSelectionne, setTradeSelectionne] = useState<TradeBotSimule | null>(null);
 
-  // ─── Action : Chargement des données de marché autonome ───────────────────
+  // ─── Action : Chargement des données de marché autonome (Multi-Années supporté) ───
   const telechargerDonnees = async () => {
     setEnTelechargement(true);
     try {
       addToast(`Chargement de ${paireChoisie} (${anneeChoisie})...`, 'info');
-      // 1. Récupération des bougies M1 (depuis cache local ou Cloud)
-      const bougiesM1 = await chargerBougiesM1(paireChoisie, anneeChoisie);
+      
+      // 1. Récupération des bougies M1 (avec notification si multi-années cumulées)
+      const bougiesM1 = await chargerBougiesM1(
+        paireChoisie,
+        anneeChoisie,
+        (anneeEnCours, index, total) => {
+          if (total > 1) {
+            addToast(`Téléchargement de l'année ${anneeEnCours} (${index}/${total})...`, 'info');
+          }
+        }
+      );
 
       // 2. Enregistrement M1 et agrégation vers le timeframe choisi
       setDonneesM1(bougiesM1);
@@ -120,7 +161,7 @@ export function BotBacktestWorkspace() {
       chargerDonneesDansStore(bougiesAgregees, paireChoisie);
 
       addToast(
-        `✅ Données prêtes : ${bougiesAgregees.length} bougies chargées (${paireChoisie} · ${timeframeChoisi})`,
+        `✅ Données prêtes : ${bougiesAgregees.length} bougies chargées (${paireChoisie} · ${anneeChoisie} · ${timeframeChoisi})`,
         'success'
       );
     } catch (err: any) {
@@ -151,7 +192,7 @@ export function BotBacktestWorkspace() {
     setEnSimulation(true);
 
     try {
-      // 1. Exécution du moteur de simulation batch avec donneesM1
+      // 1. Exécution du moteur de simulation batch avec donneesM1 et filtres calibrés
       const rapport = executerSimulationOrchestrateurSMC(donneesCompletes, {
         capitalInitial,
         risquePourcent,
@@ -162,6 +203,11 @@ export function BotBacktestWorkspace() {
           palierTPVise,
           typeChevauchementUOP: typeChevauchement,
           scoreMinimumShved: scoreShvedMin,
+          exigerAutorouteUOP: exigerAutoroute,
+          minTauxChevauchementAutoroute: seuilAutoroute,
+          activerFiltrePlageTP,
+          exigerDebutEtFinDansPlage: false, // Intègre les S/R institutionnels majeurs passés
+          maxLookbackBars: donneesCompletes.length, // Couvre toute la durée de la séance
         },
       });
 
@@ -181,16 +227,19 @@ export function BotBacktestWorkspace() {
     }
   };
 
-  // ─── Action : Replay Link (Voir sur le Graphique Replay) ─────────────────
+  // ─── Action : Replay Link (Positionnement Précis sur le Graphique Replay) ─
   const voirTradeSurGraphique = (trade: TradeBotSimule) => {
-    const timestampUnix = typeof trade.dateEntree === 'number'
-      ? trade.dateEntree
-      : Math.floor(new Date(trade.dateEntree).getTime() / 1000);
+    // Conversion robuste du timestamp (supporte string timestamp '1735750800', number, ou ISO)
+    const rawDate = trade.dateEntree;
+    const numVal = Number(rawDate);
+    const timestampUnix = !isNaN(numVal) && numVal > 100000
+      ? (numVal > 1e11 ? Math.floor(numVal / 1000) : Math.floor(numVal))
+      : Math.floor(new Date(rawDate).getTime() / 1000);
 
     // Configuration de la restauration automatique dans le store
     lancerRestaurationContexte({
       pair: sessionActive?.paire || paireActuelle,
-      annee: anneeCloud || '2025',
+      annee: anneeCloud || anneeChoisie || '2025',
       timeframe: sessionActive?.timeframe || timeframeActuel,
       timestamp: timestampUnix,
       position: {
@@ -208,7 +257,7 @@ export function BotBacktestWorkspace() {
 
     addToast(`Graphique Replay positionné sur l'entrée du trade (${trade.prixEntree})`, 'info');
 
-    // Bascule vers le mode manuel
+    // Bascule vers le mode manuel (déclenche la vue Replay)
     setSearchParams({ mode: 'manuel' });
   };
 
@@ -331,23 +380,32 @@ export function BotBacktestWorkspace() {
               onChange={(e) => setPaireChoisie(e.target.value)}
               className="w-full bg-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-txt outline-none focus:border-accent"
             >
-              {PAIRES_DISPONIBLES.map((p) => (
+              {PAIRES_CLOUD_DISPONIBLES.map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
           </div>
 
-          {/* Année */}
+          {/* Année / Plage multi-années */}
           <div className="space-y-1">
-            <label className="text-[11px] font-medium text-txt3 uppercase">Année</label>
+            <label className="text-[11px] font-medium text-txt3 uppercase">Année / Séance</label>
             <select
               value={anneeChoisie}
               onChange={(e) => setAnneeChoisie(e.target.value)}
               className="w-full bg-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-txt outline-none focus:border-accent"
             >
-              {ANNEES_DISPONIBLES.map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
+              <optgroup label="✨ Séances Multi-Années Cumulées">
+                {PRESETS_MULTI_ANNEES.map((preset) => (
+                  <option key={preset.valeur} value={preset.valeur}>
+                    {preset.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="📅 Années Individuelles">
+                {ANNEES_CLOUD_DISPONIBLES.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </optgroup>
             </select>
           </div>
 
@@ -406,6 +464,127 @@ export function BotBacktestWorkspace() {
           <span className="text-xs text-txt3">
             Algorithme actif : <strong className="text-txt font-semibold">Doji Étoile + Shved S/R + UOP</strong>
           </span>
+        </div>
+
+        {/* ─── Sélecteur de Fréquence des Setups SMC (Répond à la rareté des positions) ─── */}
+        <div className="bg-bg/60 border border-border/80 rounded-xl p-3.5 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm">🎯</span>
+              <span className="text-xs font-semibold text-txt uppercase tracking-wide">
+                Fréquence & Sensibilité des Setups SMC
+              </span>
+            </div>
+            <span className="text-[11px] text-txt3">
+              Ajustez la fréquence pour capturer plus d'opportunités sur l'année
+            </span>
+          </div>
+
+          {/* Profils rapides en 1 clic */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => changerModeFrequence('DYNAMIQUE')}
+              className={cn(
+                'py-2 px-3 rounded-lg text-xs font-semibold flex flex-col items-center gap-0.5 border transition-all text-center cursor-pointer',
+                modeFrequence === 'DYNAMIQUE'
+                  ? 'bg-accent/15 border-accent text-accent shadow-xs'
+                  : 'bg-surface border-border text-txt2 hover:bg-surface2'
+              )}
+            >
+              <span>⚡ Mode Dynamique</span>
+              <span className="text-[10px] font-normal opacity-80">Max d'opportunités (Filtres fluides)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => changerModeFrequence('EQUILIBRE')}
+              className={cn(
+                'py-2 px-3 rounded-lg text-xs font-semibold flex flex-col items-center gap-0.5 border transition-all text-center cursor-pointer',
+                modeFrequence === 'EQUILIBRE'
+                  ? 'bg-accent/15 border-accent text-accent shadow-xs'
+                  : 'bg-surface border-border text-txt2 hover:bg-surface2'
+              )}
+            >
+              <span>🎯 Mode Équilibré</span>
+              <span className="text-[10px] font-normal opacity-80">Autoroute UOP seuil 1.5</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => changerModeFrequence('STRICT')}
+              className={cn(
+                'py-2 px-3 rounded-lg text-xs font-semibold flex flex-col items-center gap-0.5 border transition-all text-center cursor-pointer',
+                modeFrequence === 'STRICT'
+                  ? 'bg-accent/15 border-accent text-accent shadow-xs'
+                  : 'bg-surface border-border text-txt2 hover:bg-surface2'
+              )}
+            >
+              <span>🏛️ Mode Strict</span>
+              <span className="text-[10px] font-normal opacity-80">Ultra sélectif institutionnel</span>
+            </button>
+          </div>
+
+          {/* Contrôles fins */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-border/50 text-xs">
+            {/* Score Shved Minimal */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-txt3">
+                <span>Score Shved Minimal</span>
+                <span className="font-semibold text-txt">{scoreShvedMin} pts</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={40}
+                step={5}
+                value={scoreShvedMin}
+                onChange={(e) => {
+                  setScoreShvedMin(Number(e.target.value));
+                  setModeFrequence('PERSONNALISE');
+                }}
+                className="w-full accent-accent h-1.5 bg-surface2 rounded-lg cursor-pointer"
+              />
+            </div>
+
+            {/* Exiger Autoroute UOP */}
+            <div className="flex items-center justify-between py-1 bg-surface/50 px-2.5 rounded-lg border border-border/40">
+              <label className="text-[11px] text-txt2 flex flex-col cursor-pointer">
+                <span className="font-medium">Autoroute UOP Obligatoire</span>
+                <span className="text-[10px] text-txt3">
+                  {exigerAutoroute ? `Active (Seuil: ${seuilAutoroute})` : 'Désactivée (Plus de positions)'}
+                </span>
+              </label>
+              <input
+                type="checkbox"
+                checked={exigerAutoroute}
+                onChange={(e) => {
+                  setExigerAutoroute(e.target.checked);
+                  setModeFrequence('PERSONNALISE');
+                }}
+                className="w-4 h-4 accent-accent rounded cursor-pointer"
+              />
+            </div>
+
+            {/* Filtre Plage TP */}
+            <div className="flex items-center justify-between py-1 bg-surface/50 px-2.5 rounded-lg border border-border/40">
+              <label className="text-[11px] text-txt2 flex flex-col cursor-pointer">
+                <span className="font-medium">Filtre Plage TP Absolu</span>
+                <span className="text-[10px] text-txt3">
+                  {activerFiltrePlageTP ? 'Actif (Extrême strict)' : 'Désactivé (Fluide)'}
+                </span>
+              </label>
+              <input
+                type="checkbox"
+                checked={activerFiltrePlageTP}
+                onChange={(e) => {
+                  setActiverFiltrePlageTP(e.target.checked);
+                  setModeFrequence('PERSONNALISE');
+                }}
+                className="w-4 h-4 accent-accent rounded cursor-pointer"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

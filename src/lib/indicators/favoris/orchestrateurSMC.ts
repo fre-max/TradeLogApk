@@ -409,7 +409,11 @@ export interface ParametresOrchestrateurSMC {
 
   // ─── 🛣️ Condition d'Autoroute UOP Obligatoire ───
   exigerAutorouteUOP?: boolean;          // [COND-UOP-04] Exiger une autoroute UOP en face du trade (rejette si faible chevauchement uniquement) (défaut: true)
-  minTauxChevauchementAutoroute?: number; // [COND-UOP-04] Taux minimum de bougies de chevauchement requis pour qualifier l'autoroute (défaut: 3.0)
+  minTauxChevauchementAutoroute?: number; // [COND-UOP-04] Taux minimum de bougies de chevauchement requis pour qualifier l'autoroute (défaut: 1.5)
+
+  // ─── 🛡️ Niveaux Shved & Lookback Historique ───
+  exigerDebutEtFinDansPlage?: boolean;   // Exiger que le S/R Shved soit né strictement dans la micro-plage du Doji (défaut: false pour capter les S/R majeurs)
+  maxLookbackBars?: number;              // Nombre de bougies analysées pour le calcul Shved (défaut: totalité des bougies)
 
   // ─── 🎯 Filtre Plage Temporelle TP UOP ───
   activerFiltrePlageTP?: boolean;        // [COND-PLAGE-TP-01] Exige que le Doji soit l'extrême absolu de toute la plage entre la bougie contenant le TP et le Doji (défaut: true)
@@ -1192,7 +1196,9 @@ export function calculerOrchestrateurSMC(
   const seuilScoreGrandMouvement = Math.max(10, Number(parametres.seuilScoreGrandMouvement ?? 70));
   const scoreMinimumShved = Math.max(0, Number(parametres.scoreMinimumShved ?? 0));
   const exigerAutorouteUOP = parametres.exigerAutorouteUOP !== false; // [COND-UOP-04] Actif par défaut !
-  const minTauxChevauchementAutoroute = Math.max(0.5, Number(parametres.minTauxChevauchementAutoroute ?? 3.0));
+  const minTauxChevauchementAutoroute = Math.max(0.5, Number(parametres.minTauxChevauchementAutoroute ?? 1.5));
+  const exigerDebutEtFinDansPlage = Boolean(parametres.exigerDebutEtFinDansPlage ?? false);
+  const lookbackShved = Math.max(500, Number(parametres.maxLookbackBars ?? bougies.length));
   const bullColor = parametres.bullColor || '#00E676';
   const bearColor = parametres.bearColor || '#F23645';
 
@@ -1207,6 +1213,7 @@ export function calculerOrchestrateurSMC(
   const dureeSegmentsCibles = Math.max(1, Number(parametres.dureeSegmentsCibles ?? nbBougiesConfirmation));
 
   // 2️⃣ Extraction des Niveaux Shved Supply & Demand
+  // On analyse la totalité de l'historique fourni (lookbackShved) pour ne pas tronquer les opportunités
   const resultatShved = calculerShvedSupplyDemand(bougies, {
     timeframeSource: parametres.timeframeSource || 'M15',
     donneesM1: parametres.donneesM1,
@@ -1215,7 +1222,7 @@ export function calculerOrchestrateurSMC(
     afficherNonRetestees: true,
     afficherFaibles: true,
     minRetests: 0,
-    maxLookbackBars: 250,
+    maxLookbackBars: lookbackShved,
     afficherZones: false,
     afficherLignes: false,
     afficherEtiquettes: false,
@@ -1270,7 +1277,7 @@ export function calculerOrchestrateurSMC(
       bougies,
       {
         filtrerParDirectionSetup: true,
-        exigerDebutEtFinDansPlage: true,
+        exigerDebutEtFinDansPlage: exigerDebutEtFinDansPlage,
         afficherNiveauxCasses: true,
         scoreMinimum: 0,
         topNiveauxScore: 20, // Analyse et score jusqu'à 20 zones candidates dans la plage pour le diagnostic
