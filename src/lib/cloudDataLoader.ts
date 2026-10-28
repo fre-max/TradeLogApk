@@ -203,7 +203,12 @@ export async function chargerBougiesM1(
     }
     console.log(`⏳ [Cloud Loader] Chargement année ${an} (${i + 1}/${annees.length})...`);
     const bougiesAnnee = await chargerBougiesM1UneAnnee(paireUpper, an);
-    toutesLesBougies.push(...bougiesAnnee);
+    // ⚠️ Pas de push(...bougiesAnnee) : avec ~370 000 bougies M1 par an,
+    // le spread dépasse la taille maximale de la pile ("Maximum call stack size exceeded").
+    // Une boucle simple ajoute les bougies une par une sans risque.
+    for (let k = 0; k < bougiesAnnee.length; k++) {
+      toutesLesBougies.push(bougiesAnnee[k]);
+    }
   }
 
   // 3. Tri chronologique et dédoublonnage de sécurité aux frontières d'années
