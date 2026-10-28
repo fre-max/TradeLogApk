@@ -1245,6 +1245,7 @@ export function calculerOrchestrateurSMC(
     afficherZigZag: false,
     afficherBarresProfil: false,
     afficherProlongation: false,
+    afficherDebugTP: true, // 🔍 Génère la cartographie détaillée des blocs et creux UOP pour l'inspection sur le graphique
   });
 
   // 4️⃣ Détection des Dojis personnalisés avec leur plage ciblée (BLOC 1)

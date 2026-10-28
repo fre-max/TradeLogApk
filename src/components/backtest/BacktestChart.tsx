@@ -656,6 +656,7 @@ export const BacktestChart = React.forwardRef<
   const [setupSMCDiagnostic, setSetupSMCDiagnostic] = useState<SetupOrchestreSMC | null>(null);
   const [setupSMCSimule, setSetupSMCSimule] = useState<SetupOrchestreSMC | null>(null);
   const [surbrillanceSMCActive, setSurbrillanceSMCActive] = useState<boolean>(true);
+  const [voletSMCVisible, setVoletSMCVisible] = useState<boolean>(false); // Reste fermé par défaut : 100% visuel sur le graphique
   const [modalSMCVisible, setModalSMCVisible] = useState<boolean>(false);
 
   // 🔍 Diagnostic interactif de Setup Sandbox Doji Shved
@@ -677,6 +678,27 @@ export const BacktestChart = React.forwardRef<
     );
     return ((resSandbox?.resultat?.donnees as any)?.signaux as SignalSandboxPlage[]) || [];
   }, [resultatsScriptsActifs]);
+
+  // 🔍 Auto-sélection du setup SMC le plus proche lors de l'activation de l'outil diagnostic
+  useEffect(() => {
+    if (activeTool === 'inspect-setup' && setupsSMCListe.length > 0 && !setupSMCDiagnostic) {
+      // Trouver le setup SMC dont le Doji est le plus proche de la bougie courante
+      const setupLePlusProche = [...setupsSMCListe].sort(
+        (a, b) => Math.abs(a.indexDoji - indexCourant) - Math.abs(b.indexDoji - indexCourant)
+      )[0];
+
+      if (setupLePlusProche) {
+        console.log(`🔍 [BacktestChart] Auto-activation diagnostic Setup SMC #${setupLePlusProche.indexDoji}`);
+        setSetupSMCDiagnostic(setupLePlusProche);
+        setSurbrillanceSMCActive(true);
+        setVoletSMCVisible(false); // Reste 100% visuel sur le canvas
+        useUIStore.getState().addToast(
+          `Diagnostic TP Setup SMC #${setupLePlusProche.indexDoji} affiché sur le graphique`,
+          'info'
+        );
+      }
+    }
+  }, [activeTool, setupsSMCListe, indexCourant, setupSMCDiagnostic]);
 
   // Réf stable pour les callbacks
   const stateRef = useRef({
@@ -2545,11 +2567,15 @@ export const BacktestChart = React.forwardRef<
             )}
 
             <button
-              onClick={() => setModalSMCVisible(true)}
-              className="ml-1 px-2 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-800 border border-cyan-600/40 text-[10px] text-cyan-200 transition-colors"
-              title="Ouvrir le rapport d'analyse textuel complet en modale"
+              onClick={() => setVoletSMCVisible(!voletSMCVisible)}
+              className={`ml-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
+                voletSMCVisible
+                  ? 'bg-cyan-800 border-cyan-400 text-white'
+                  : 'bg-cyan-950/80 hover:bg-cyan-800 border-cyan-600/40 text-cyan-200'
+              }`}
+              title="Afficher/masquer le volet textuel d'expérimentation"
             >
-              📋 Tableau
+              {voletSMCVisible ? '✕ Volet' : '⚙️ Paramètres TP'}
             </button>
 
             <button
@@ -2557,6 +2583,7 @@ export const BacktestChart = React.forwardRef<
                 setSetupSMCDiagnostic(null);
                 setSetupSMCSimule(null);
                 setSurbrillanceSMCActive(false);
+                setVoletSMCVisible(false);
                 requestAnimationFrame(() => redessinerOverlay());
               }}
               className="ml-1 p-0.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
@@ -2569,8 +2596,8 @@ export const BacktestChart = React.forwardRef<
           </div>
         )}
 
-        {/* ── 🔍 Volet Latéral Rétractable Diagnostic & Simulation TP (Option A) ── */}
-        {setupSMCDiagnostic && surbrillanceSMCActive && (
+        {/* ── 🔍 Volet Latéral Rétractable Diagnostic & Simulation TP (Optionnel, masqué par défaut) ── */}
+        {setupSMCDiagnostic && surbrillanceSMCActive && voletSMCVisible && (
           <DiagnosticVoletLateralSMC
             setup={setupSMCDiagnostic}
             setupsTotaux={setupsSMCListe}
@@ -2580,9 +2607,7 @@ export const BacktestChart = React.forwardRef<
               requestAnimationFrame(() => redessinerOverlay());
             }}
             onClose={() => {
-              setSetupSMCDiagnostic(null);
-              setSetupSMCSimule(null);
-              setSurbrillanceSMCActive(false);
+              setVoletSMCVisible(false);
               requestAnimationFrame(() => redessinerOverlay());
             }}
             onSimulationChange={(simule) => {

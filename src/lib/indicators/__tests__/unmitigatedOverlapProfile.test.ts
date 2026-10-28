@@ -155,6 +155,67 @@ describe('Unmitigated Overlap Profile (UOP) - Volume Profile de Chevauchement & 
     expect(tp1.prixCible).toBeGreaterThan(1.0821);
   });
 
+  it('génère les données visuelles de diagnostic profond du TP (tronçons A, B, creux <= 5% absorbé et rupture > 5%)', () => {
+    const mapTest = new Map<number, number>();
+    const step = 0.0001;
+
+    // Bloc A : 20 paliers (1.0801 -> 1.0820)
+    for (let p = 1.0801; p <= 1.08205; p += step) {
+      mapTest.set(Number(p.toFixed(5)), 4);
+    }
+    // Creux absorbé : 1 palier vide (1.0821) -> ratio ~ 4.7% <= 5%
+    mapTest.set(Number((1.0821).toFixed(5)), 0);
+
+    // Bloc B : 9 paliers (1.0822 -> 1.0830)
+    for (let p = 1.0822; p <= 1.08305; p += step) {
+      mapTest.set(Number(p.toFixed(5)), 5);
+    }
+
+    // Grand creux bloquant : 5 paliers vides (1.0831 -> 1.0835) -> ratio > 5%
+    for (let p = 1.0831; p <= 1.08355; p += step) {
+      mapTest.set(Number(p.toFixed(5)), 0);
+    }
+
+    // Bloc C (séparé) : 10 paliers
+    for (let p = 1.0836; p <= 1.08455; p += step) {
+      mapTest.set(Number(p.toFixed(5)), 4);
+    }
+
+    const { tpOptimauxAchat } = calculerTPOptimaux(1.0800, step, mapTest, {
+      seuilBougiesBleuFonce: 3,
+      seuilMargeTrouPourcent: 5,
+      afficherDebugTP: true,
+    });
+
+    expect(tpOptimauxAchat.length).toBeGreaterThanOrEqual(1);
+    const tp1 = tpOptimauxAchat[0];
+
+    // Vérification des données visuelles complètes
+    expect(tp1.debug).toBeDefined();
+    const debug = tp1.debug!;
+
+    // 1. Les tronçons goudronnés A et B ont été cumulés
+    expect(debug.troncons.length).toBe(2);
+    expect(debug.troncons[0].lettre).toBe('A');
+    expect(debug.troncons[1].lettre).toBe('B');
+
+    // 2. Le creux absorbé (<= 5%) est présent avec la mention de tolérance
+    const trouAbsorbe = debug.trous.find((t) => t.estAbsorbe);
+    expect(trouAbsorbe).toBeDefined();
+    expect(trouAbsorbe?.ratioPourcent).toBeLessThanOrEqual(5);
+    expect(trouAbsorbe?.motif).toContain('Absorbé');
+
+    // 3. Le trou bloquant (> 5%) a été capturé et a provoqué l'arrêt
+    expect(debug.trouBloquant).toBeDefined();
+    expect(debug.trouBloquant?.estAbsorbe).toBe(false);
+    expect(debug.trouBloquant?.ratioPourcent).toBeGreaterThan(5);
+    expect(debug.trouBloquant?.motif).toContain('Rupture');
+
+    // 4. Synthèse explicative lisible en français
+    expect(debug.syntheseExplication).toContain('Route coupée');
+    expect(debug.motifArret).toContain('Rupture');
+  });
+
   it('calcule simultanément les TP Optimaux Achat et Vente basés sur la superposition des vagues', () => {
     const res = calculerUnmitigatedOverlapProfile(bougies, {
       zigzagDepth: 4,

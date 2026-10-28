@@ -575,8 +575,126 @@ export function dessinerSurbrillanceDiagnosticSMC(
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 4️⃣ Profil de Chevauchement UOP (Paliers Percés vs Murs Bloquants)
+  // 4️⃣ Profil de Chevauchement UOP & Détermination Profonde du TP (100% VISUEL)
   // ────────────────────────────────────────────────────────────────────────────
+  const xDebutTrade = xDoji ?? 0;
+  const xFinTrade = Math.min(ctx.canvas.width - 20, xDebutTrade + 260);
+
+  const yEntree = series.priceToCoordinate(setup.prixEntree);
+  const ySL = series.priceToCoordinate(setup.prixSL);
+  const yTP = setup.prixTP !== undefined ? series.priceToCoordinate(setup.prixTP) : null;
+  const debugTP = setup.tpSelectionne?.debug;
+
+  // A. Tracé des tronçons goudronnés (blocs d'overlap dense Sweep UOP : A, B, C...)
+  if (debugTP && debugTP.troncons && debugTP.troncons.length > 0) {
+    const xBlocDebut = xDebutTrade + 15;
+    const xBlocFin = Math.min(ctx.canvas.width - 30, xDebutTrade + 220);
+    const largeurBloc = Math.max(40, xBlocFin - xBlocDebut);
+
+    for (const troncon of debugTP.troncons) {
+      const yTBas = series.priceToCoordinate(troncon.prixBas);
+      const yTHaut = series.priceToCoordinate(troncon.prixHaut);
+      if (yTBas === null || yTHaut === null) continue;
+
+      const yHautReel = Math.min(yTBas, yTHaut);
+      const hauteurReelle = Math.max(3, Math.abs(yTBas - yTHaut));
+
+      // 🛣️ Fond bleu azur institutionnel pour la zone goudronnée
+      ctx.fillStyle = 'rgba(2, 132, 199, 0.14)';
+      ctx.fillRect(xBlocDebut, yHautReel, largeurBloc, hauteurReelle);
+
+      // Bordure fine
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 2]);
+      ctx.strokeRect(xBlocDebut, yHautReel, largeurBloc, hauteurReelle);
+
+      // Liseré latéral gauche pour matérialiser la route
+      ctx.fillStyle = '#0284C7';
+      ctx.fillRect(xBlocDebut, yHautReel, 3, hauteurReelle);
+
+      // Badge du tronçon goudronné
+      ctx.setLineDash([]);
+      ctx.font = 'bold 9px sans-serif';
+      const labelTroncon = `🛣️ Bloc Overlap [${troncon.lettre}] : ${troncon.prixBas.toFixed(4)} ➔ ${troncon.prixHaut.toFixed(4)} (${troncon.sommeBougies}b)`;
+      const wL = ctx.measureText(labelTroncon).width;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillRect(xBlocDebut + 6, yHautReel + 2, wL + 8, 13);
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillText(labelTroncon, xBlocDebut + 10, yHautReel + 11);
+    }
+
+    // B. Tracé des creux (trous) : Creux <= 5% (Absorbés) vs Creux > 5% (Rupture)
+    if (debugTP.trous && debugTP.trous.length > 0) {
+      for (const trou of debugTP.trous) {
+        const yCrBas = series.priceToCoordinate(trou.prixBas);
+        const yCrHaut = series.priceToCoordinate(trou.prixHaut);
+        if (yCrBas === null || yCrHaut === null) continue;
+
+        const yTrouHaut = Math.min(yCrBas, yCrHaut);
+        const hauteurTrou = Math.max(2, Math.abs(yCrBas - yCrHaut));
+
+        if (trou.estAbsorbe) {
+          // ⚡ CREUX INFÉRIEUR AUX 5% (ABSORBÉ PAR LA FORMULE DE CUMUL DE LA ROUTE)
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
+          ctx.fillRect(xBlocDebut, yTrouHaut, largeurBloc, hauteurTrou);
+
+          // Tirets ambrés
+          ctx.strokeStyle = '#F59E0B';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(xBlocDebut, yTrouHaut);
+          ctx.lineTo(xBlocFin, yTrouHaut);
+          ctx.moveTo(xBlocDebut, yTrouHaut + hauteurTrou);
+          ctx.lineTo(xBlocFin, yTrouHaut + hauteurTrou);
+          ctx.stroke();
+
+          // Badge explicatif
+          ctx.setLineDash([]);
+          ctx.font = 'bold 9.5px sans-serif';
+          const labelTrou = `⚡ Creux ${trou.ratioPourcent}% <= 5% : ABSORBÉ (Route continue)`;
+          const wT = ctx.measureText(labelTrou).width;
+
+          ctx.fillStyle = 'rgba(41, 24, 4, 0.92)';
+          ctx.fillRect(xBlocDebut + 12, yTrouHaut + Math.max(0, (hauteurTrou - 15) / 2), wT + 8, 15);
+          ctx.strokeStyle = '#F59E0B';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(xBlocDebut + 12, yTrouHaut + Math.max(0, (hauteurTrou - 15) / 2), wT + 8, 15);
+
+          ctx.fillStyle = '#FBBF24';
+          ctx.fillText(labelTrou, xBlocDebut + 16, yTrouHaut + Math.max(0, (hauteurTrou - 15) / 2) + 11);
+        } else {
+          // 🛑 CREUX SUPÉRIEUR AUX 5% (RUPTURE NETTE DE L'AUTOROUTE ➔ ANCRAGE DU TP)
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
+          ctx.fillRect(xBlocDebut, yTrouHaut, largeurBloc, hauteurTrou);
+
+          ctx.strokeStyle = '#EF4444';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 3]);
+          ctx.strokeRect(xBlocDebut, yTrouHaut, largeurBloc, hauteurTrou);
+
+          // Badge d'alerte de rupture
+          ctx.setLineDash([]);
+          ctx.font = 'bold 10px sans-serif';
+          const labelRupture = `🛑 Rupture ${trou.ratioPourcent}% > 5% : Arrêt route ➔ TP ancré`;
+          const wR = ctx.measureText(labelRupture).width;
+
+          ctx.fillStyle = 'rgba(69, 10, 10, 0.94)';
+          ctx.fillRect(xBlocDebut + 12, yTrouHaut + Math.max(0, (hauteurTrou - 16) / 2), wR + 10, 16);
+          ctx.strokeStyle = '#EF4444';
+          ctx.lineWidth = 1.2;
+          ctx.strokeRect(xBlocDebut + 12, yTrouHaut + Math.max(0, (hauteurTrou - 16) / 2), wR + 10, 16);
+
+          ctx.fillStyle = '#FCA5A5';
+          ctx.fillText(labelRupture, xBlocDebut + 17, yTrouHaut + Math.max(0, (hauteurTrou - 16) / 2) + 12);
+        }
+      }
+    }
+  }
+
+  // C. Paliers UOP standards (si pas de debug détaillé ou en complément de trajectoire)
   const etapesUOP = setup.etapesPaliersUOP || [];
   for (const etape of etapesUOP) {
     const yPalier = series.priceToCoordinate(etape.prixCible);
@@ -587,7 +705,7 @@ export function dessinerSurbrillanceDiagnosticSMC(
 
     ctx.beginPath();
     ctx.strokeStyle = etape.estBloquant ? '#F97316' : '#38BDF8';
-    ctx.lineWidth = etape.estBloquant ? 2 : 1.5;
+    ctx.lineWidth = etape.estBloquant ? 2 : 1.2;
     ctx.setLineDash(etape.estBloquant ? [6, 3] : [3, 3]);
     ctx.moveTo(xDebutPalier, yPalier);
     ctx.lineTo(xFinPalier, yPalier);
@@ -610,12 +728,6 @@ export function dessinerSurbrillanceDiagnosticSMC(
   // ────────────────────────────────────────────────────────────────────────────
   // 5️⃣ Take Profit (TP) Optimal et Stop Loss (SL) du Setup
   // ────────────────────────────────────────────────────────────────────────────
-  const xDebutTrade = xDoji ?? 0;
-  const xFinTrade = Math.min(ctx.canvas.width - 20, xDebutTrade + 200);
-
-  const yEntree = series.priceToCoordinate(setup.prixEntree);
-  const ySL = series.priceToCoordinate(setup.prixSL);
-  const yTP = setup.prixTP !== undefined ? series.priceToCoordinate(setup.prixTP) : null;
 
   // A. Ligne et Zone de Stop Loss (SL)
   if (ySL !== null && yEntree !== null) {
@@ -791,18 +903,30 @@ export function dessinerSurbrillanceDiagnosticSMC(
   // ────────────────────────────────────────────────────────────────────────────
   // 6️⃣ Cartouche HUD Épuré en Haut du Canvas
   // ────────────────────────────────────────────────────────────────────────────
-  const texteHUD = `🔍 DIAGNOSTIC GRAPHIQUE SMC #${setup.indexDoji} (${setup.type}) | S/R Retenu: ${setup.scoreShved}pts | Carburant: ${carburant}pts | TP: ${setup.prixTP ?? '-'} (${setup.ratioRR ?? '-'}R)`;
+  const texteHUDLigne1 = `🔍 DIAGNOSTIC TP SMC #${setup.indexDoji} (${setup.type}) | S/R Retenu: ${setup.scoreShved}pts | Carburant: ${carburant}pts | TP: ${setup.prixTP ?? '-'} (${setup.ratioRR ?? '-'}R)`;
+  const texteHUDLigne2 = debugTP?.syntheseExplication
+    ? `🛣️ Règle UOP : ${debugTP.syntheseExplication}`
+    : `🛣️ Règle UOP : Paliers traversés: ${setup.paliersTraverses ?? 0} | Arrêt devant le premier mur infranchissable`;
+
   ctx.font = 'bold 10px sans-serif';
-  const wHUD = ctx.measureText(texteHUD).width;
+  const wHUD1 = ctx.measureText(texteHUDLigne1).width;
+  ctx.font = '9px sans-serif';
+  const wHUD2 = ctx.measureText(texteHUDLigne2).width;
+  const wHUD = Math.max(wHUD1, wHUD2);
 
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-  ctx.fillRect(10, 8, wHUD + 16, 20);
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(10, 8, wHUD + 16, 20);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+  ctx.fillRect(10, 8, wHUD + 18, 36);
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(10, 8, wHUD + 18, 36);
 
+  ctx.font = 'bold 10px sans-serif';
   ctx.fillStyle = '#38BDF8';
-  ctx.fillText(texteHUD, 18, 22);
+  ctx.fillText(texteHUDLigne1, 18, 22);
+
+  ctx.font = '9px sans-serif';
+  ctx.fillStyle = '#CBD5E1';
+  ctx.fillText(texteHUDLigne2, 18, 36);
 
   ctx.restore();
 }

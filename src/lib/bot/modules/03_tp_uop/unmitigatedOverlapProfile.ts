@@ -102,6 +102,7 @@ export interface DebugTrouTP {
   hauteur: number;       // Amplitude du trou en points
   ratioPourcent: number; // Pourcentage du trou par rapport au total (goudron + trou)
   estAbsorbe: boolean;   // Vrai si le trou a été toléré (<= seuil), faux s'il a coupé la route
+  motif?: string;        // Explication lisible : "⚡ Creux 4.7% <= 5% (absorbé)" ou "🛑 Creux 8.3% > 5% (rupture)"
 }
 
 /**
@@ -111,10 +112,13 @@ export interface DebugTrouTP {
  */
 export interface DebugTPOptimal {
   troncons: DebugTronconTP[];  // Tous les tronçons bleu foncé cumulés pour ce TP
-  trous: DebugTrouTP[];       // Tous les trous entre tronçons (absorbés ou non)
-  cumulGoudronTotal: number;  // Hauteur totale des parties goudronnées (AB + CD + ...)
-  prixBas: number;            // Limite basse de toute la zone analysée
-  prixHaut: number;           // Limite haute de toute la zone analysée
+  trous: DebugTrouTP[];        // Tous les trous entre tronçons (absorbés et bloquants)
+  trouBloquant?: DebugTrouTP;  // Le trou fatal ayant coupé l'autoroute (> 5%)
+  cumulGoudronTotal: number;   // Hauteur totale des parties goudronnées (AB + CD + ...)
+  prixBas: number;             // Limite basse de toute la zone analysée
+  prixHaut: number;            // Limite haute de toute la zone analysée
+  motifArret?: string;         // Motif d'arrêt du TP ("Creux 8.3% > 5%" ou "Fin de bloc")
+  syntheseExplication?: string;// Explication pédagogique complète
 }
 
 /**
@@ -581,7 +585,8 @@ export function calculerTPOptimaux(
     trous: number[],
     idxDebut: number,
     idxFin: number,
-    direction: 'achat' | 'vente'
+    direction: 'achat' | 'vente',
+    trouBloquant?: DebugTrouTP
   ): DebugTPOptimal {
     const debugTroncons: DebugTronconTP[] = [];
     const debugTrous: DebugTrouTP[] = [];
@@ -602,7 +607,7 @@ export function calculerTPOptimaux(
       cumulGoudron += t.hauteur;
     }
 
-    // Enregistrement de chaque trou entre tronçons consécutifs
+    // Enregistrement de chaque trou absorbé entre tronçons consécutifs (<= 5%)
     for (let i = idxDebut; i < idxFin; i++) {
       const hauteurTrou = trous[i];
       // Calcul du ratio au moment de la décision d'absorption
@@ -631,8 +636,14 @@ export function calculerTPOptimaux(
         prixHaut: Math.max(trouPrixBas, trouPrixHaut),
         hauteur: hauteurTrou,
         ratioPourcent,
-        estAbsorbe: ratioPourcent <= seuilMargeTrouPourcent,
+        estAbsorbe: true,
+        motif: `⚡ Creux de ${ratioPourcent}% <= ${seuilMargeTrouPourcent}% : Absorbé (route continue)`,
       });
+    }
+
+    // Si un trou bloquant (> 5%) a coupé la route, on l'ajoute pour l'affichage visuel
+    if (trouBloquant) {
+      debugTrous.push(trouBloquant);
     }
 
     // Calcul des bornes globales de la zone analysée
@@ -640,12 +651,27 @@ export function calculerTPOptimaux(
     const trousPrixDebug = debugTrous.flatMap(t => [t.prixBas, t.prixHaut]);
     const tousLesNiveaux = [...tousLesPrixDebug, ...trousPrixDebug];
 
+    // Synthèse lisible de la décision
+    const nbAbsorbes = debugTrous.filter(t => t.estAbsorbe).length;
+    let motifArret = 'Fin de l’autoroute UOP';
+    let syntheseExplication = '';
+
+    if (trouBloquant) {
+      motifArret = `Creux de ${trouBloquant.ratioPourcent}% > ${seuilMargeTrouPourcent}% (Rupture)`;
+      syntheseExplication = `Route coupée : creux de ${trouBloquant.ratioPourcent}% supérieur au seuil de ${seuilMargeTrouPourcent}%. ${debugTroncons.length} tronçon(s) cumulé(s)${nbAbsorbes > 0 ? ` avec ${nbAbsorbes} creux absorbé(s)` : ''}.`;
+    } else {
+      syntheseExplication = `Autoroute complète : ${debugTroncons.length} tronçon(s) cumulé(s)${nbAbsorbes > 0 ? ` avec ${nbAbsorbes} creux absorbé(s)` : ''}. Cible finale ancrée à l'extrémité de la zone.`;
+    }
+
     return {
       troncons: debugTroncons,
       trous: debugTrous,
+      trouBloquant,
       cumulGoudronTotal: cumulGoudron,
       prixBas: Math.min(...tousLesNiveaux),
       prixHaut: Math.max(...tousLesNiveaux),
+      motifArret,
+      syntheseExplication,
     };
   }
 
@@ -713,6 +739,8 @@ export function calculerTPOptimaux(
     let prixDepartZone = tronconInitial.prixBas;
 
     let k = idxGoudronA;
+    let trouBloquantAchat: DebugTrouTP | undefined;
+
     // On teste si le creux qui suit peut être absorbé par le tronçon goudronné suivant
     while (k < trousAchat.length && (k + 1) < tronconsGoudronAchat.length) {
       const hauteurTrou = trousAchat[k];
@@ -722,7 +750,7 @@ export function calculerTPOptimaux(
       // Total goudronné = première partie goudronnée (AB) + deuxième partie goudronnée (CD)
       const totalGoudronne = cumulGoudron + tronconSuivant.hauteur;
       const totalEntier = totalGoudronne + hauteurTrou;
-      const ratioTrou = (hauteurTrou / totalEntier) * 100;
+      const ratioTrou = Number(((hauteurTrou / totalEntier) * 100).toFixed(2));
 
       // Si la partie non goudronnée est inférieure à 5% de ce total entier : on absorbe et on ajoute CD !
       if (ratioTrou <= seuilMargeTrouPourcent) {
@@ -733,6 +761,16 @@ export function calculerTPOptimaux(
         k++; // On continue de tester si d'autres tronçons consécutifs s'ajoutent
       } else {
         // Le trou dépasse 5% : coupure nette de la route !
+        const basTrou = Math.min(tronconsGoudronAchat[k].prixHaut, tronconSuivant.prixBas);
+        const hautTrou = Math.max(tronconsGoudronAchat[k].prixHaut, tronconSuivant.prixBas);
+        trouBloquantAchat = {
+          prixBas: basTrou,
+          prixHaut: hautTrou,
+          hauteur: hauteurTrou,
+          ratioPourcent: ratioTrou,
+          estAbsorbe: false,
+          motif: `🛑 Creux de ${ratioTrou}% > ${seuilMargeTrouPourcent}% : Rupture de route ➔ TP ancré à ${cibleFinale.toFixed(5)}`,
+        };
         break;
       }
     }
@@ -755,7 +793,7 @@ export function calculerTPOptimaux(
 
     // Si le mode debug est activé, on attache les données détaillées de la construction du TP
     if (afficherDebugTP) {
-      tpAchat.debug = construireDebugTP(tronconsGoudronAchat, trousAchat, idxGoudronA, k, 'achat');
+      tpAchat.debug = construireDebugTP(tronconsGoudronAchat, trousAchat, idxGoudronA, k, 'achat', trouBloquantAchat);
     }
 
     tpOptimauxAchat.push(tpAchat);
@@ -826,13 +864,15 @@ export function calculerTPOptimaux(
     let prixDepartZone = tronconInitial.prixHaut;
 
     let k = idxGoudronV;
+    let trouBloquantVente: DebugTrouTP | undefined;
+
     while (k < trousVente.length && (k + 1) < tronconsGoudronVente.length) {
       const hauteurTrou = trousVente[k];
       const tronconSuivant = tronconsGoudronVente[k + 1];
 
       const totalGoudronne = cumulGoudron + tronconSuivant.hauteur;
       const totalEntier = totalGoudronne + hauteurTrou;
-      const ratioTrou = (hauteurTrou / totalEntier) * 100;
+      const ratioTrou = Number(((hauteurTrou / totalEntier) * 100).toFixed(2));
 
       if (ratioTrou <= seuilMargeTrouPourcent) {
         cumulGoudron = totalGoudronne;
@@ -841,6 +881,17 @@ export function calculerTPOptimaux(
         cibleFinale = tronconSuivant.prixBas;
         k++;
       } else {
+        // Le trou dépasse 5% : coupure nette de la route !
+        const hautTrou = Math.max(tronconsGoudronVente[k].prixBas, tronconSuivant.prixHaut);
+        const basTrou = Math.min(tronconsGoudronVente[k].prixBas, tronconSuivant.prixHaut);
+        trouBloquantVente = {
+          prixBas: basTrou,
+          prixHaut: hautTrou,
+          hauteur: hauteurTrou,
+          ratioPourcent: ratioTrou,
+          estAbsorbe: false,
+          motif: `🛑 Creux de ${ratioTrou}% > ${seuilMargeTrouPourcent}% : Rupture de route ➔ TP ancré à ${cibleFinale.toFixed(5)}`,
+        };
         break;
       }
     }
@@ -863,7 +914,7 @@ export function calculerTPOptimaux(
 
     // Si le mode debug est activé, on attache les données détaillées
     if (afficherDebugTP) {
-      tpVente.debug = construireDebugTP(tronconsGoudronVente, trousVente, idxGoudronV, k, 'vente');
+      tpVente.debug = construireDebugTP(tronconsGoudronVente, trousVente, idxGoudronV, k, 'vente', trouBloquantVente);
     }
 
     tpOptimauxVente.push(tpVente);
