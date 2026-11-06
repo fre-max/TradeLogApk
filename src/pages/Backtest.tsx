@@ -24,8 +24,8 @@ export default function Backtest() {
   return (
     <AppLayout title={modeActif === 'bots' ? "Studio & Journal des Bots" : "Espace Backtesting"}>
       <div className="flex-1 flex flex-col overflow-hidden bg-bg">
-        {/* Corps dynamique de l'espace sélectionné (espace maximisé sans barre intermédiaire) */}
-        <div className="flex-1 overflow-y-auto">
+        {/* En mode manuel, on utilise flex-col overflow-hidden pour que le graphique et ses boutons flottants en bas à droite restent 100% visibles dans l'écran */}
+        <div className={modeActif === 'manuel' ? 'flex-1 flex flex-col overflow-hidden min-h-0' : 'flex-1 overflow-y-auto'}>
           {modeActif === 'manuel' ? (
             <BacktestWorkspace />
           ) : (

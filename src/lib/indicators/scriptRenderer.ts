@@ -2,7 +2,7 @@ import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import type { Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualBox, VisualLine, VisualLabel, VisualCurve, VisualPoint, IndicatorExecutionResult, IndicatorScript } from '@/types/indicatorScript';
 import type { SetupOrchestreSMC } from './favoris/orchestrateurSMC';
-import type { SignalSandboxPlage } from './favoris/sandboxDojiShvedPlage';
+import type { SignalSandboxPlage, ZoneShvedAvecScore } from './favoris/sandboxDojiShvedPlage';
 import { dessinerLuxAlgoSMC } from './luxAlgoSMCRenderer';
 import { dessinerProtectedSwings } from './protectedSwingsRenderer';
 import { dessinerZigZag } from './zigzagRenderer';
@@ -389,6 +389,139 @@ function dessinerPointDiscret(
 }
 
 /**
+ * ⛰️ Dessine directement sur le graphique les collines de retest validées (avec leur hauteur en ATR,
+ * leur largeur en bougies et leurs points attribués) ainsi que les micro-rebonds ignorés/fusionnés.
+ *
+ * Pourquoi cette fonction existe :
+ * Permet à l'utilisateur de vérifier visuellement pourquoi un retour sur S/R a été compté comme
+ * un vrai retest (vraie colline >= 1.5x ATR sur >= 2 bougies) ou ignoré (simple mèche / micro-rebond).
+ */
+function dessinerCollinesEtTouchesZoneSR(
+  ctx: CanvasRenderingContext2D,
+  zoneScoree: ZoneShvedAvecScore,
+  timeScale: ReturnType<IChartApi['timeScale']>,
+  series: ISeriesApi<'Candlestick'>,
+  bougies: Bougie[]
+): void {
+  const yZone = series.priceToCoordinate(zoneScoree.zone.prixMedian);
+  if (yZone === null) return;
+
+  const estSupport = zoneScoree.zone.type === 'SUPPORT';
+  const collines = zoneScoree.collinesRetests || [];
+  const ignorees = zoneScoree.touchesIgnorees || [];
+
+  // 1️⃣ Tracé des VRAIES COLLINES de retest validées
+  for (const colline of collines) {
+    const xDepart = obtenirXPourTemps(timeScale, colline.tempsTouchePrecedente, bougies);
+    const xSommet = obtenirXPourTemps(timeScale, colline.tempsSommetColline, bougies);
+    const xRetest = obtenirXPourTemps(timeScale, colline.tempsToucheRetest, bougies);
+    const ySommet = series.priceToCoordinate(colline.prixSommetColline);
+
+    if (xSommet === null || xRetest === null || ySommet === null) continue;
+
+    // Couleur selon l'ampleur de la colline (MAJEURE = Or, SOLIDE = Émeraude, MINEURE = Cyan)
+    const couleurColline =
+      colline.qualite === 'MAJEURE'
+        ? '#FBBF24'
+        : colline.qualite === 'SOLIDE'
+          ? '#10B981'
+          : '#38BDF8';
+    const couleurFondColline =
+      colline.qualite === 'MAJEURE'
+        ? 'rgba(251, 191, 36, 0.14)'
+        : colline.qualite === 'SOLIDE'
+          ? 'rgba(16, 185, 129, 0.14)'
+          : 'rgba(56, 189, 248, 0.12)';
+
+    // A. Triangle / Arche matérialisant la colline entre les deux touches
+    if (xDepart !== null) {
+      ctx.beginPath();
+      ctx.moveTo(xDepart, yZone);
+      ctx.lineTo(xSommet, ySommet);
+      ctx.lineTo(xRetest, yZone);
+      ctx.closePath();
+      ctx.fillStyle = couleurFondColline;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.strokeStyle = couleurColline;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([4, 3]);
+      ctx.moveTo(xDepart, yZone);
+      ctx.lineTo(xSommet, ySommet);
+      ctx.lineTo(xRetest, yZone);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // B. Point au sommet de la colline
+    ctx.beginPath();
+    ctx.arc(xSommet, ySommet, 4, 0, Math.PI * 2);
+    ctx.fillStyle = couleurColline;
+    ctx.fill();
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // C. Point d'impact du Retest sur la zone S/R
+    ctx.beginPath();
+    ctx.arc(xRetest, yZone, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = couleurColline;
+    ctx.fill();
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // D. Étiquette au sommet de la colline indiquant sa taille et ses points
+    const texteColline = `⛰️ R#${colline.numeroRetest} : ${colline.ratioCollineATR}x ATR (${colline.largeurBougies}b) [+${colline.pointsAttribues}pts]`;
+    ctx.font = 'bold 9px sans-serif';
+    const wColline = ctx.measureText(texteColline).width;
+    const xBadge = xSommet - wColline / 2 - 5;
+    const yBadge = estSupport ? ySommet - 19 : ySommet + 5;
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.fillRect(xBadge, yBadge, wColline + 10, 15);
+    ctx.strokeStyle = couleurColline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(xBadge, yBadge, wColline + 10, 15);
+
+    ctx.fillStyle = couleurColline;
+    ctx.fillText(texteColline, xBadge + 5, yBadge + 11);
+  }
+
+  // 2️⃣ Tracé des MICRO-REBONDS ignorés / fusionnés (limité aux 4 derniers pour éviter toute surcharge)
+  const ignoreesAffichees = ignorees.slice(-4);
+  for (const ign of ignoreesAffichees) {
+    const xIgn = obtenirXPourTemps(timeScale, ign.temps, bougies);
+    if (xIgn === null) continue;
+
+    // Petit cercle gris ardoise sur la zone indiquant la fusion
+    ctx.beginPath();
+    ctx.arc(xIgn, yZone, 3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+    ctx.fill();
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const texteIgn = `⚪ Ignoré (${ign.ratioCollineATR}x ATR, ${ign.largeurBougies}b)`;
+    ctx.font = '8.5px sans-serif';
+    const wIgn = ctx.measureText(texteIgn).width;
+    const xBadgeIgn = xIgn - wIgn / 2 - 4;
+    const yBadgeIgn = estSupport ? yZone + 6 : yZone - 18;
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillRect(xBadgeIgn, yBadgeIgn, wIgn + 8, 13);
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(xBadgeIgn, yBadgeIgn, wIgn + 8, 13);
+
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillText(texteIgn, xBadgeIgn + 4, yBadgeIgn + 9.5);
+  }
+}
+
+/**
  * 🔍 Projette sur le canvas la surbrillance temporaire d'un setup SMC sélectionné en diagnostic.
  * Affiche la plage temporelle ciblée, toutes les zones S/R Shved candidates analysées avec leurs scores,
  * ainsi que le tracé complet des paliers UOP.
@@ -524,6 +657,9 @@ export function dessinerSurbrillanceDiagnosticSMC(
 
       ctx.fillStyle = estSupport ? '#00E676' : '#00E5FF';
       ctx.fillText(texteRetenu, badgeX + 6, badgeY + 12);
+
+      // ⛰️ Affichage visuel des vraies collines de retest et des micro-rebonds ignorés sur la zone retenue
+      dessinerCollinesEtTouchesZoneSR(ctx, z, timeScale, series, bougies);
     } else {
       // Badge discret pour les zones candidates écartées
       const texteEcarte = `${estSupport ? 'Support' : 'Résistance'} écarté (${z.score} pts)`;
@@ -542,10 +678,65 @@ export function dessinerSurbrillanceDiagnosticSMC(
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 3️⃣ Quantité de Liquidité Balayée / Carburant Capté au Doji
+  // 3️⃣ Quantité de Liquidité Balayée / Score ZigZag Dynamique (/100) au Doji
   // ────────────────────────────────────────────────────────────────────────────
   const carburant = setup.carburantInitial ?? setup.detailsCarburant?.carburantTotal ?? 0;
-  if (xDoji !== null && carburant > 0) {
+  const infoScoreZZ = setup.detailsScoreLiquidationZigZag;
+
+  // 🌊 A. Tracé visuel des vagues ZigZag dynamiques retenues sur les bougies
+  if (infoScoreZZ?.pivotsZigZag && infoScoreZZ.pivotsZigZag.length >= 2) {
+    const coordsPivots: { x: number; y: number; prix: number; type: 'HIGH' | 'LOW' }[] = [];
+    for (const piv of infoScoreZZ.pivotsZigZag) {
+      const xPiv = obtenirXPourTemps(timeScale, piv.temps, bougies);
+      const yPiv = series.priceToCoordinate(piv.prix);
+      if (xPiv !== null && yPiv !== null) {
+        coordsPivots.push({ x: xPiv, y: yPiv, prix: piv.prix, type: piv.type });
+      }
+    }
+
+    if (coordsPivots.length >= 2) {
+      // Ligne brisée reliant les pivots ZigZag
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)'; // Violet lumineux pour distinguer les vagues ZigZag
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.moveTo(coordsPivots[0].x, coordsPivots[0].y);
+      for (let i = 1; i < coordsPivots.length; i++) {
+        ctx.lineTo(coordsPivots[i].x, coordsPivots[i].y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Points aux sommets/creux des vagues ZigZag
+      for (let i = 0; i < coordsPivots.length; i++) {
+        const pt = coordsPivots[i];
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = pt.type === 'HIGH' ? '#C084FC' : '#38BDF8';
+        ctx.fill();
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+
+      // Étiquette sur le premier segment de vague ZigZag visible
+      const milieuX = (coordsPivots[0].x + coordsPivots[1].x) / 2;
+      const milieuY = (coordsPivots[0].y + coordsPivots[1].y) / 2;
+      const texteVague = `🌊 ZigZag Dynamique (Depth: ${infoScoreZZ.zigzagDepthRetenu})`;
+      ctx.font = 'bold 9px sans-serif';
+      const wVague = ctx.measureText(texteVague).width;
+      ctx.fillStyle = 'rgba(30, 27, 75, 0.90)';
+      ctx.fillRect(milieuX - wVague / 2 - 5, milieuY - 10, wVague + 10, 15);
+      ctx.strokeStyle = '#A855F7';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(milieuX - wVague / 2 - 5, milieuY - 10, wVague + 10, 15);
+      ctx.fillStyle = '#E9D5FF';
+      ctx.fillText(texteVague, milieuX - wVague / 2, milieuY + 1);
+    }
+  }
+
+  // ⚡ B. Badge d'information de liquidité & Score ZigZag au niveau du Doji
+  if (xDoji !== null && (carburant > 0 || infoScoreZZ)) {
     const ySL = series.priceToCoordinate(setup.prixSL);
     if (ySL !== null) {
       // Halo d'énergie de liquidation
@@ -554,23 +745,38 @@ export function dessinerSurbrillanceDiagnosticSMC(
       ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
       ctx.fill();
 
-      // Badge d'information de liquidité
       const badgeLiqX = xDoji + 10;
-      const badgeLiqY = estAchat ? ySL + 8 : ySL - 28;
-      const texteLiq = `⚡ Liquidation : ${carburant} pts pris`;
+      const badgeLiqY = estAchat ? ySL + 8 : ySL - 42;
+      const texteLiq1 = infoScoreZZ
+        ? `⚡ Score Liq : ${infoScoreZZ.scoreTotal}/100 ➔ ZigZag Depth : ${infoScoreZZ.zigzagDepthRetenu} (Carburant: ${carburant}pts)`
+        : `⚡ Liquidation : ${carburant} pts pris`;
+      const texteLiq2 = infoScoreZZ
+        ? `Cassure: ${infoScoreZZ.pointsProfondeurCassure}/40 (${infoScoreZZ.ratioProfondeurATR}x ATR) | Bougie+S/R: ${infoScoreZZ.pointsTailleBougieEtZone}/30 | Retests: ${infoScoreZZ.pointsRetestsSR}/30 (${infoScoreZZ.nombreRetests}x)`
+        : '';
 
       ctx.font = 'bold 10px sans-serif';
-      const wLiq = ctx.measureText(texteLiq).width;
+      const wLiq1 = ctx.measureText(texteLiq1).width;
+      ctx.font = '9px sans-serif';
+      const wLiq2 = texteLiq2 ? ctx.measureText(texteLiq2).width : 0;
+      const wBoiteLiq = Math.max(wLiq1, wLiq2) + 14;
+      const hBoiteLiq = texteLiq2 ? 32 : 18;
 
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-      ctx.fillRect(badgeLiqX, badgeLiqY, wLiq + 12, 18);
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+      ctx.fillRect(badgeLiqX, badgeLiqY, wBoiteLiq, hBoiteLiq);
 
       ctx.strokeStyle = '#F59E0B';
       ctx.lineWidth = 1.2;
-      ctx.strokeRect(badgeLiqX, badgeLiqY, wLiq + 12, 18);
+      ctx.strokeRect(badgeLiqX, badgeLiqY, wBoiteLiq, hBoiteLiq);
 
+      ctx.font = 'bold 10px sans-serif';
       ctx.fillStyle = '#FBBF24';
-      ctx.fillText(texteLiq, badgeLiqX + 6, badgeLiqY + 13);
+      ctx.fillText(texteLiq1, badgeLiqX + 7, badgeLiqY + 13);
+
+      if (texteLiq2) {
+        ctx.font = '9px sans-serif';
+        ctx.fillStyle = '#E2E8F0';
+        ctx.fillText(texteLiq2, badgeLiqX + 7, badgeLiqY + 26);
+      }
     }
   }
 
@@ -907,18 +1113,23 @@ export function dessinerSurbrillanceDiagnosticSMC(
   const texteHUDLigne2 = debugTP?.syntheseExplication
     ? `🛣️ Règle UOP : ${debugTP.syntheseExplication}`
     : `🛣️ Règle UOP : Paliers traversés: ${setup.paliersTraverses ?? 0} | Arrêt devant le premier mur infranchissable`;
+  const texteHUDLigne3 = infoScoreZZ
+    ? `🌊 ${infoScoreZZ.resumeExplication}`
+    : '';
 
   ctx.font = 'bold 10px sans-serif';
   const wHUD1 = ctx.measureText(texteHUDLigne1).width;
   ctx.font = '9px sans-serif';
   const wHUD2 = ctx.measureText(texteHUDLigne2).width;
-  const wHUD = Math.max(wHUD1, wHUD2);
+  const wHUD3 = texteHUDLigne3 ? ctx.measureText(texteHUDLigne3).width : 0;
+  const wHUD = Math.max(wHUD1, wHUD2, wHUD3);
+  const hHUD = texteHUDLigne3 ? 52 : 36;
 
   ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-  ctx.fillRect(10, 8, wHUD + 18, 36);
+  ctx.fillRect(10, 8, wHUD + 18, hHUD);
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
   ctx.lineWidth = 1.2;
-  ctx.strokeRect(10, 8, wHUD + 18, 36);
+  ctx.strokeRect(10, 8, wHUD + 18, hHUD);
 
   ctx.font = 'bold 10px sans-serif';
   ctx.fillStyle = '#38BDF8';
@@ -927,6 +1138,12 @@ export function dessinerSurbrillanceDiagnosticSMC(
   ctx.font = '9px sans-serif';
   ctx.fillStyle = '#CBD5E1';
   ctx.fillText(texteHUDLigne2, 18, 36);
+
+  if (texteHUDLigne3) {
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillStyle = '#C084FC';
+    ctx.fillText(texteHUDLigne3, 18, 50);
+  }
 
   ctx.restore();
 }
@@ -1075,6 +1292,9 @@ export function dessinerSurbrillanceDiagnosticSandbox(
 
       ctx.fillStyle = '#FBBF24';
       ctx.fillText(texteInspect, badgeX + 6, badgeY + 12);
+
+      // ⛰️ Affichage visuel des collines de retest pour la zone manuellement inspectée
+      dessinerCollinesEtTouchesZoneSR(ctx, z, timeScale, series, bougies);
     } else if (estRetenue) {
       const texteRetenu = `⭐ ${estSupport ? 'SUPPORT' : 'RÉSISTANCE'} RETENU [${z.score} pts]`;
       ctx.font = 'bold 10px sans-serif';
@@ -1090,6 +1310,9 @@ export function dessinerSurbrillanceDiagnosticSandbox(
 
       ctx.fillStyle = estSupport ? '#00E676' : '#00E5FF';
       ctx.fillText(texteRetenu, badgeX + 6, badgeY + 12);
+
+      // ⛰️ Affichage visuel des vraies collines de retest et des micro-rebonds ignorés sur la zone retenue
+      dessinerCollinesEtTouchesZoneSR(ctx, z, timeScale, series, bougies);
     } else {
       const texteEcarte = `${estSupport ? 'Sup' : 'Res'} candidat (${z.score} pts)`;
       ctx.font = '9px sans-serif';

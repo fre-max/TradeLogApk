@@ -3,7 +3,9 @@ import type { Bougie } from '@/lib/chartDataHelper';
 import {
   calculerOrchestrateurSMC,
   calculerCarburantLiquidation,
+  calculerScoreLiquidationZigZag,
   calculerPorteeDynamiqueUOP,
+  analyserRetestsAvecCollines,
   trouverBougieContenantPrixTP,
   validerDojiAvecPlageTP,
   type InfoValidationPlageTP,
@@ -572,6 +574,157 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(varType?.type).toBe('select');
     expect(varType?.valeurParDefaut).toBe('PONDERE');
     expect(varType?.options?.map((o) => o.value)).toEqual(['PONDERE', 'CORPS_SEUL', 'CORPS_ET_MECHES']);
+  });
+
+  it('ajuste dynamiquement la taille des vagues ZigZag (zigzagDepth entre 4 et 20) selon le Score de Liquidation (/100)', () => {
+    // 1️⃣ Cas d'une FAIBLE liquidation : effleurement léger (< 0.1x ATR), petite bougie, 0 retest
+    const scoreFaible = calculerScoreLiquidationZigZag({
+      profondeurMeche: 0.5,      // 0.05x ATR
+      hauteurMoyenne: 10,        // ATR = 10
+      amplitudeBougieSweep: 8,   // 0.8x ATR
+      epaisseurZoneSR: 2,        // 0.2x ATR
+      nombreRetests: 0,
+      zigzagDepthMin: 4,
+      zigzagDepthMax: 20,
+    });
+
+    expect(scoreFaible.pointsProfondeurCassure).toBe(5);
+    expect(scoreFaible.pointsTailleBougieEtZone).toBe(9); // 5 (petite bougie) + 4 (zone fine)
+    expect(scoreFaible.pointsRetestsSR).toBe(5);
+    expect(scoreFaible.scoreTotal).toBe(19);
+    expect(scoreFaible.categorieVagues).toBe('PETITES_VAGUES');
+    expect(scoreFaible.zigzagDepthRetenu).toBeGreaterThanOrEqual(4);
+    expect(scoreFaible.zigzagDepthRetenu).toBeLessThanOrEqual(8);
+
+    // 2️⃣ Cas d'une MASSIVE liquidation : plongeon profond (>= 1.2x ATR), bougie géante (>= 2.0x ATR), zone épaisse, 3+ retests
+    const scoreMassif = calculerScoreLiquidationZigZag({
+      profondeurMeche: 15,       // 1.5x ATR -> 40/40
+      hauteurMoyenne: 10,        // ATR = 10
+      amplitudeBougieSweep: 25,  // 2.5x ATR -> 20/20
+      epaisseurZoneSR: 10,       // 1.0x ATR -> 10/10
+      nombreRetests: 4,          // 4 retests -> 30/30
+      zigzagDepthMin: 4,
+      zigzagDepthMax: 20,
+    });
+
+    expect(scoreMassif.pointsProfondeurCassure).toBe(40);
+    expect(scoreMassif.pointsTailleBougieEtZone).toBe(30);
+    expect(scoreMassif.pointsRetestsSR).toBe(30);
+    expect(scoreMassif.scoreTotal).toBe(100);
+    expect(scoreMassif.categorieVagues).toBe('GRANDES_VAGUES');
+    expect(scoreMassif.zigzagDepthRetenu).toBe(20);
+    expect(scoreMassif.resumeExplication).toContain('Score Liq: 100/100');
+    expect(scoreMassif.resumeExplication).toContain('ZigZag Depth: 20');
+  });
+
+  it('attache detailsScoreLiquidationZigZag sur chaque setup généré par calculerOrchestrateurSMC', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 20; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Doji Achat avec plongeon de liquidation
+    bougies.push(creerBougie(20000, 99.0, 99.0, 85.0, 86.0));
+    bougies.push(creerBougie(21000, 86.0, 99.0, 86.0, 98.8));
+    bougies.push(creerBougie(22000, 98.8, 101.0, 95.0, 100.0));
+    bougies.push(creerBougie(23000, 100.0, 103.0, 96.0, 102.0));
+    bougies.push(creerBougie(24000, 102.0, 105.0, 99.0, 104.0));
+
+    const res = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+    });
+
+    expect(res.setups.length).toBeGreaterThanOrEqual(1);
+    const setup = res.setups[0];
+    expect(setup.detailsScoreLiquidationZigZag).toBeDefined();
+    expect(setup.detailsScoreLiquidationZigZag?.scoreTotal).toBeGreaterThan(0);
+    expect(setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBeGreaterThanOrEqual(4);
+    expect(setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBeLessThanOrEqual(20);
+    expect(setup.detailsScoreLiquidationZigZag?.resumeExplication).toContain('ZigZag Depth:');
+  });
+
+  it('ignore et fusionne les micro-rebonds (< 1.5x ATR ou 1 bougie) et pondère les vrais retests selon la taille de leur colline', () => {
+    // Zone de support à 100.0 (99.5 .. 100.5), ATR moyen = 2.0
+    const zoneSupport = {
+      id: 'sup-test-collines',
+      type: 'SUPPORT' as const,
+      prixBas: 99.5,
+      prixHaut: 100.5,
+      prixMedian: 100.0,
+      retests: 0,
+      force: 'VERIFIED' as const,
+      estFaible: false,
+      estCassee: false,
+      indexOrigine: 0,
+      dateDebut: 1000,
+      dateFin: 20000,
+    };
+
+    const bougies: Bougie[] = [
+      // Index 0 : Création du support (touche 100.0)
+      creerBougie(1000, 101.0, 101.5, 99.8, 100.5),
+      // Index 1 : Simple micro-rebond d'une mèche (High = 101.6 -> +1.6 = 0.8x ATR < 1.5x ATR)
+      creerBougie(2000, 100.6, 101.6, 100.6, 101.0),
+      // Index 2 : Retouche immédiatement le support -> DOIT ÊTRE IGNORÉ (micro-rebond fusionné) !
+      creerBougie(3000, 101.0, 101.2, 100.0, 100.4),
+
+      // Index 3, 4 : Petite colline sur 2 bougies hors zone (High = 103.6 -> +3.6 = 1.8x ATR -> MINEURE +8pts)
+      creerBougie(4000, 100.6, 102.5, 100.6, 102.0),
+      creerBougie(5000, 102.0, 103.6, 101.5, 101.8),
+      // Index 5 : Retest #1 (MINEURE)
+      creerBougie(6000, 101.8, 102.0, 100.1, 100.8),
+
+      // Index 6, 7, 8, 9 : Grand sommet / Montagne sur 4 bougies hors zone (High = 109.0 -> +9.0 = 4.5x ATR -> MAJEURE +25pts)
+      creerBougie(7000, 100.8, 104.0, 100.8, 103.5),
+      creerBougie(8000, 103.5, 107.0, 103.0, 106.5),
+      creerBougie(9000, 106.5, 109.0, 106.0, 107.0),
+      creerBougie(10000, 107.0, 107.5, 102.0, 102.5),
+      // Index 10 : Retest #2 (MAJEURE)
+      creerBougie(11000, 102.5, 102.8, 99.9, 101.0),
+    ];
+
+    const analyse = analyserRetestsAvecCollines(zoneSupport, bougies, 0, bougies.length - 1, 2.0);
+
+    // 1. Le micro-rebond à l'index 2 a bien été ignoré et fusionné
+    expect(analyse.touchesIgnorees.length).toBe(1);
+    expect(analyse.touchesIgnorees[0].index).toBe(2);
+    expect(analyse.touchesIgnorees[0].ratioCollineATR).toBeLessThan(1.5);
+
+    // 2. Seuls les 2 vrais retests (Index 5 et Index 10) sont validés
+    expect(analyse.collinesRetests.length).toBe(2);
+
+    // Retest #1 : Petite colline (1.8x ATR sur 2 bougies) -> MINEURE (+8 pts)
+    expect(analyse.collinesRetests[0].indexToucheRetest).toBe(5);
+    expect(analyse.collinesRetests[0].qualite).toBe('MINEURE');
+    expect(analyse.collinesRetests[0].pointsAttribues).toBe(8);
+
+    // Retest #2 : Grand sommet (4.5x ATR sur 4 bougies) -> MAJEURE (+25 pts)
+    expect(analyse.collinesRetests[1].indexToucheRetest).toBe(10);
+    expect(analyse.collinesRetests[1].qualite).toBe('MAJEURE');
+    expect(analyse.collinesRetests[1].pointsAttribues).toBe(25);
+    expect(analyse.collinesRetests[1].pointsAttribues).toBeGreaterThan(
+      analyse.collinesRetests[0].pointsAttribues
+    );
+
+    // 3. Vérification de la pondération dans calculerCarburantLiquidation :
+    // Une seule colline MAJEURE (150 pts) génère plus de carburant qu'une seule colline MINEURE (60 pts)
+    const carbuMineur = calculerCarburantLiquidation({
+      nombreRetests: 1,
+      profondeurMeche: 1.0,
+      hauteurMoyenne: 2.0,
+      collinesRetests: [analyse.collinesRetests[0]],
+    });
+    const carbuMajeur = calculerCarburantLiquidation({
+      nombreRetests: 1,
+      profondeurMeche: 1.0,
+      hauteurMoyenne: 2.0,
+      collinesRetests: [analyse.collinesRetests[1]],
+    });
+    expect(carbuMajeur.pointsRetests).toBe(150);
+    expect(carbuMineur.pointsRetests).toBe(60);
+    expect(carbuMajeur.carburantTotal).toBeGreaterThan(carbuMineur.carburantTotal);
   });
 });
 

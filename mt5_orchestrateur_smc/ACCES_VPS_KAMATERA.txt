@@ -1,0 +1,37 @@
+===================================================================
+ACCÈS VPS KAMATERA (ESSAI GRATUIT 30 JOURS - 100$ INCLUS)
+===================================================================
+Nom du serveur : MT5-Scanner-SMC
+Zone           : Europe - Frankfurt (Allemagne) [EU-FR]
+Système (OS)   : Ubuntu Desktop 24.04 64-bit (Xubuntu + Bureau à distance xRDP)
+Puissance      : Type A | 2 vCPU | 4 Go RAM | 30 Go NVMe SSD
+Facturation    : Hourly Billing Cycle (0.025$/h soit ~18$/mois -> 0€ grâce aux 100$ offerts)
+Options        : Daily Backup = DÉSACTIVÉ | Management Services = DÉSACTIVÉ
+
+-------------------------------------------------------------------
+IDENTIFIANTS CONNEXION BUREAU À DISTANCE (RDP Windows / mstsc.exe)
+-------------------------------------------------------------------
+Adresse IP     : 185.247.118.35
+Utilisateur    : root
+Mot de passe   : TradeSMC202699
+
+Astuce : Tu peux double-cliquer directement sur le fichier "CONNEXION_VPS_MT5.rdp"
+dans ce dossier pour lancer la connexion Bureau à distance vers 185.247.118.35 !
+
+-------------------------------------------------------------------
+INSTALLER METATRADER 5 SUR LE BUREAU UBUNTU (EN 1 COMMANDE)
+-------------------------------------------------------------------
+Une fois connecté au Bureau à distance du VPS, ouvre le "Terminal" et colle :
+
+wget https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5ubuntu.sh && chmod +x mt5ubuntu.sh && sudo ./mt5ubuntu.sh
+
+-------------------------------------------------------------------
+COMMENT ÉVITER TOUT PRÉLÈVEMENT APRÈS LES 30 JOURS GRATUITS
+-------------------------------------------------------------------
+Le serveur a été configuré en facturation à la seconde/heure ("Hourly Billing")
+et NON en abonnement mensuel fixe ("No Subscriptions Found").
+Avant la fin de tes 30 jours (par exemple le 28ème jour) :
+1. Va sur https://console.kamatera.com/servers
+2. Clique sur "Actions" à droite de "MT5-Scanner-SMC" -> "Terminate" (Supprimer).
+Dès que le serveur est supprimé, la facturation tombe immédiatement à 0.00 $.
+===================================================================

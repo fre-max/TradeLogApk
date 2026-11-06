@@ -38,7 +38,7 @@ import { calculerZigZag } from './zigzag';
 const CLE_STORAGE_INDICATEURS = 'tradelog_indicator_scripts_v2';
 const CLE_STORAGE_VERSION_INDICATEURS = 'tradelog_indicators_catalogue_version';
 const CLE_STORAGE_INDICATEURS_SUPPRIMES = 'tradelog_indicators_deleted_ids';
-const VERSION_CATALOGUE_INDICATEURS = '3.33.0';
+const VERSION_CATALOGUE_INDICATEURS = '3.34.0';
 
 /**
  * 5 indicateurs officiels et modulaires pré-installés par défaut.
@@ -5180,6 +5180,9 @@ return {
       afficherSegmentSL: true,
       afficherSegmentTP: true,
       dureeSegmentsCibles: 3,
+      activerZigZagDynamique: true,
+      zigzagDepthMin: 4,
+      zigzagDepthMax: 20,
       zigzagDepth: 8,
       nbVaguesSuperposees: 4,
       activerAchat: true,
@@ -5567,6 +5570,37 @@ return {
         type: 'string',
         valeurParDefaut: '#F23645',
         groupe: 'Couleurs',
+      },
+      // ─── 🌊 ZigZag Dynamique (Score de Liquidation /100) ───
+      {
+        cle: 'activerZigZagDynamique',
+        label: 'Activer Vagues ZigZag Dynamiques (Score /100)',
+        description: 'Adapte automatiquement la taille des vagues ZigZag (entre 4 et 20) selon la quantité de liquidité récupérée par chaque setup',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Vagues ZigZag Dynamiques (Score /100)',
+      },
+      {
+        cle: 'zigzagDepthMin',
+        label: 'Taille Min des Vagues ZigZag (Faible Liquidité)',
+        description: 'Profondeur minimale du ZigZag lorsque la cassure S/R a récupéré peu de liquidité (défaut: 4)',
+        type: 'number',
+        valeurParDefaut: 4,
+        min: 2,
+        max: 12,
+        step: 1,
+        groupe: 'Vagues ZigZag Dynamiques (Score /100)',
+      },
+      {
+        cle: 'zigzagDepthMax',
+        label: 'Taille Max des Vagues ZigZag (Forte Liquidité)',
+        description: 'Profondeur maximale du ZigZag lorsque la cassure S/R a récupéré une énorme liquidité (défaut: 20)',
+        type: 'number',
+        valeurParDefaut: 20,
+        min: 10,
+        max: 40,
+        step: 1,
+        groupe: 'Vagues ZigZag Dynamiques (Score /100)',
       },
       // ─── 🎯 Filtre Plage TP UOP ───
       {

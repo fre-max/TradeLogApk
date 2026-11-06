@@ -457,13 +457,13 @@ export function BacktestWorkspace() {
 
   // Hauteur du graphique optimisée :
   // - En plein écran TOTAL : prend 100% de la hauteur de l'écran (aucune barre parasite)
-  // - Sur smartphone Android (hors plein écran) : calcul dynamique pour maximiser la vue des bougies
-  // - Sur tablette et Desktop : 600px pour un grand confort d'analyse
+  // - Hors plein écran : s'adapte exactement à la hauteur restante sous les barres d'en-tête
+  //   pour que le dock flottant de Replay en bas à droite reste toujours 100% visible à l'écran
   const hauteurGraphique = estPleinEcran
     ? hauteurFenetre
     : estMobile
-      ? Math.max(440, hauteurFenetre - 160)
-      : 600;
+      ? Math.max(320, hauteurFenetre - 185)
+      : Math.max(380, hauteurFenetre - 145);
 
   // Classes CSS calculées selon le thème courant
   const C = getThemeClasses(theme);
@@ -483,6 +483,7 @@ export function BacktestWorkspace() {
     chargerDonnees,
     avancerBougie,
     reculerBougie,
+    revenirDebut,
     setEstEnLecture,
     setVitesseLecture,
     ouvrirPosition,
@@ -1502,7 +1503,7 @@ export function BacktestWorkspace() {
   // ─── Rendu ─────────────────────────────────────────────────────────────────
   return (
     <div className={`flex flex-col overflow-hidden transition-colors duration-200 ${C.bgWorkspace}
-      ${estPleinEcran ? 'fixed inset-0 z-[200] w-screen h-screen' : 'flex-1'}`}
+      ${estPleinEcran ? 'fixed inset-0 z-[200] w-screen h-screen' : 'flex-1 h-full min-h-0'}`}
     >
 
       {/* ══════════════════════════════════════════════════════════ */}
@@ -2040,7 +2041,7 @@ export function BacktestWorkspace() {
       {/* ══════════════════════════════════════════════════════════ */}
       {/* CORPS PRINCIPAL : Toolbar Gauche + Graphique + Panel Droit */}
       {/* ══════════════════════════════════════════════════════════ */}
-      <div className="flex flex-col md:flex-row flex-1 overflow-hidden relative">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden relative">
 
         {/* ─── BARRE D'OUTILS DE TRACAGE — Masquée en Plein Écran Total ─── */}
         {!estPleinEcran && (
@@ -2074,8 +2075,8 @@ export function BacktestWorkspace() {
           </div>
         )}
 
-        {/* ─── GRAPHIQUE PRINCIPAL (Prend 100% de l'espace) ─── */}
-        <div className="flex-1 min-w-0 flex-shrink-0 relative w-full h-full">
+        {/* ─── GRAPHIQUE PRINCIPAL (Prend 100% de l'espace restant sans déborder) ─── */}
+        <div className="flex-1 min-w-0 min-h-0 relative w-full flex flex-col">
 
           {/* En mode normal : WIDGET UT (Timeframe) flottant et déplaçable */}
           {!estPleinEcran && (
@@ -2131,18 +2132,18 @@ export function BacktestWorkspace() {
             </div>
           )}
 
-          {/* En mode normal : DOCK FLOATING DE REPLAY */}
+          {/* En mode normal : DOCK FLOATING DE REPLAY EN BAS À DROITE */}
           {!estPleinEcran && (
             <div
               style={
                 hasDraggedReplay
                   ? { position: 'absolute', left: `${replayPos.x}px`, top: `${replayPos.y}px`, zIndex: 90 }
                   : estMobile
-                    ? { position: 'absolute', bottom: '12px', left: '50%', transform: 'translateX(-50%)', zIndex: 90 }
+                    ? { position: 'absolute', right: '12px', bottom: '12px', zIndex: 90 }
                     : { position: 'absolute', right: '24px', bottom: '24px', zIndex: 90 }
               }
-              className={`flex items-center gap-1 md:gap-1.5 p-1.5 md:p-2 rounded-xl border shadow-2xl backdrop-blur-md select-none ${
-                theme === 'dark' ? 'bg-[#1e222d]/90 border-[#2a2e39]' : 'bg-white/90 border-[#e0e3eb]'
+              className={`flex items-center gap-1 md:gap-1.5 p-1.5 md:p-2 rounded-xl border shadow-2xl backdrop-blur-md select-none max-w-[calc(100vw-24px)] overflow-x-auto scrollbar-none ${
+                theme === 'dark' ? 'bg-[#1e222d]/95 border-[#2a2e39]' : 'bg-white/95 border-[#e0e3eb]'
               }`}
             >
               {/* Poignée de drag */}
@@ -2172,22 +2173,25 @@ export function BacktestWorkspace() {
                 </div>
               )}
 
-              {/* Mode Replay / Découpe ✂️ */}
+              {/* Mode Replay / Découpe ✂️ (Repartir dans le passé sur une bougie choisie) */}
               <button
                 onClick={() => setOutilActif(outilActif === 'replay-cut' ? null : 'replay-cut')}
-                title="Mode Replay — Cliquer sur une bougie pour démarrer"
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
-                  outilActif === 'replay-cut' ? C.btnActive : C.btnBase
+                title="Mode Replay (✂️) — Cliquer sur une bougie passée pour débuter le backtesting"
+                className={`px-2 h-8 flex items-center justify-center gap-1 rounded-lg text-xs font-bold transition-colors flex-shrink-0 ${
+                  outilActif === 'replay-cut'
+                    ? 'bg-amber-500 text-white shadow-md'
+                    : 'bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 border border-amber-500/30'
                 }`}
               >
-                ✂️
+                <span>✂️</span>
+                <span className="text-[11px]">Replay</span>
               </button>
 
               {/* 🎯 Outil Sondeur de Setup */}
               <button
                 onClick={() => setOutilActif(outilActif === 'setup-probe' ? null : 'setup-probe')}
                 title="Sonder Setup Wyckoff / Liquidation — 1 clic sur la bougie du Sweep"
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors flex-shrink-0 ${
                   outilActif === 'setup-probe' ? 'bg-pink-600 text-white shadow' : C.btnBase
                 }`}
               >
@@ -2198,7 +2202,7 @@ export function BacktestWorkspace() {
               <button
                 onClick={() => setOutilActif(outilActif === 'inspect-setup' ? null : 'inspect-setup')}
                 title="Diagnostic Setup (SMC & Sandbox) 🔍 — Affiche et inspecte les S/R analysés, les scores et la sélection"
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors flex-shrink-0 ${
                   outilActif === 'inspect-setup' ? 'bg-cyan-600 text-white shadow ring-2 ring-cyan-400/50' : C.btnBase
                 }`}
               >
@@ -2209,18 +2213,30 @@ export function BacktestWorkspace() {
               <button
                 onClick={() => useLaboratoireStore.getState().ouvrirBanque()}
                 title="Banque de Setups & Rétro-Ingénierie Statistique"
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors flex-shrink-0 ${C.btnBase}`}
               >
                 🧪
               </button>
 
-              <div className={`w-px h-5 ${C.separator}`} />
+              <div className={`w-px h-5 flex-shrink-0 ${C.separator}`} />
+
+              {/* ⏮ Retour au début dans le passé */}
+              <button
+                onClick={() => {
+                  setEstEnLecture(false);
+                  revenirDebut();
+                }}
+                title="Repartir au début dans le passé (⏮)"
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors flex-shrink-0 ${C.btnBase}`}
+              >
+                ⏮
+              </button>
 
               {/* ⏪ Reculer/Bougie précédente */}
               <button
                 onClick={() => reculerBougie()}
                 title="Bougie précédente"
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors flex-shrink-0 ${C.btnBase}`}
               >
                 ⏪
               </button>
@@ -2229,7 +2245,7 @@ export function BacktestWorkspace() {
               <button
                 onClick={() => setEstEnLecture(!estEnLecture)}
                 title={estEnLecture ? 'Pause (Espace)' : 'Lecture (Espace)'}
-                className={`w-9 h-8 flex items-center justify-center rounded-lg text-sm font-bold transition-all ${
+                className={`w-9 h-8 flex items-center justify-center rounded-lg text-sm font-bold transition-all flex-shrink-0 ${
                   estEnLecture ? 'bg-[#ff9800] text-white hover:bg-[#f57c00]' : 'bg-[#26a69a] text-white hover:bg-[#00897b]'
                 }`}
               >
@@ -2243,7 +2259,7 @@ export function BacktestWorkspace() {
                   avancerBougie();
                 }}
                 title="Bougie suivante (→)"
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${C.btnBase}`}
+                className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors flex-shrink-0 ${C.btnBase}`}
               >
                 ⏩
               </button>
@@ -2525,6 +2541,18 @@ export function BacktestWorkspace() {
                 </button>
 
                 <div className="w-px h-3.5 bg-white/15" />
+
+                {/* Retour au début dans le passé */}
+                <button
+                  onClick={() => {
+                    setEstEnLecture(false);
+                    revenirDebut();
+                  }}
+                  className="w-7 h-7 flex items-center justify-center rounded-xl text-xs text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+                  title="Repartir au début dans le passé (⏮)"
+                >
+                  ⏮
+                </button>
 
                 {/* Bougie précédente */}
                 <button

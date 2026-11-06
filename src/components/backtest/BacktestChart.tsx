@@ -1497,8 +1497,17 @@ export const BacktestChart = React.forwardRef<
     const observateur = new ResizeObserver(() => {
       if (chartContainerRef.current && chartRef.current) {
         const largeur = chartContainerRef.current.clientWidth;
-        chartRef.current.applyOptions({ width: largeur });
-        if (overlayCanvasRef.current) overlayCanvasRef.current.width = largeur;
+        const hauteurConteneur = chartContainerRef.current.clientHeight;
+        if (largeur > 0 && hauteurConteneur > 80) {
+          chartRef.current.applyOptions({ width: largeur, height: hauteurConteneur });
+          if (overlayCanvasRef.current) {
+            overlayCanvasRef.current.width = largeur;
+            overlayCanvasRef.current.height = hauteurConteneur;
+          }
+        } else if (largeur > 0) {
+          chartRef.current.applyOptions({ width: largeur });
+          if (overlayCanvasRef.current) overlayCanvasRef.current.width = largeur;
+        }
         redessinerOverlay();
       }
     });
@@ -1540,8 +1549,12 @@ export const BacktestChart = React.forwardRef<
 
   // Hauteur
   useEffect(() => {
-    if (chartRef.current) chartRef.current.applyOptions({ height });
-    if (overlayCanvasRef.current) overlayCanvasRef.current.height = height;
+    const hauteurEffective =
+      chartContainerRef.current && chartContainerRef.current.clientHeight > 80
+        ? chartContainerRef.current.clientHeight
+        : height;
+    if (chartRef.current) chartRef.current.applyOptions({ height: hauteurEffective });
+    if (overlayCanvasRef.current) overlayCanvasRef.current.height = hauteurEffective;
     redessinerOverlay();
   }, [height, redessinerOverlay]);
 
@@ -2236,7 +2249,7 @@ export const BacktestChart = React.forwardRef<
   const estOutil = activeTool === 'pos-long' || activeTool === 'pos-short';
 
   return (
-    <div className="relative w-full h-full flex flex-col">
+    <div className="relative w-full h-full flex-1 min-h-0 flex flex-col">
       {/* Barre de statut */}
       <div className={`flex items-center gap-3 px-4 py-2 text-[11px] border-b flex-shrink-0 transition-colors
         ${theme === 'dark' ? 'bg-[#1e222d] border-[#2a2e39] text-[#787b86]' : 'bg-[#f0f3fa] border-[#e0e3eb] text-[#434651]'}`}
@@ -2266,7 +2279,7 @@ export const BacktestChart = React.forwardRef<
         )}
       </div>
 
-      <div className="relative flex-1">
+      <div className="relative flex-1 min-h-0 overflow-hidden">
         <div ref={chartContainerRef} className="w-full h-full" />
         <canvas
           ref={overlayCanvasRef}

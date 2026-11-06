@@ -293,12 +293,30 @@ export function calculerShvedSupplyDemand(
       for (let k = i + 1; k < totalCalcul; k++) {
         const b = bougiesCalcul[k];
 
-        // A. Vérification de retest dans la zone
+        // A. Vérification de retest dans la zone (avec obligation d'une vraie colline intermédiaire)
         if (b.high >= loval && b.low <= hival) {
-          if (k - indexDerniereTouche >= minBougiesEntreTouches) {
-            testCount++;
+          // S'il s'agit d'une bougie consécutive collée à la zone, on fusionne le contact
+          if (k - indexDerniereTouche <= 1) {
             indexDerniereTouche = k;
-            datesTouches.push(b.time); // On mémorise QUAND le retest a eu lieu
+          } else {
+            // On mesure la profondeur du creux intermédiaire formé hors de la résistance
+            let creuxMinIntermediaire = loval;
+            for (let m = indexDerniereTouche + 1; m < k; m++) {
+              if (bougiesCalcul[m].low < creuxMinIntermediaire) {
+                creuxMinIntermediaire = bougiesCalcul[m].low;
+              }
+            }
+            const hauteurColline = Math.max(0, loval - creuxMinIntermediaire);
+            const ecartMinTouches = Math.max(2, Math.min(3, minBougiesEntreTouches));
+
+            // Un vrai retest exige que le prix ait quitté la zone sur plusieurs bougies
+            // ET ait formé une vraie colline / creux d'au moins 1.2x ATR avant de revenir
+            if (k - indexDerniereTouche >= ecartMinTouches && hauteurColline >= atr * 1.2) {
+              testCount++;
+              datesTouches.push(b.time); // On mémorise QUAND le vrai retest a eu lieu
+            }
+            // On met à jour le dernier contact (fusionne les micro-rebonds dans la même touche)
+            indexDerniereTouche = k;
           }
         }
 
@@ -370,12 +388,30 @@ export function calculerShvedSupplyDemand(
       for (let k = i + 1; k < totalCalcul; k++) {
         const b = bougiesCalcul[k];
 
-        // A. Vérification de retest dans la zone
+        // A. Vérification de retest dans la zone (avec obligation d'une vraie colline intermédiaire)
         if (b.low <= hival && b.high >= loval) {
-          if (k - indexDerniereTouche >= minBougiesEntreTouches) {
-            testCount++;
+          // S'il s'agit d'une bougie consécutive collée à la zone, on fusionne le contact
+          if (k - indexDerniereTouche <= 1) {
             indexDerniereTouche = k;
-            datesTouches.push(b.time); // On mémorise QUAND le retest a eu lieu
+          } else {
+            // On mesure la hauteur du sommet intermédiaire formé au-dessus du support
+            let sommetMaxIntermediaire = hival;
+            for (let m = indexDerniereTouche + 1; m < k; m++) {
+              if (bougiesCalcul[m].high > sommetMaxIntermediaire) {
+                sommetMaxIntermediaire = bougiesCalcul[m].high;
+              }
+            }
+            const hauteurColline = Math.max(0, sommetMaxIntermediaire - hival);
+            const ecartMinTouches = Math.max(2, Math.min(3, minBougiesEntreTouches));
+
+            // Un vrai retest exige que le prix ait quitté la zone sur plusieurs bougies
+            // ET ait formé une vraie colline / sommet d'au moins 1.2x ATR avant de revenir
+            if (k - indexDerniereTouche >= ecartMinTouches && hauteurColline >= atr * 1.2) {
+              testCount++;
+              datesTouches.push(b.time); // On mémorise QUAND le vrai retest a eu lieu
+            }
+            // On met à jour le dernier contact (fusionne les micro-rebonds dans la même touche)
+            indexDerniereTouche = k;
           }
         }
 
