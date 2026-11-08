@@ -20,6 +20,107 @@ import glob
 import subprocess
 import urllib.request
 import urllib.parse
+from PIL import Image, ImageDraw
+
+
+def generer_graphique_tradingview(fichier_sortie, symbole, periode, direction, prix_entree, prix_sl, prix_tp, bougies):
+    """
+    Génère un graphique en chandeliers pur style TradingView (Dark Theme) avec Pillow.
+    Affiche les bougies vertes/rouges et les niveaux horizontaux Entrée (Bleu), SL (Rouge), TP (Vert).
+    """
+    largeur = 1280
+    hauteur = 720
+
+    # Couleurs TradingView Dark
+    COULEUR_FOND = (19, 23, 34)       # #131722
+    COULEUR_GRILLE = (30, 34, 45)     # #1e222d
+    COULEUR_HAUSSE = (8, 153, 129)    # #089981 (Vert TradingView)
+    COULEUR_BAISSE = (242, 54, 69)    # #f23645 (Rouge TradingView)
+    COULEUR_ENTREE = (41, 98, 255)    # #2962ff (Bleu TradingView)
+    COULEUR_TEXTE = (209, 212, 220)   # #d1d4dc
+    COULEUR_BLANC = (255, 255, 255)
+
+    img = Image.new("RGB", (largeur, hauteur), COULEUR_FOND)
+    draw = ImageDraw.Draw(img)
+
+    marge_gauche = 40
+    marge_droite = 110
+    marge_haut = 60
+    marge_bas = 50
+
+    zone_largeur = largeur - marge_gauche - marge_droite
+    zone_hauteur = hauteur - marge_haut - marge_bas
+
+    tous_les_prix = [prix_entree, prix_sl, prix_tp]
+    for b in bougies:
+        tous_les_prix.append(float(b.get('high', 0.0)))
+        tous_les_prix.append(float(b.get('low', 0.0)))
+
+    prix_min = min(tous_les_prix)
+    prix_max = max(tous_les_prix)
+    delta_prix = max(prix_max - prix_min, 0.0001)
+    prix_min -= delta_prix * 0.06
+    prix_max += delta_prix * 0.06
+    delta_prix = prix_max - prix_min
+
+    def prix_vers_y(p):
+        return int(marge_haut + (prix_max - p) / delta_prix * zone_hauteur)
+
+    # Grille horizontale
+    for i in range(5):
+        y_grid = int(marge_haut + (i / 4.0) * zone_hauteur)
+        draw.line([(marge_gauche, y_grid), (largeur - marge_droite, y_grid)], fill=COULEUR_GRILLE, width=1)
+        p_val = prix_max - (i / 4.0) * delta_prix
+        draw.text((largeur - marge_droite + 10, y_grid - 6), f"{p_val:.4f}", fill=COULEUR_TEXTE)
+
+    # Bougies japonaises pures
+    nb_bougies = len(bougies)
+    if nb_bougies > 0:
+        largeur_colonne = zone_largeur / nb_bougies
+        largeur_corps = max(3, int(largeur_colonne * 0.70))
+
+        for i, b in enumerate(bougies):
+            centre_x = int(marge_gauche + (i + 0.5) * largeur_colonne)
+            y_open = prix_vers_y(float(b.get('open', 0.0)))
+            y_close = prix_vers_y(float(b.get('close', 0.0)))
+            y_high = prix_vers_y(float(b.get('high', 0.0)))
+            y_low = prix_vers_y(float(b.get('low', 0.0)))
+
+            est_haussiere = float(b.get('close', 0.0)) >= float(b.get('open', 0.0))
+            couleur = COULEUR_HAUSSE if est_haussiere else COULEUR_BAISSE
+
+            # Mèches
+            draw.line([(centre_x, y_high), (centre_x, y_low)], fill=couleur, width=1)
+
+            # Corps
+            y_haut_corps = min(y_open, y_close)
+            y_bas_corps = max(y_open, y_close)
+            if y_bas_corps == y_haut_corps:
+                y_bas_corps += 1
+
+            x1 = centre_x - (largeur_corps // 2)
+            x2 = centre_x + (largeur_corps // 2)
+            draw.rectangle([x1, y_haut_corps, x2, y_bas_corps], fill=couleur, outline=couleur)
+
+    # Lignes des niveaux Entrée, SL, TP
+    def tracer_niveau(prix, couleur, texte):
+        y = prix_vers_y(prix)
+        if marge_haut <= y <= (hauteur - marge_bas):
+            for x in range(marge_gauche, largeur - marge_droite, 8):
+                draw.line([(x, y), (min(x + 4, largeur - marge_droite), y)], fill=couleur, width=2)
+            draw.rectangle([largeur - marge_droite + 2, y - 9, largeur - 5, y + 9], fill=couleur)
+            draw.text((largeur - marge_droite + 6, y - 6), f"{texte} {prix:.4f}", fill=COULEUR_BLANC)
+
+    tracer_niveau(prix_entree, COULEUR_ENTREE, "ENTRÉE")
+    tracer_niveau(prix_sl, COULEUR_BAISSE, "SL")
+    tracer_niveau(prix_tp, COULEUR_HAUSSE, "TP")
+
+    # En-tête
+    sens_txt = "🟢 ACHAT (Spring)" if "ACHAT" in direction.upper() else "🔴 VENTE (UTAD)"
+    draw.text((marge_gauche, 18), f"{symbole} • {periode} • TradingView Style SMC", fill=COULEUR_BLANC)
+    draw.text((marge_gauche + 360, 18), f"Signal : {sens_txt}", fill=COULEUR_HAUSSE if "ACHAT" in direction.upper() else COULEUR_BAISSE)
+
+    img.save(fichier_sortie, "PNG")
 
 TOKEN_TELEGRAM = "9013814792:AAEfxmqtIBkPNYowfjWN6vHx9H3urrhdoLY"
 FICHIER_CHAT_IDS = "/root/.smc_telegram_chat_ids.json"
@@ -143,6 +244,25 @@ def scanner_captures_mt5(chat_ids):
         for chemin_txt in fichiers_txt:
             base = chemin_txt[:-4]
             chemin_png = base + ".png"
+            chemin_json = base + ".json"
+
+            # Si le PNG n'existe pas encore mais qu'un JSON avec les bougies est présent : générer le graphique TradingView HD
+            if (not os.path.exists(chemin_png) or os.path.getsize(chemin_png) < 100) and os.path.exists(chemin_json):
+                try:
+                    with open(chemin_json, "r", encoding="utf-8") as jf:
+                        cfg = json.load(jf)
+                    generer_graphique_tradingview(
+                        chemin_png,
+                        cfg.get("symbole", "SMC"),
+                        cfg.get("periode", ""),
+                        cfg.get("direction", "ACHAT"),
+                        float(cfg.get("entree", 0.0)),
+                        float(cfg.get("sl", 0.0)),
+                        float(cfg.get("tp", 0.0)),
+                        cfg.get("bougies", [])
+                    )
+                except Exception as ej:
+                    print(f"⚠️ [Telegram] Erreur génération TradingView: {ej}")
 
             # Attendre jusqu'à 2 secondes si le fichier PNG est encore en train d'être écrit par MT5
             for _ in range(10):
@@ -170,6 +290,8 @@ def scanner_captures_mt5(chat_ids):
                     os.remove(chemin_txt)
                     if os.path.exists(chemin_png):
                         os.remove(chemin_png)
+                    if os.path.exists(chemin_json):
+                        os.remove(chemin_json)
                 except Exception as e:
                     print(f"⚠️ [Telegram] Erreur nettoyage fichier: {e}")
 

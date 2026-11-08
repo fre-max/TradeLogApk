@@ -157,6 +157,7 @@ int                 g_pageTableau                   = 0;
 int                 g_slotCaptureTelegramEnAttente  = -1;
 int                 g_ticksAttenteCaptureTelegram   = 0;
 datetime            g_derniereBarreGraphiqueActif   = 0;
+bool                g_fileInitialisee               = false; // Indique si la découverte des symboles a été effectuée dans OnTimer
 
 /**
  * Convertit un ENUM_TIMEFRAMES en nom court lisible ("M30", "H1", "H4", "D1")
@@ -223,6 +224,13 @@ ENUM_CATEGORIE_ACTIF_FTMO DeterminerCategorieSymboleFTMO(string sym)
 {
    string symMaj  = sym;
    StringToUpper(symMaj);
+
+   // 🚀 Accélération ultra-rapide : élimine instantanément les milliers d'actions CFD sans appel RPC lent
+   if(!InpInclureActionsStocks)
+   {
+      if(StringFind(symMaj, "#") == 0 || StringFind(symMaj, ".US") > 0 || StringFind(symMaj, ".DE") > 0 || StringFind(symMaj, ".FR") > 0 || StringFind(symMaj, ".UK") > 0)
+         return CAT_FTMO_ACTIONS_STOCKS;
+   }
 
    string pathMaj = SymbolInfoString(sym, SYMBOL_PATH);
    StringToUpper(pathMaj);
@@ -454,8 +462,10 @@ void InitialiserFileAttenteScanner()
 
 /**
  * 🔔 Envoie une alerte MT5 / Push Mobile / Capture HD Telegram spécifique au Scanner.
+ * Exporte immédiatement la fiche texte et les données de chandeliers TradingView
+ * sans JAMAIS changer le graphique de MT5 (évite le redémarrage et la perte d'état).
  */
-void DeclencherAlerteScannerMT5(int indexSlot)
+void DeclencherAlerteScannerMT5(int indexSlot, const BougieSMC &bougies[], int totalBougies)
 {
    if(indexSlot < 0 || indexSlot >= g_nbSlotsTotal)
       return;
@@ -468,6 +478,7 @@ void DeclencherAlerteScannerMT5(int indexSlot)
    int digitsSym       = (int)SymbolInfoInteger(g_slots[indexSlot].symbole, SYMBOL_DIGITS);
    string directionTxt = (g_slots[indexSlot].setup.type == DIRECTION_ACHAT) ? "🟢 ACHAT (Spring)" : "🔴 VENTE (UTAD)";
    int nbCollines      = g_slots[indexSlot].setup.aMeilleureZone ? g_slots[indexSlot].setup.meilleureZone.nbCollines : 0;
+   int nbTouchesIgn    = g_slots[indexSlot].setup.aMeilleureZone ? g_slots[indexSlot].setup.meilleureZone.nbTouchesIgnorees : 0;
 
    string msg = StringFormat(
       "🚨 [SCANNER SMC - 3 BOUGIES OK] %s sur %s (%s) ! Entrée: %s | SL: %s | TP%d: %s (%.2fR) | S/R: %d/100 (%d⛰️) | Liq: %d/100 (ZZ:%d)",
@@ -498,30 +509,97 @@ void DeclencherAlerteScannerMT5(int indexSlot)
    if(InpActiverAlerteEmail)
       SendMail("[Scanner SMC MT5] Setup Confirmé " + g_slots[indexSlot].symbole + " " + g_slots[indexSlot].nomPeriode, msg);
 
-   // 📸 Bascule automatique du graphique sur le setup confirmé + Capture d'écran HD TradingView (bougies seules) pour Telegram !
+   // 📸 Exportation Telegram instantanée (Légende complète + Données chandeliers TradingView)
    if(InpActiverCaptureTelegram)
    {
-      if(g_slots[indexSlot].symbole == _Symbol && g_slots[indexSlot].periode == _Period)
+      FolderCreate("AlertesTelegram");
+      string symPropre = g_slots[indexSlot].symbole;
+      StringReplace(symPropre, ".", "_");
+      StringReplace(symPropre, "/", "_");
+      string horodatageId = IntegerToString((long)TimeLocal()) + "_" + IntegerToString((int)(GetTickCount() % 10000));
+      string baseNom      = "AlertesTelegram\\SMC_" + symPropre + "_" + g_slots[indexSlot].nomPeriode + "_" + horodatageId;
+      string fichierTxt   = baseNom + ".txt";
+      string fichierJson  = baseNom + ".json";
+      string fichierPng   = baseNom + ".png";
+
+      // 1️⃣ Écriture de la fiche texte détaillée
+      int hTxt = FileOpen(fichierTxt, FILE_WRITE | FILE_TXT | FILE_ANSI, 0, CP_UTF8);
+      if(hTxt != INVALID_HANDLE)
       {
-         // Masquer temporairement le tableau du scanner pour que la photo ne montre QUE les bougies pures style TradingView
-         ObjectsDeleteAll(0, PREFIXE_SCANNER_SMC);
-         SupprimerTousObjetsSMC();
-         ExporterCaptureEtLegendeTelegramSMC(
+         string legende = StringFormat(
+            "🚨 SETUP SMC CONFIRMÉ (3/3 BOUGIES)\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 Actif : %s (%s)\n"
+            "🧭 Sens : %s\n"
+            "🎯 Entrée : %s\n"
+            "🛑 Stop Loss : %s\n"
+            "💰 Take Profit (TP%d) : %s (Ratio %.2fR)\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🛡️ Score S/R Shved : %d/100 (%d vraies collines ⛰️ | %d micro-touches ignorées)\n"
+            "🌊 Score Liquidité : %d/100 (ZigZag dynamique : %d)\n"
+            "⚡ Carburant Initial / Restant : %d pts / %d pts\n"
+            "🕒 Heure Confirmation : %s",
             g_slots[indexSlot].symbole,
             g_slots[indexSlot].nomPeriode,
-            g_slots[indexSlot].setup,
-            InpLargeurCapturePx,
-            InpHauteurCapturePx
+            directionTxt,
+            DoubleToString(g_slots[indexSlot].setup.prixEntree, digitsSym),
+            DoubleToString(g_slots[indexSlot].setup.prixSL, digitsSym),
+            g_slots[indexSlot].setup.ordreTP,
+            DoubleToString(g_slots[indexSlot].setup.prixTP, digitsSym),
+            g_slots[indexSlot].setup.ratioRR,
+            g_slots[indexSlot].setup.scoreShved,
+            nbCollines,
+            nbTouchesIgn,
+            g_slots[indexSlot].setup.scoreZigZag.scoreTotal,
+            g_slots[indexSlot].setup.scoreZigZag.zigzagDepthRetenu,
+            g_slots[indexSlot].setup.carburantInitial,
+            g_slots[indexSlot].setup.carburantRestant,
+            TimeToString(g_slots[indexSlot].setup.tempsConfirmation, TIME_DATE | TIME_MINUTES)
          );
+         FileWriteString(hTxt, legende);
+         FileClose(hTxt);
+      }
+
+      // 2️⃣ Écriture des données JSON pour tracé pur TradingView par le relais Python
+      int hJson = FileOpen(fichierJson, FILE_WRITE | FILE_TXT | FILE_ANSI, 0, CP_UTF8);
+      if(hJson != INVALID_HANDLE)
+      {
+         string dirSimple = (g_slots[indexSlot].setup.type == DIRECTION_ACHAT) ? "ACHAT" : "VENTE";
+         FileWriteString(hJson, "{\n");
+         FileWriteString(hJson, StringFormat("  \"symbole\": \"%s\",\n", g_slots[indexSlot].symbole));
+         FileWriteString(hJson, StringFormat("  \"periode\": \"%s\",\n", g_slots[indexSlot].nomPeriode));
+         FileWriteString(hJson, StringFormat("  \"direction\": \"%s\",\n", dirSimple));
+         FileWriteString(hJson, StringFormat("  \"entree\": %s,\n", DoubleToString(g_slots[indexSlot].setup.prixEntree, digitsSym)));
+         FileWriteString(hJson, StringFormat("  \"sl\": %s,\n", DoubleToString(g_slots[indexSlot].setup.prixSL, digitsSym)));
+         FileWriteString(hJson, StringFormat("  \"tp\": %s,\n", DoubleToString(g_slots[indexSlot].setup.prixTP, digitsSym)));
+         FileWriteString(hJson, "  \"bougies\": [\n");
+
+         int debutB = MathMax(0, totalBougies - 45);
+         for(int b = debutB; b < totalBougies; b++)
+         {
+            string sep = (b < totalBougies - 1) ? "," : "";
+            string ligne = StringFormat(
+               "    {\"open\": %f, \"high\": %f, \"low\": %f, \"close\": %f}%s\n",
+               bougies[b].open, bougies[b].high, bougies[b].low, bougies[b].close, sep
+            );
+            FileWriteString(hJson, ligne);
+         }
+         FileWriteString(hJson, "  ]\n");
+         FileWriteString(hJson, "}\n");
+         FileClose(hJson);
+      }
+
+      // 3️⃣ Si le graphique MT5 est déjà sur ce symbole, prendre aussi la capture d'écran MT5
+      if(g_slots[indexSlot].symbole == _Symbol && g_slots[indexSlot].periode == _Period)
+      {
+         ObjectsDeleteAll(0, PREFIXE_SCANNER_SMC);
+         SupprimerTousObjetsSMC();
+         AppliquerThemeTradingViewMT5(0);
+         ChartRedraw(0);
+         ChartScreenShot(0, fichierPng, InpLargeurCapturePx, InpHauteurCapturePx, ALIGN_RIGHT);
          DessinerTableauScannerMultiPaires();
          TracerSetupDuGraphiqueOuvert();
          ChartRedraw(0);
-      }
-      else
-      {
-         g_slotCaptureTelegramEnAttente = indexSlot;
-         g_ticksAttenteCaptureTelegram  = 8; // Laisse ~800 ms à MT5 pour charger les bougies de la paire
-         ChartSetSymbolPeriod(0, g_slots[indexSlot].symbole, g_slots[indexSlot].periode);
       }
    }
 }
@@ -673,7 +751,7 @@ bool AnalyserUnSlotDeLaFile(int indexSlot)
          }
          else
          {
-            DeclencherAlerteScannerMT5(indexSlot);
+            DeclencherAlerteScannerMT5(indexSlot, bougies, totalLocal);
          }
       }
    }
@@ -952,7 +1030,10 @@ int OnInit()
 {
    if(InpAppliquerStyleTradingView)
       AppliquerThemeTradingViewMT5(0);
-   InitialiserFileAttenteScanner();
+
+   // 🚀 L'initialisation lourde (découverte des 12000+ symboles) est différée dans OnTimer
+   // Cela garantit qu'OnInit() réponde en < 1 ms et ne soit JAMAIS supprimé par MT5 !
+   g_fileInitialisee = false;
    DessinerTableauScannerMultiPaires();
    ChartRedraw(0);
    EventSetMillisecondTimer(MathMax(50, InpCadenceFileAttenteMs));
@@ -965,6 +1046,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
+   g_fileInitialisee = false;
    ObjectsDeleteAll(0, PREFIXE_SCANNER_SMC);
    SupprimerTousObjetsSMC();
    ChartRedraw(0);
@@ -977,6 +1059,16 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   // 1️⃣ Initialisation différée au tout premier tick du Timer (évite le timeout d'OnInit)
+   if(!g_fileInitialisee)
+   {
+      InitialiserFileAttenteScanner();
+      g_fileInitialisee = true;
+      DessinerTableauScannerMultiPaires();
+      ChartRedraw(0);
+      return;
+   }
+
    if(g_nbSlotsTotal <= 0)
       return;
 
