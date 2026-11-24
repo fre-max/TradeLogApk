@@ -93,10 +93,10 @@ input double InpZoneFuzzFactor             = 0.01;         // Facteur d'épaisse
 input int    InpScoreMinimumShved          = 0;            // Score minimal Shved requis (/100) pour accepter un setup
 input bool   InpExigerDebutEtFinDansPlage  = false;        // Exiger que le S/R soit né strictement dans la plage
 
-input group "=== 🌊 4. ZIGZAG DYNAMIQUE (4-20) & PROFIL UOP (BLOC 3) ==="
-input bool                         InpActiverZigZagDynamique     = true;        // Adapter la taille des vagues ZigZag (4 à 20) selon la liquidité
-input int                          InpZigZagDepthMin             = 4;           // Taille minimale des vagues ZigZag (faible liquidité)
-input int                          InpZigZagDepthMax             = 20;          // Taille maximale des vagues ZigZag (forte liquidité)
+input group "=== 🌊 4. ZIGZAG DYNAMIQUE (1 À 8 SELON DOJI) & PROFIL UOP (BLOC 3) ==="
+input bool                         InpActiverZigZagDynamique     = true;        // Faire varier zigzagDepth de 1 à 8 selon la taille de la liquidation (Doji)
+input int                          InpZigZagDepthMin             = 1;           // Taille minimale des vagues ZigZag (1 = petite liquidation)
+input int                          InpZigZagDepthMax             = 8;           // Taille maximale des vagues ZigZag (8 = forte liquidation)
 input int                          InpZigZagDepthSecours         = 8;           // Profondeur ZigZag fixe si le mode dynamique est désactivé
 input int                          InpNbVaguesSuperposees        = 4;           // Nombre de vagues ZigZag superposées dans l'UOP
 input ENUM_TYPE_CHEVAUCHEMENT_UOP  InpTypeChevauchementUOP       = UOP_PONDERE; // Anatomie UOP (Pondéré Corps/Mèches, Corps seul, Complet)
@@ -104,13 +104,17 @@ input double                       InpPoidsCorpsUOP              = 1.0;         
 input double                       InpPoidsMecheUOP              = 0.25;        // Poids attribué aux mèches dans l'UOP
 input bool                         InpExigerAutorouteUOP         = true;        // Exiger une vraie autoroute fluide UOP en face du trade
 input double                       InpMinTauxAutoroute           = 1.5;         // Taux minimum de chevauchement pour valider l'autoroute
-input bool                         InpActiverFiltrePlageTP       = true;        // Exiger que le Doji soit l'extrême absolu depuis la bougie TP
-input int                          InpMaxReculPlageTP            = 100;         // Recul max (en bougies) pour trouver la bougie contenant le TP
+input bool                         InpActiverFiltrePlageTP             = true;                 // Exiger que le Doji soit l'extrême absolu depuis la bougie TP
+input int                          InpMaxReculPlageTP                  = 100;                  // Recul max (en bougies) pour trouver la bougie contenant le TP
+input bool                         InpActiverTPCibleLiquiditeSR        = false;                // 🧲 Activer TP sur S/R Actif (non cassé) + Trajet Chevauchement
+input ENUM_COMPORTEMENT_ABSENCE_SR InpComportementAbsenceSR            = ABSENCE_SR_REPLI_UOP; // Comportement si aucun S/R actif avec trajet valide
+input double                       InpTauxMinChevauchementTrajetSR     = 1.5;                  // Taux moyen min. de chevauchement sur le trajet vers le S/R
+input double                       InpCouvertureMinTrajetSRPct         = 70.0;                 // Couverture minimale (%) du trajet vers le S/R
 
 input group "=== ⚡ 5. MOTEUR D'ÉNERGIE & CONFIRMATION 3 BOUGIES (BLOC 4) ==="
 input int                   InpNbBougiesConfirmation     = 3;                       // Nombre de bougies de confirmation devant respecter le SL
 input ENUM_MODE_CALCUL_TP   InpModeCalculTP              = MODE_TP_ENERGIE_FRICTION;// Méthode de calcul du Take Profit Optimal
-input ENUM_PALIER_TP_VISE   InpPalierTPVise              = PALIER_AUTO;             // Palier TP visé (AUTO, TP1, TP2, TP3)
+input ENUM_PALIER_TP_VISE   InpPalierTPVise              = PALIER_TP1;              // Palier TP visé (PALIER_TP1 par défaut, PALIER_TP2, PALIER_TP3, PALIER_AUTO)
 input int                   InpPointsParRetest           = 100;                     // Points de carburant de base par retest S/R
 input int                   InpPlafondCarburantRetests   = 400;                     // Plafond maximal de carburant issu des retests
 input double                InpBonusMecheProfonde        = 1.6;                     // Multiplicateur si mèche de cassure > 1.2x ATR
@@ -725,7 +729,9 @@ bool AnalyserUnSlotDeLaFile(int indexSlot)
          InpCoutFrictionFortOverlap, InpCoutFrictionMoyenOverlap, InpCoutFrictionFaibleOverlap,
          InpSeuilFortOverlap, InpSeuilFaibleOverlap, InpMargeSecuriteDevantPalier,
          InpSeuilScoreGrandMouvement, pointSym, digitsSym,
-         setupEval
+         setupEval,
+         InpActiverTPCibleLiquiditeSR, InpComportementAbsenceSR,
+         InpTauxMinChevauchementTrajetSR, InpCouvertureMinTrajetSRPct
       );
 
       if(setupValide && !setupEval.estTermine)

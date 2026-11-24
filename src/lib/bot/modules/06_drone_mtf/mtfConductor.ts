@@ -50,6 +50,7 @@ export interface RecommandationDrone {
  */
 export interface OptionsMtfConductor {
   timeframeHTF?: 'H1' | 'H4' | 'D1'; // Unité de temps de supervision (défaut: H4)
+  activerExtensionRunner?: boolean;  // Active l'extension dynamique Runner du TP (défaut: false)
   facteurExtensionRunner?: number;   // Multiplicateur pour le mode runner (défaut: 1.5)
   margeObstaclePips?: number;        // Marge de retrait avant un obstacle HTF (défaut: 3.0 pips)
   filtrerContreTendance?: boolean;   // Active la détection de contre-tendance macro (défaut: true)
@@ -104,6 +105,7 @@ export function calculerMtfConductor(
   const labels: any[] = [];
 
   const tfHTF = options.timeframeHTF ?? 'H4';
+  const activerExtensionRunner = options.activerExtensionRunner === true; // Désactivé par défaut
   const facteurExtension = options.facteurExtensionRunner ?? 1.5;
   const margeObstaclePips = options.margeObstaclePips ?? 3.0;
   const afficherHUD = options.afficherHUDDrone !== false;
@@ -303,12 +305,20 @@ export function calculerMtfConductor(
       multiplicateurTP = Number((distanceAjustee / (tradeTPInitial - tradePrixEntree)).toFixed(2));
       messageExplicatif = `⚠️ Obstacle Résistance ${tfHTF} détecté à ${obstacleHaut.toFixed(4)}. Sortie avancée juste avant le mur.`;
     } else if (tendanceHTF === 'haussiere') {
-      // 🚀 Voie libre HTF : Extension en mode Runner
-      decision = 'extension_runner';
-      multiplicateurTP = facteurExtension;
-      const distanceEtendue = (tradeTPInitial - tradePrixEntree) * facteurExtension;
-      tpAjuste = tradePrixEntree + distanceEtendue;
-      messageExplicatif = `🚀 Autoroute ${tfHTF} haussière dégagée ! Le Drone conseille d'étendre l'objectif en mode Runner (x${facteurExtension}).`;
+      if (activerExtensionRunner) {
+        // 🚀 Voie libre HTF : Extension en mode Runner uniquement si activé
+        decision = 'extension_runner';
+        multiplicateurTP = facteurExtension;
+        const distanceEtendue = (tradeTPInitial - tradePrixEntree) * facteurExtension;
+        tpAjuste = tradePrixEntree + distanceEtendue;
+        messageExplicatif = `🚀 Autoroute ${tfHTF} haussière dégagée ! Le Drone conseille d'étendre l'objectif en mode Runner (x${facteurExtension}).`;
+      } else {
+        // Par défaut : l'extension Runner est désactivée pour verrouiller le TP initial
+        decision = 'maintien_standard';
+        multiplicateurTP = 1.0;
+        tpAjuste = tradeTPInitial;
+        messageExplicatif = `✅ Autoroute ${tfHTF} haussière dégagée : TP initial maintenu (Mode Runner désactivé par défaut).`;
+      }
     }
   } else {
     // Cas Vente (Short)
@@ -328,11 +338,19 @@ export function calculerMtfConductor(
       multiplicateurTP = Number((distanceAjustee / (tradePrixEntree - tradeTPInitial)).toFixed(2));
       messageExplicatif = `⚠️ Obstacle Support ${tfHTF} détecté à ${obstacleBas.toFixed(4)}. Sortie avancée avant le rebond.`;
     } else if (tendanceHTF === 'baissiere') {
-      decision = 'extension_runner';
-      multiplicateurTP = facteurExtension;
-      const distanceEtendue = (tradePrixEntree - tradeTPInitial) * facteurExtension;
-      tpAjuste = tradePrixEntree - distanceEtendue;
-      messageExplicatif = `🚀 Autoroute ${tfHTF} baissière dégagée ! Le Drone conseille d'étendre l'objectif en mode Runner (x${facteurExtension}).`;
+      if (activerExtensionRunner) {
+        decision = 'extension_runner';
+        multiplicateurTP = facteurExtension;
+        const distanceEtendue = (tradePrixEntree - tradeTPInitial) * facteurExtension;
+        tpAjuste = tradePrixEntree - distanceEtendue;
+        messageExplicatif = `🚀 Autoroute ${tfHTF} baissière dégagée ! Le Drone conseille d'étendre l'objectif en mode Runner (x${facteurExtension}).`;
+      } else {
+        // Par défaut : l'extension Runner est désactivée pour verrouiller le TP initial
+        decision = 'maintien_standard';
+        multiplicateurTP = 1.0;
+        tpAjuste = tradeTPInitial;
+        messageExplicatif = `✅ Autoroute ${tfHTF} baissière dégagée : TP initial maintenu (Mode Runner désactivé par défaut).`;
+      }
     }
   }
 

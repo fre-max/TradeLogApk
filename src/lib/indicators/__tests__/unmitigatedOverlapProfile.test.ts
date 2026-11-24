@@ -3,6 +3,7 @@ import {
   calculerUnmitigatedOverlapProfile,
   detecterPivotsZigZagAvance,
   calculerTPOptimaux,
+  construireSuperpositionVagues,
 } from '@/lib/bot/modules';
 import type { Bougie } from '@/lib/chartDataHelper';
 
@@ -40,7 +41,7 @@ describe('Unmitigated Overlap Profile (UOP) - Volume Profile de Chevauchement & 
     expect(palierCorps).toBeDefined();
   });
 
-  it('superpose les vagues précédentes et la vague courante du ZigZag', () => {
+  it('construit le profil de droite à gauche avec consommation des plages de prix (sans addition entre vagues)', () => {
     const res = calculerUnmitigatedOverlapProfile(bougies, {
       zigzagDepth: 4,
       nbVaguesSuperposees: 3,
@@ -48,19 +49,18 @@ describe('Unmitigated Overlap Profile (UOP) - Volume Profile de Chevauchement & 
       lookbackBars: 60,
     });
 
-    // Vérifie que les vagues superposées sont identifiées
+    // Vérifie que les vagues sélectionnées sont identifiées
     expect(res.vaguesSuperposees.length).toBeGreaterThan(0);
     expect(res.vaguesSuperposees.length).toBeLessThanOrEqual(3);
 
-    // Vérifie la cartographie de superposition
+    // Vérifie la cartographie du profil
     expect(res.paliersSuperposition.length).toBeGreaterThan(0);
 
-    // Un palier au cœur des oscillations doit être traversé par plusieurs vagues
-    const palierMultiVagues = res.paliersSuperposition.find(p => p.nbVagues >= 2);
-    expect(palierMultiVagues).toBeDefined();
-    if (palierMultiVagues) {
-      expect(palierMultiVagues.sommeBougies).toBeGreaterThan(0);
-      expect(palierMultiVagues.vaguesIndices.length).toBe(palierMultiVagues.nbVagues);
+    // Chaque palier de prix appartient exclusivement à 1 seule vague (la plus récente ayant consommé ce prix, zéro addition)
+    for (const palier of res.paliersSuperposition) {
+      expect(palier.nbVagues).toBe(1);
+      expect(palier.vaguesIndices.length).toBe(1);
+      expect(palier.sommeBougies).toBeGreaterThan(0);
     }
   });
 
@@ -295,5 +295,58 @@ describe('Unmitigated Overlap Profile (UOP) - Volume Profile de Chevauchement & 
       // Le palier dans la mèche ne doit pas exister ou avoir 0 bougies
       expect(palierMeche === undefined || palierMeche.nbBougiesChevauchement === 0).toBe(true);
     }
+  });
+
+  it('applique la règle de plage de prix consommée de droite à gauche (exemple 1..20 vs 10..20 sans addition)', () => {
+    // Vague ancienne à gauche (V2) : couvre de 1 à 20 avec un taux de 5 bougies
+    const vagueGauche = {
+      id: 1,
+      indexDebut: 0,
+      indexFin: 10,
+      tempsDebut: 1000,
+      tempsFin: 2000,
+      prixDebut: 1,
+      prixFin: 20,
+      estHaussiere: true,
+      totalBougiesVague: 10,
+      maxBougiesChevauchement: 5,
+      totalNiveauxNonMitigues: 3,
+      plagesUniformes: [],
+      paliers: [
+        { price: 5, nbBougiesChevauchement: 5, pourcentageChevauchement: 50, isMitigated: false, indexDernierPassage: 5 },
+        { price: 15, nbBougiesChevauchement: 5, pourcentageChevauchement: 50, isMitigated: false, indexDernierPassage: 8 },
+      ],
+    };
+
+    // Vague plus récente à droite (V1) : couvre de 10 à 20 avec un taux de 3 bougies
+    const vagueDroiteRecente = {
+      id: 2,
+      indexDebut: 11,
+      indexFin: 20,
+      tempsDebut: 2100,
+      tempsFin: 3000,
+      prixDebut: 20,
+      prixFin: 10,
+      estHaussiere: false,
+      totalBougiesVague: 9,
+      maxBougiesChevauchement: 3,
+      totalNiveauxNonMitigues: 1,
+      plagesUniformes: [],
+      paliers: [
+        { price: 15, nbBougiesChevauchement: 3, pourcentageChevauchement: 33, isMitigated: false, indexDernierPassage: 15 },
+      ],
+    };
+
+    const mapProfil = construireSuperpositionVagues([vagueGauche, vagueDroiteRecente], 1, 3);
+
+    // Sur le prix 15 (dans la plage [10..20] consommée par la vague de droite V1) :
+    // On doit avoir UNIQUEMENT la valeur de V1 (3 bougies), et SURTOUT PAS 3 + 5 = 8 !
+    expect(mapProfil.get(15)?.sommeBougies).toBe(3);
+    expect(mapProfil.get(15)?.vaguesIndices).toEqual([2]);
+
+    // Sur le prix 5 (dans la plage [1..10) non consommée par V1) :
+    // On récupère la valeur de la vague de gauche V2 (5 bougies)
+    expect(mapProfil.get(5)?.sommeBougies).toBe(5);
+    expect(mapProfil.get(5)?.vaguesIndices).toEqual([1]);
   });
 });

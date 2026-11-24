@@ -226,7 +226,7 @@ export function detecterPivotsZigZagAvance(
     lookbackBars?: number;
   } = {}
 ): PointZigZag[] {
-  const depth = Math.max(2, options.depth ?? 8);
+  const depth = Math.max(1, options.depth ?? 8);
   const deviation = Math.max(0, options.deviation ?? 0);
   const backstep = Math.max(1, options.backstep ?? 3);
   const inclureVagueCourante = options.inclureVagueCourante !== false;
@@ -390,11 +390,18 @@ export function detecterPivotsZigZagAvance(
 // ─── 🌊 Moteur de Superposition des Vagues et TP Optimaux (TPO) ───────────────
 
 /**
- * Construit la cartographie superposée des vagues sélectionnées.
- * Superpose les vagues précédentes et la vague courante sur une grille commune de prix.
- * 
+ * Construit la cartographie des vagues sélectionnées en lisant de DROITE vers la GAUCHE
+ * (de la vague la plus récente V1 vers la plus ancienne) avec la règle de Plage de Prix Consommée :
+ * - On commence par la 1ère vague la plus récente (à droite) : tous les niveaux de prix qu'elle
+ *   couvre sont enregistrés et marqués comme CONSOMMÉS.
+ * - Lorsqu'on recule vers la gauche sur les vagues suivantes (V2, V3...), toute partie de leur
+ *   plage de prix déjà consommée par une vague plus récente est strictement IGNORÉE (zéro addition !).
+ * - Seule la portion de prix encore vierge (en dehors de la plage déjà consommée) est utilisée.
+ *
  * Exemple :
- * const mapSuperposition = construireSuperpositionVagues(vaguesSelectionnees, step, 3);
+ * Si V1 (droite) couvre [10 .. 20] et V2 (gauche) couvre [1 .. 20] :
+ * - Sur [10 .. 20] : on utilise uniquement V1 (plage consommée).
+ * - Sur [1 .. 10]  : on utilise V2 (plage non consommée par V1).
  */
 export function construireSuperpositionVagues(
   vagues: VagueOverlapProfile[],
@@ -402,51 +409,67 @@ export function construireSuperpositionVagues(
   seuilBleuFonce: number = 3
 ): Map<number, PalierSuperpositionVagues> {
   const mapSuperposition = new Map<number, PalierSuperpositionVagues>();
+  if (!vagues || vagues.length === 0) {
+    return mapSuperposition;
+  }
 
-  // Parcours de chaque vague sélectionnée (vagues précédentes + vague courante)
-  for (const vague of vagues) {
+  // Bornes de la plage de prix déjà consommée par les vagues plus récentes (lues à droite)
+  let aPlageConsommee = false;
+  let consommeMin = Infinity;
+  let consommeMax = -Infinity;
+  const demiStep = step > 0 ? step * 0.25 : 0.000001;
+
+  // 1️⃣ Lecture de DROITE vers la GAUCHE : on commence par la vague la plus récente (fin du tableau)
+  for (let idx = vagues.length - 1; idx >= 0; idx--) {
+    const vague = vagues[idx];
+    if (!vague.paliers || vague.paliers.length === 0) continue;
+
+    // Détermination de la plage de prix complète couverte par cette vague
+    let vaguePrixMin = Math.min(vague.prixDebut, vague.prixFin);
+    let vaguePrixMax = Math.max(vague.prixDebut, vague.prixFin);
+    for (const p of vague.paliers) {
+      if (p.price < vaguePrixMin) vaguePrixMin = p.price;
+      if (p.price > vaguePrixMax) vaguePrixMax = p.price;
+    }
+
+    // 2️⃣ Parcours des paliers de cette vague : on ne garde QUE ceux hors de la plage déjà consommée
     for (const palier of vague.paliers) {
       const prixArrondi = Number(palier.price.toFixed(5));
 
-      let superpose = mapSuperposition.get(prixArrondi);
-      if (!superpose) {
-        superpose = {
-          prix: prixArrondi,
-          sommeBougies: 0,
-          nbVagues: 0,
-          vaguesIndices: [],
-          tauxMoyenBougies: 0,
-          estBleuFonce: false,
-          isMitigated: palier.isMitigated,
-        };
-        mapSuperposition.set(prixArrondi, superpose);
+      // Vérifie si ce niveau de prix appartient à une plage déjà consommée par une vague plus récente
+      const dejaDansPlageConsommee =
+        aPlageConsommee &&
+        prixArrondi >= consommeMin - demiStep &&
+        prixArrondi <= consommeMax + demiStep;
+
+      if (dejaDansPlageConsommee || mapSuperposition.has(prixArrondi)) {
+        // 🛑 Plage déjà consommée par une vague plus récente : on n'additionne SURTOUT PAS !
+        continue;
       }
 
-      // Cumul du nombre de bougies de chevauchement sur ce palier à travers les vagues
-      superpose.sommeBougies += palier.nbBougiesChevauchement;
-      superpose.nbVagues += 1;
-      superpose.vaguesIndices.push(vague.id);
+      // ✅ Niveau de prix encore vierge : on utilise exclusivement le taux de chevauchement de cette vague
+      const nbBougies = Number(palier.nbBougiesChevauchement.toFixed(2));
+      const estBleu = nbBougies >= seuilBleuFonce;
 
-      // Si le palier dans cette vague est une barre forte (bleu foncé)
-      if (palier.nbBougiesChevauchement >= seuilBleuFonce && !palier.isMitigated) {
-        superpose.estBleuFonce = true;
-      }
-
-      // Si le niveau est resté non-mitigué sur l'une des vagues récentes, on le retient
-      if (!palier.isMitigated) {
-        superpose.isMitigated = false;
-      }
+      mapSuperposition.set(prixArrondi, {
+        prix: prixArrondi,
+        sommeBougies: nbBougies,
+        nbVagues: 1,
+        vaguesIndices: [vague.id],
+        tauxMoyenBougies: nbBougies,
+        estBleuFonce: estBleu,
+        isMitigated: palier.isMitigated,
+      });
     }
-  }
 
-  // Calcul du taux moyen et consolidation du statut bleu foncé (Sweep)
-  for (const superpose of mapSuperposition.values()) {
-    if (superpose.nbVagues > 0) {
-      superpose.tauxMoyenBougies = Number((superpose.sommeBougies / superpose.nbVagues).toFixed(1));
-    }
-    // Si la somme cumulée de bougies atteint le seuil fort, le palier est aussi qualifié bleu foncé
-    if (superpose.sommeBougies >= seuilBleuFonce) {
-      superpose.estBleuFonce = true;
+    // 3️⃣ Mise à jour de la plage de prix consommée après le passage de cette vague
+    if (!aPlageConsommee) {
+      consommeMin = vaguePrixMin;
+      consommeMax = vaguePrixMax;
+      aPlageConsommee = true;
+    } else {
+      consommeMin = Math.min(consommeMin, vaguePrixMin);
+      consommeMax = Math.max(consommeMax, vaguePrixMax);
     }
   }
 

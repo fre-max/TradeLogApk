@@ -38,12 +38,365 @@ export function dessinerResultatIndicateur(
     dessinerUnmitigatedVolumeProfile(ctx, resultat.donnees as any, chart, series, bougies, script.parametres);
   } else if (resultat.typeSpecial === 'unmitigated-overlap-profile' && resultat.donnees) {
     dessinerUnmitigatedOverlapProfile(ctx, resultat.donnees as any, chart, series, bougies, script.parametres);
+  } else if (resultat.typeSpecial === 'orchestrateur-smc' && resultat.donnees) {
+    // 📊 Affiche l'histogramme Volume Profile des chevauchements ayant déterminé le TP sur les setups confirmés
+    const afficherProfil = script?.parametres?.afficherProfilVolumeUOP !== false;
+    if (afficherProfil) {
+      const setups: SetupOrchestreSMC[] = (resultat.donnees as any).setups || [];
+      const masquerTermines = script?.parametres?.masquerSetupsTermines !== false;
+      for (const setup of setups) {
+        if (setup.statut !== 'CONFIRME') continue;
+        if (masquerTermines && setup.estTermine) continue;
+        dessinerHistogrammeProfilSetupSMC(ctx, setup, chart, series, bougies, false);
+      }
+    }
   }
 
   // 2️⃣ Rendu des primitives graphiques universelles (boîtes, lignes, labels, courbes)
   if (resultat.primitives) {
     dessinerPrimitivesIndicateur(ctx, resultat.primitives, chart, series, bougies);
   }
+}
+
+/**
+ * 📊 Dessine l'Histogramme « Volume Profile » du Taux de Chevauchement UOP propre à un Setup SMC.
+ * Permet de visualiser directement à partir de la 3ème bougie de confirmation :
+ *  - Les barres horizontales du profil de chevauchement (bleues = fort chevauchement porteur, rouges/ambres = creux de rupture)
+ *  - En mode diagnostic : les barres individuelles sur chacune des N vagues (2, 3 ou 4 vagues),
+ *    le plafond Garde-Fou Vitesse 1 et les cibles alternatives (TP2 / TP3 candidats).
+ *
+ * Exemple :
+ * dessinerHistogrammeProfilSetupSMC(ctx, setup, chart, series, bougies, true);
+ */
+export function dessinerHistogrammeProfilSetupSMC(
+  ctx: CanvasRenderingContext2D,
+  setup: SetupOrchestreSMC,
+  chart: IChartApi,
+  series: ISeriesApi<'Candlestick'>,
+  bougies: Bougie[],
+  modeDiagnosticComplet = false
+): void {
+  if (!setup || !chart || !series) return;
+  const paliers = setup.paliersSuperpositionUOP;
+  const step = setup.stepUOP;
+  if (!paliers || paliers.length === 0 || !step || step <= 0) return;
+
+  const timeScale = chart.timeScale();
+  const estAchat = setup.type === 'ACHAT';
+  const seuilBleu = setup.seuilBleuFonceUOP ?? 3;
+  const infoZZ = setup.detailsScoreLiquidationZigZag;
+
+  // Position X d'ancrage : à la 3ème bougie de confirmation (ou au Doji par repli)
+  const xAncrage =
+    (setup.tempsConfirmation ? obtenirXPourTemps(timeScale, setup.tempsConfirmation, bougies) : null) ??
+    obtenirXPourTemps(timeScale, setup.tempsDoji, bougies);
+  if (xAncrage === null) return;
+
+  ctx.save();
+
+  // 0️⃣ Tracé de la SECTION EXACTE de ZigZag propre au setup (uniquement les N vagues du TP, sans surcharger tout le graphique)
+  if (!modeDiagnosticComplet && infoZZ?.pivotsZigZag && infoZZ.pivotsZigZag.length >= 2) {
+    const coordsPivots: { x: number; y: number; prix: number; type: 'HIGH' | 'LOW' }[] = [];
+    for (const piv of infoZZ.pivotsZigZag) {
+      const xPiv = obtenirXPourTemps(timeScale, piv.temps, bougies);
+      const yPiv = series.priceToCoordinate(piv.prix);
+      if (xPiv !== null && yPiv !== null) {
+        coordsPivots.push({ x: xPiv, y: yPiv, prix: piv.prix, type: piv.type });
+      }
+    }
+
+    if (coordsPivots.length >= 2) {
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)'; // Violet lumineux pour la section ZigZag du setup
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([5, 3]);
+      ctx.moveTo(coordsPivots[0].x, coordsPivots[0].y);
+      for (let i = 1; i < coordsPivots.length; i++) {
+        ctx.lineTo(coordsPivots[i].x, coordsPivots[i].y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Numérotation discrète de chaque vague de la section (V1, V2...) et points aux pivots
+      for (let i = 0; i < coordsPivots.length; i++) {
+        const pt = coordsPivots[i];
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = pt.type === 'HIGH' ? '#C084FC' : '#38BDF8';
+        ctx.fill();
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        if (i > 0) {
+          const prev = coordsPivots[i - 1];
+          const mx = (prev.x + pt.x) / 2;
+          const my = (prev.y + pt.y) / 2;
+          // Lecture de DROITE vers la GAUCHE : V1 est la vague la plus récente (à droite)
+          const numeroVagueDroiteGauche = coordsPivots.length - i;
+          const txtV = `V${numeroVagueDroiteGauche}`;
+          ctx.font = 'bold 8px sans-serif';
+          const wV = ctx.measureText(txtV).width;
+          ctx.fillStyle = 'rgba(30, 27, 75, 0.88)';
+          ctx.fillRect(mx - wV / 2 - 3, my - 7, wV + 6, 12);
+          ctx.strokeStyle = 'rgba(168, 85, 247, 0.7)';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(mx - wV / 2 - 3, my - 7, wV + 6, 12);
+          ctx.fillStyle = '#E9D5FF';
+          ctx.fillText(txtV, mx - wV / 2, my + 2);
+        }
+      }
+    }
+  }
+
+  // 1️⃣ En mode Diagnostic : afficher aussi les barres de chevauchement individuelles sur les N vagues utilisées
+  const vagues = setup.vaguesSuperposeesUOP || [];
+  if (modeDiagnosticComplet && vagues.length > 0) {
+    for (const vague of vagues) {
+      if (vague.maxBougiesChevauchement <= 0) continue;
+      const xDebV = obtenirXPourTemps(timeScale, vague.tempsDebut, bougies);
+      const xFinV = obtenirXPourTemps(timeScale, vague.tempsFin, bougies);
+      if (xDebV === null || xFinV === null) continue;
+
+      const xOrigineV = Math.min(xDebV, xFinV);
+      const largVague = Math.max(16, Math.abs(xFinV - xDebV));
+
+      for (const pVague of vague.paliers) {
+        const yH = series.priceToCoordinate(pVague.price + step);
+        const yB = series.priceToCoordinate(pVague.price);
+        if (yH === null || yB === null) continue;
+
+        const yTop = Math.min(yH, yB);
+        const hBar = Math.max(1.5, Math.abs(yB - yH));
+        const ratioV = pVague.nbBougiesChevauchement / vague.maxBougiesChevauchement;
+        const wBar = Math.max(6, ratioV * largVague * 0.45);
+        const estDenseV = pVague.nbBougiesChevauchement >= seuilBleu;
+
+        ctx.fillStyle = estDenseV ? 'rgba(14, 165, 233, 0.32)' : 'rgba(148, 163, 184, 0.14)';
+        ctx.strokeStyle = estDenseV ? 'rgba(56, 189, 248, 0.55)' : 'rgba(148, 163, 184, 0.25)';
+        ctx.lineWidth = 0.8;
+        ctx.fillRect(xOrigineV, yTop, wBar, hBar);
+        ctx.strokeRect(xOrigineV, yTop, wBar, hBar);
+      }
+    }
+  }
+
+  // 2️⃣ Filtrage des paliers autour de la zone du setup (de SL jusqu'au-delà du TP pour voir la rupture)
+  const distanceRef = Math.max(setup.distanceTP ?? setup.distanceSL * 2, setup.distanceSL * 2);
+  const margeAuDelaTP = distanceRef * 0.45;
+  const borneMinPrix = estAchat
+    ? Math.min(setup.prixSL, setup.prixEntree) - step * 2
+    : (setup.prixTP ?? setup.prixEntree - distanceRef) - margeAuDelaTP;
+  const borneMaxPrix = estAchat
+    ? (setup.prixTP ?? setup.prixEntree + distanceRef) + margeAuDelaTP
+    : Math.max(setup.prixSL, setup.prixEntree) + step * 2;
+
+  const paliersZone = paliers.filter((p) => p.prix >= borneMinPrix && p.prix <= borneMaxPrix);
+  if (paliersZone.length === 0) {
+    ctx.restore();
+    return;
+  }
+
+  let maxBougiesProfil = 1;
+  for (const p of paliersZone) {
+    if (p.sommeBougies > maxBougiesProfil) {
+      maxBougiesProfil = p.sommeBougies;
+    }
+  }
+
+  const largeurMaxHistogramme = modeDiagnosticComplet ? 135 : 85;
+  const xDepartProfil = xAncrage + 4;
+
+  // Axe vertical de départ du Volume Profile (sur la 3ème bougie de confirmation)
+  const yPremier = series.priceToCoordinate(paliersZone[0].prix);
+  const yDernier = series.priceToCoordinate(paliersZone[paliersZone.length - 1].prix + step);
+  if (yPremier !== null && yDernier !== null) {
+    const yAxeHaut = Math.min(yPremier, yDernier);
+    const yAxeBas = Math.max(yPremier, yDernier);
+
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([2, 2]);
+    ctx.moveTo(xDepartProfil, yAxeHaut);
+    ctx.lineTo(xDepartProfil, yAxeBas);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // En-tête compact du Volume Profile UOP
+    const titreProfil = `📊 PROFIL UOP (${infoZZ ? `V${infoZZ.vitesseRetenue} · ${infoZZ.nbVaguesSuperposeesRetenu}v · D${infoZZ.zigzagDepthRetenu}` : '3b'})`;
+    ctx.font = 'bold 8.5px sans-serif';
+    const wTitre = ctx.measureText(titreProfil).width;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.fillRect(xDepartProfil, yAxeHaut - 16, wTitre + 8, 14);
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(xDepartProfil, yAxeHaut - 16, wTitre + 8, 14);
+    ctx.fillStyle = '#38BDF8';
+    ctx.fillText(titreProfil, xDepartProfil + 4, yAxeHaut - 6);
+  }
+
+  // 3️⃣ Dessin de chaque barre horizontale façon « Volume Profile »
+  for (const palier of paliersZone) {
+    const yH = series.priceToCoordinate(palier.prix + step);
+    const yB = series.priceToCoordinate(palier.prix);
+    if (yH === null || yB === null) continue;
+
+    const yBarre = Math.min(yH, yB);
+    const hBarre = Math.max(2, Math.abs(yB - yH) - 0.5);
+    const ratioLargeur = Math.max(0.08, palier.sommeBougies / maxBougiesProfil);
+    const wBarre = Math.max(6, ratioLargeur * largeurMaxHistogramme);
+
+    const centrePalier = palier.prix + step / 2;
+    const estSurTrajetTP =
+      setup.prixTP !== undefined &&
+      (estAchat
+        ? centrePalier >= setup.prixEntree && centrePalier <= setup.prixTP + step
+        : centrePalier <= setup.prixEntree && centrePalier >= setup.prixTP - step);
+
+    const estZoneRuptureApresTP =
+      setup.prixTP !== undefined &&
+      (estAchat
+        ? centrePalier > setup.prixTP && centrePalier <= setup.prixTP + step * 3
+        : centrePalier < setup.prixTP && centrePalier >= setup.prixTP - step * 3);
+
+    const estFortOverlap = palier.estBleuFonce || palier.sommeBougies >= seuilBleu;
+
+    if (estFortOverlap && estSurTrajetTP) {
+      // 🟦 Barre Bleu Cyan Électrique : Fort chevauchement porteur qui construit le TP1
+      ctx.fillStyle = 'rgba(14, 165, 233, 0.62)';
+      ctx.strokeStyle = '#38BDF8';
+    } else if (estFortOverlap) {
+      // 🩵 Barre Cyan Secondaire : Autre bloc de fort chevauchement (ex: TP2/TP3 plus loin)
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+    } else if (estZoneRuptureApresTP) {
+      // 🟥 Barre Rouge Corail : Creux / Trou de faible chevauchement qui a stoppé le TP1 !
+      ctx.fillStyle = 'rgba(244, 63, 94, 0.48)';
+      ctx.strokeStyle = '#F43F5E';
+    } else if (estSurTrajetTP) {
+      // 🟨 Barre Ambre : Micro-creux absorbé (<= 5%) sur la route du TP
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.42)';
+      ctx.strokeStyle = '#F59E0B';
+    } else {
+      // Gris ardoise discret hors trajectoire
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.32)';
+    }
+
+    ctx.lineWidth = 1;
+    ctx.fillRect(xDepartProfil, yBarre, wBarre, hBarre);
+    ctx.strokeRect(xDepartProfil, yBarre, wBarre, hBarre);
+
+    // Affichage du nombre de bougies sur les barres significatives (si hauteur suffisante)
+    if (hBarre >= 7 && (modeDiagnosticComplet || (estFortOverlap && estSurTrajetTP) || estZoneRuptureApresTP)) {
+      ctx.font = 'bold 8px sans-serif';
+      ctx.fillStyle = estZoneRuptureApresTP ? '#FDA4AF' : estFortOverlap ? '#E0F2FE' : '#FDE68A';
+      const txtBougies = modeDiagnosticComplet
+        ? `${palier.sommeBougies}b (${palier.nbVagues}v)`
+        : `${palier.sommeBougies}b`;
+      ctx.fillText(txtBougies, xDepartProfil + wBarre + 4, yBarre + hBarre / 2 + 3);
+    }
+  }
+
+  // 4️⃣ Ligne du Garde-Fou Vitesse 1 (Plafond / Plancher de la dernière petite vague)
+  if (setup.borneDernierePetiteVague !== undefined) {
+    const yBorneV1 = series.priceToCoordinate(setup.borneDernierePetiteVague);
+    if (yBorneV1 !== null) {
+      ctx.beginPath();
+      ctx.strokeStyle = '#C084FC';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.moveTo(xDepartProfil, yBorneV1);
+      ctx.lineTo(xDepartProfil + largeurMaxHistogramme + 45, yBorneV1);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const txtGardeFou = `🛡️ Plafond Vitesse 1 (Dernière petite vague : ${setup.borneDernierePetiteVague.toFixed(2)})`;
+      ctx.font = 'bold 8.5px sans-serif';
+      const wGF = ctx.measureText(txtGardeFou).width;
+      ctx.fillStyle = 'rgba(46, 16, 101, 0.92)';
+      ctx.fillRect(xDepartProfil + 8, yBorneV1 - 15, wGF + 8, 14);
+      ctx.strokeStyle = '#C084FC';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(xDepartProfil + 8, yBorneV1 - 15, wGF + 8, 14);
+      ctx.fillStyle = '#E9D5FF';
+      ctx.fillText(txtGardeFou, xDepartProfil + 12, yBorneV1 - 5);
+    }
+  }
+
+  // 5️⃣ En mode Diagnostic : Prévisualisation des autres Paliers Candidats (TP2, TP3) sur le Volume Profile
+  if (modeDiagnosticComplet && setup.tousPaliersUOPCandidats && setup.tousPaliersUOPCandidats.length > 1) {
+    for (let i = 0; i < setup.tousPaliersUOPCandidats.length; i++) {
+      const cand = setup.tousPaliersUOPCandidats[i];
+      const ordreCand = i + 1;
+      if (setup.prixTP !== undefined && Math.abs(cand.prixCible - setup.prixTP) < step * 0.5) {
+        continue; // Déjà affiché comme TP principal
+      }
+      const yCand = series.priceToCoordinate(cand.prixCible);
+      if (yCand === null) continue;
+
+      const rrCand = setup.distanceSL > 0
+        ? (Math.abs(cand.prixCible - setup.prixEntree) / setup.distanceSL).toFixed(2)
+        : '-';
+
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.moveTo(xDepartProfil, yCand);
+      ctx.lineTo(xDepartProfil + largeurMaxHistogramme + 60, yCand);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const txtCand = `🔭 Candidat TP${ordreCand} : ${cand.prixCible.toFixed(2)} (${rrCand}R · moy ${cand.tauxMoyenChevauchement}b)`;
+      ctx.font = 'bold 8.5px sans-serif';
+      const wCand = ctx.measureText(txtCand).width;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.90)';
+      ctx.fillRect(xDepartProfil + largeurMaxHistogramme + 10, yCand - 7, wCand + 8, 14);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(xDepartProfil + largeurMaxHistogramme + 10, yCand - 7, wCand + 8, 14);
+      ctx.fillStyle = '#7DD3FC';
+      ctx.fillText(txtCand, xDepartProfil + largeurMaxHistogramme + 14, yCand + 3);
+    }
+  }
+
+  // 6️⃣ Affichage de la Cible de Liquidité S/R Actif (Non Cassé) si retenue comme Take Profit
+  if (setup.cibleLiquiditeSR) {
+    const cibleSR = setup.cibleLiquiditeSR;
+    const yCible = series.priceToCoordinate(cibleSR.prixCible);
+    const yBasZone = series.priceToCoordinate(cibleSR.zone.prixBas);
+    const yHautZone = series.priceToCoordinate(cibleSR.zone.prixHaut);
+
+    if (yCible !== null) {
+      // Zone ombrée du Support/Résistance cible sur la largeur du profil
+      if (yBasZone !== null && yHautZone !== null) {
+        const yTop = Math.min(yBasZone, yHautZone);
+        const hZone = Math.max(4, Math.abs(yBasZone - yHautZone));
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.22)';
+        ctx.fillRect(xDepartProfil, yTop, largeurMaxHistogramme + 50, hZone);
+        ctx.strokeStyle = '#10B981';
+        ctx.lineWidth = 1.3;
+        ctx.setLineDash([4, 2]);
+        ctx.strokeRect(xDepartProfil, yTop, largeurMaxHistogramme + 50, hZone);
+        ctx.setLineDash([]);
+      }
+
+      const txtSR = `🧲 CIBLE ${cibleSR.zone.type} ACTIF (${cibleSR.pourcentageTrajetCouvert}% couvert · moy ${cibleSR.tauxMoyenChevauchementTrajet}b)`;
+      ctx.font = 'bold 8.5px sans-serif';
+      const wSR = ctx.measureText(txtSR).width;
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.94)';
+      ctx.fillRect(xDepartProfil + 6, yCible - 16, wSR + 10, 15);
+      ctx.strokeStyle = '#10B981';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(xDepartProfil + 6, yCible - 16, wSR + 10, 15);
+      ctx.fillStyle = '#6EE7B7';
+      ctx.fillText(txtSR, xDepartProfil + 11, yCible - 5);
+    }
+  }
+
+  ctx.restore();
 }
 
 /**
@@ -722,7 +1075,7 @@ export function dessinerSurbrillanceDiagnosticSMC(
       // Étiquette sur le premier segment de vague ZigZag visible
       const milieuX = (coordsPivots[0].x + coordsPivots[1].x) / 2;
       const milieuY = (coordsPivots[0].y + coordsPivots[1].y) / 2;
-      const texteVague = `🌊 ZigZag Dynamique (Depth: ${infoScoreZZ.zigzagDepthRetenu})`;
+      const texteVague = `🌊 Vitesse ${infoScoreZZ.vitesseRetenue ?? 2} · ZigZag (Depth: ${infoScoreZZ.zigzagDepthRetenu}, ${infoScoreZZ.nbVaguesSuperposeesRetenu ?? 3}v)`;
       ctx.font = 'bold 9px sans-serif';
       const wVague = ctx.measureText(texteVague).width;
       ctx.fillStyle = 'rgba(30, 27, 75, 0.90)';
@@ -748,10 +1101,10 @@ export function dessinerSurbrillanceDiagnosticSMC(
       const badgeLiqX = xDoji + 10;
       const badgeLiqY = estAchat ? ySL + 8 : ySL - 42;
       const texteLiq1 = infoScoreZZ
-        ? `⚡ Score Liq : ${infoScoreZZ.scoreTotal}/100 ➔ ZigZag Depth : ${infoScoreZZ.zigzagDepthRetenu} (Carburant: ${carburant}pts)`
+        ? `⚡ Score Liq : ${infoScoreZZ.scoreTotal}/100 ➔ Vitesse ${infoScoreZZ.vitesseRetenue ?? 2} (Depth: ${infoScoreZZ.zigzagDepthRetenu} · ${infoScoreZZ.nbVaguesSuperposeesRetenu ?? 3} vagues)`
         : `⚡ Liquidation : ${carburant} pts pris`;
       const texteLiq2 = infoScoreZZ
-        ? `Cassure: ${infoScoreZZ.pointsProfondeurCassure}/40 (${infoScoreZZ.ratioProfondeurATR}x ATR) | Bougie+S/R: ${infoScoreZZ.pointsTailleBougieEtZone}/30 | Retests: ${infoScoreZZ.pointsRetestsSR}/30 (${infoScoreZZ.nombreRetests}x)`
+        ? `Collines: ${infoScoreZZ.pointsRetestsSR}/50 (${infoScoreZZ.nombreRetests}x) | S/R: ${infoScoreZZ.pointsTailleBougieEtZone}/25 | Mèche: ${infoScoreZZ.pointsProfondeurCassure}/25 (${infoScoreZZ.ratioProfondeurATR}x ATR)`
         : '';
 
       ctx.font = 'bold 10px sans-serif';
@@ -779,6 +1132,9 @@ export function dessinerSurbrillanceDiagnosticSMC(
       }
     }
   }
+
+  // 📊 C. Histogramme Volume Profile du Taux de Chevauchement UOP (ayant déterminé le TP de ce setup)
+  dessinerHistogrammeProfilSetupSMC(ctx, setup, chart, series, bougies, true);
 
   // ────────────────────────────────────────────────────────────────────────────
   // 4️⃣ Profil de Chevauchement UOP & Détermination Profonde du TP (100% VISUEL)

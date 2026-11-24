@@ -14,13 +14,15 @@
 #define NOMBRE_TRANCHES_UOP 60
 
 /**
- * 🌊 Calcule le Score d'Ampleur de Liquidation (sur 100 points) pour régler dynamiquement
- * la taille des vagues ZigZag (`zigzagDepthRetenu` entre `zigzagDepthMin=4` et `zigzagDepthMax=20`).
+ * 🌊 Calcule le Score de Prise de Liquidité (sur 100 points) et pilote la Boîte à 3 Vitesses :
+ *   1️⃣ Critère 1 — Retests et Collines du S/R (sur 50 points : 0=0pt, 1=15pts, 2=30pts, 3+=50pts)
+ *   2️⃣ Critère 2 — Durée de vie / Importance du S/R (sur 25 points)
+ *   3️⃣ Critère 3 — Profondeur du Balayage / Mèche (sur 25 points : <0.4x ATR=5pts, 0.4-1.0x=15pts, >1.0x=25pts)
  *
- * Barème sur 100 points :
- *   1️⃣ Pilier 1 — Profondeur de la cassure au-delà du S/R (sur 40 points)
- *   2️⃣ Pilier 2 — Taille de la bougie de liquidation + Épaisseur du S/R (sur 30 points)
- *   3️⃣ Pilier 3 — Retests pondérés par la taille de leurs collines (sur 30 points)
+ * Boîte de Vitesses Automatique :
+ *   🟢 Vitesse 1 (0 à 39 pts)  ➔ Micro-Vagues (depth 2-3, 2 vagues max, garde-fou dernière vague)
+ *   🟡 Vitesse 2 (40 à 69 pts) ➔ Vagues Moyennes (depth 5-7, 3 vagues)
+ *   🔥 Vitesse 3 (70 à 100 pts)➔ Grandes Vagues (depth 9-14+, 4 vagues)
  */
 void CalculerScoreLiquidationZigZagSMC(
    double profondeurMeche,
@@ -35,7 +37,7 @@ void CalculerScoreLiquidationZigZagSMC(
 )
 {
    double atrSecurise = MathMax(_Point, hauteurMoyenneATR);
-   int depthMin       = MathMax(2, zigzagDepthMin);
+   int depthMin       = MathMax(1, zigzagDepthMin);
    int depthMax       = MathMax(depthMin + 1, zigzagDepthMax);
    int nbRetests      = aZoneScoree ? zoneScoree.nbCollines : 0;
 
@@ -43,73 +45,95 @@ void CalculerScoreLiquidationZigZagSMC(
    double ratioTailleBougieATR  = NormalizeDouble(MathMax(0.0, amplitudeBougieSweep) / atrSecurise, 2);
    double ratioEpaisseurZoneATR = NormalizeDouble(MathMax(0.0, epaisseurZoneSR) / atrSecurise, 2);
 
-   // 1️⃣ PILIER 1 : Profondeur de la cassure au-delà du S/R (sur 40 points max)
+   // 1️⃣ CRITÈRE 1 : Retests et Collines du S/R avant la cassure (sur 50 points max)
+   int pointsRetestsSR = 0;
+   if(aZoneScoree && zoneScoree.nbCollines > 0)
+   {
+      bool aCollineMajeure = false;
+      bool aCollineSolide  = false;
+      for(int c = 0; c < zoneScoree.nbCollines; c++)
+      {
+         if(zoneScoree.collines[c].qualite == COLLINE_MAJEURE)
+            aCollineMajeure = true;
+         else if(zoneScoree.collines[c].qualite == COLLINE_SOLIDE)
+            aCollineSolide = true;
+      }
+
+      if(zoneScoree.nbCollines >= 3 || (zoneScoree.nbCollines == 2 && aCollineMajeure))
+         pointsRetestsSR = 50;
+      else if(zoneScoree.nbCollines == 2)
+         pointsRetestsSR = 30;
+      else if(zoneScoree.nbCollines == 1)
+         pointsRetestsSR = aCollineMajeure ? 30 : (aCollineSolide ? 20 : 15);
+   }
+
+   // 2️⃣ CRITÈRE 2 : Taille de la Liquidation (notre Doji personnalisé) & Force S/R (sur 25 points max)
+   int pointsTailleBougieEtZone = 5;
+   if(ratioTailleBougieATR >= 1.8)
+      pointsTailleBougieEtZone = 25;
+   else if(ratioTailleBougieATR >= 1.2 || ratioEpaisseurZoneATR >= 0.4)
+      pointsTailleBougieEtZone = 15;
+   else
+      pointsTailleBougieEtZone = 5;
+
+   // 3️⃣ CRITÈRE 3 : Profondeur du Balayage / Mèche de Liquidation (sur 25 points max)
    int pointsProfondeurCassure = 5;
-   if(ratioProfondeurATR >= 1.2)
-      pointsProfondeurCassure = 40;
-   else if(ratioProfondeurATR >= 0.8)
-      pointsProfondeurCassure = 34;
-   else if(ratioProfondeurATR >= 0.5)
-      pointsProfondeurCassure = 26;
-   else if(ratioProfondeurATR >= 0.3)
-      pointsProfondeurCassure = 18;
-   else if(ratioProfondeurATR >= 0.1)
-      pointsProfondeurCassure = 10;
+   if(ratioProfondeurATR > 1.0)
+      pointsProfondeurCassure = 25;
+   else if(ratioProfondeurATR >= 0.4)
+      pointsProfondeurCassure = 15;
    else
       pointsProfondeurCassure = 5;
 
-   // 2️⃣ PILIER 2 : Taille de la bougie de liquidation (20 pts) + Épaisseur S/R (10 pts) = 30 pts max
-   int pointsBougie = 5;
-   if(ratioTailleBougieATR >= 2.0)
-      pointsBougie = 20;
-   else if(ratioTailleBougieATR >= 1.4)
-      pointsBougie = 15;
-   else if(ratioTailleBougieATR >= 1.0)
-      pointsBougie = 10;
-   else
-      pointsBougie = 5;
+   // 4️⃣ Score Total sur 100 et Calcul de zigzagDepth (de 1 à 8) selon la taille de la liquidation
+   int scoreTotal = MathMin(100, MathMax(0, pointsRetestsSR + pointsTailleBougieEtZone + pointsProfondeurCassure));
+   double progDepth = MathMax(0.0, MathMin(1.0, ((double)scoreTotal - 10.0) / 90.0));
+   int zigzagDepthRetenu = MathMax(depthMin, MathMin(depthMax, (int)MathRound((double)depthMin + progDepth * (double)(depthMax - depthMin))));
 
-   int pointsZoneSR = 2;
-   if(ratioEpaisseurZoneATR >= 0.8)
-      pointsZoneSR = 10;
-   else if(ratioEpaisseurZoneATR >= 0.4)
-      pointsZoneSR = 7;
-   else if(ratioEpaisseurZoneATR > 0.0)
-      pointsZoneSR = 4;
-   else
-      pointsZoneSR = 2;
+   int vitesseRetenue            = 2;
+   int nbVaguesSuperposeesRetenu = 3;
+   bool plafondDerniereVague     = false;
 
-   int pointsTailleBougieEtZone = MathMin(30, pointsBougie + pointsZoneSR);
-
-   // 3️⃣ PILIER 3 : Retests pondérés par la taille de leur colline (sur 30 points max)
-   int pointsRetestsSR = 5;
-   if(aZoneScoree && zoneScoree.nbCollines > 0)
+   if(scoreTotal < 40)
    {
-      int sommePtsCollines = 0;
-      for(int c = 0; c < zoneScoree.nbCollines; c++)
-         sommePtsCollines += zoneScoree.collines[c].pointsAttribues;
-      pointsRetestsSR = MathMin(30, 5 + sommePtsCollines);
+      // 🟢 VITESSE 1 : Petite Liquidation (0 à 39 pts) -> Micro-Vagues (depth 1 à 3, 2 vagues max)
+      vitesseRetenue            = 1;
+      nbVaguesSuperposeesRetenu = 2;
+      plafondDerniereVague      = true;
+   }
+   else if(scoreTotal < 70)
+   {
+      // 🟡 VITESSE 2 : Liquidation Moyenne (40 à 69 pts) -> Vagues Moyennes (depth 3 à 5, 3 vagues)
+      vitesseRetenue            = 2;
+      nbVaguesSuperposeesRetenu = 3;
+      plafondDerniereVague      = false;
+   }
+   else
+   {
+      // 🔥 VITESSE 3 : Grosse Liquidation (70 à 100 pts) -> Grandes Vagues (depth 6 à 8, 4 vagues)
+      vitesseRetenue            = 3;
+      nbVaguesSuperposeesRetenu = 4;
+      plafondDerniereVague      = false;
    }
 
-   // 4️⃣ Score Total sur 100 et Conversion en Profondeur ZigZag Dynamique (4 à 20)
-   int scoreTotal = MathMin(100, MathMax(0, pointsProfondeurCassure + pointsTailleBougieEtZone + pointsRetestsSR));
-   int zigzagDepthRetenu = (int)MathRound((double)depthMin + ((double)scoreTotal / 100.0) * (double)(depthMax - depthMin));
-
-   sortieScoreZZ.scoreTotal               = scoreTotal;
-   sortieScoreZZ.pointsProfondeurCassure  = pointsProfondeurCassure;
-   sortieScoreZZ.pointsTailleBougieEtZone = pointsTailleBougieEtZone;
-   sortieScoreZZ.pointsRetestsSR          = pointsRetestsSR;
-   sortieScoreZZ.ratioProfondeurATR       = ratioProfondeurATR;
-   sortieScoreZZ.ratioTailleBougieATR     = ratioTailleBougieATR;
-   sortieScoreZZ.ratioEpaisseurZoneATR    = ratioEpaisseurZoneATR;
-   sortieScoreZZ.nombreRetests            = nbRetests;
-   sortieScoreZZ.zigzagDepthRetenu        = zigzagDepthRetenu;
-   sortieScoreZZ.nbPivots                 = 0;
+   sortieScoreZZ.scoreTotal                = scoreTotal;
+   sortieScoreZZ.pointsProfondeurCassure   = pointsProfondeurCassure;
+   sortieScoreZZ.pointsTailleBougieEtZone  = pointsTailleBougieEtZone;
+   sortieScoreZZ.pointsRetestsSR           = pointsRetestsSR;
+   sortieScoreZZ.ratioProfondeurATR        = ratioProfondeurATR;
+   sortieScoreZZ.ratioTailleBougieATR      = ratioTailleBougieATR;
+   sortieScoreZZ.ratioEpaisseurZoneATR     = ratioEpaisseurZoneATR;
+   sortieScoreZZ.nombreRetests             = nbRetests;
+   sortieScoreZZ.vitesseRetenue            = vitesseRetenue;
+   sortieScoreZZ.zigzagDepthRetenu         = zigzagDepthRetenu;
+   sortieScoreZZ.nbVaguesSuperposeesRetenu = nbVaguesSuperposeesRetenu;
+   sortieScoreZZ.plafondDerniereVagueActif = plafondDerniereVague;
+   sortieScoreZZ.nbPivots                  = 0;
 }
 
 /**
  * Détecte les pivots ZigZag alternés (Haut / Bas) sur la plage [0 .. indexFin]
- * selon la profondeur dynamique zigzagDepth.
+ * selon la profondeur dynamique zigzagDepth (supporte depth = 1 à 8).
  */
 int CalculerPivotsZigZagSMC(
    const BougieSMC &bougies[],
@@ -119,7 +143,7 @@ int CalculerPivotsZigZagSMC(
 )
 {
    ArrayResize(pivotsSortie, 0);
-   int depth = MathMax(2, zigzagDepth);
+   int depth = MathMax(1, zigzagDepth);
    if(indexFin < depth * 2)
       return 0;
 
@@ -238,9 +262,10 @@ int CalculerPaliersUOPSMC(
    PivotZigZagSMC pivots[];
    int nbPivots = CalculerPivotsZigZagSMC(bougies, indexDoji, zigzagDepth, pivots);
 
-   // Sauvegarde des 6 derniers pivots dans scoreZZ pour l'affichage diagnostic sur le graphique
+   // Sauvegarde de la section exacte de ZigZag (N vagues = N + 1 pivots) pour l'affichage sur le graphique
    scoreZZ.nbPivots = 0;
-   int debutCopiePiv = MathMax(0, nbPivots - 6);
+   int nbPivotsSection = MathMax(2, nbVaguesSuperposees + 1);
+   int debutCopiePiv   = MathMax(0, nbPivots - nbPivotsSection);
    for(int p = debutCopiePiv; p < nbPivots && scoreZZ.nbPivots < MAX_PIVOTS_ZIGZAG; p++)
    {
       scoreZZ.pivots[scoreZZ.nbPivots] = pivots[p];
@@ -271,27 +296,113 @@ int CalculerPaliersUOPSMC(
 
    double pasTranche = amplitudeTotale / (double)NOMBRE_TRANCHES_UOP;
    double densiteTranche[NOMBRE_TRANCHES_UOP];
-   double sommeDensites = 0.0;
-   int nbTranchesActives = 0;
-
-   for(int t = 0; t < NOMBRE_TRANCHES_UOP; t++)
+   bool   trancheConsommee[NOMBRE_TRANCHES_UOP];
+   for(int tInit = 0; tInit < NOMBRE_TRANCHES_UOP; tInit++)
    {
-      double basT  = prixMin + t * pasTranche;
-      double hautT = basT + pasTranche;
-      double cumul = 0.0;
+      densiteTranche[tInit]   = 0.0;
+      trancheConsommee[tInit] = false;
+   }
 
-      for(int k = idxDebutFenetre; k <= indexDoji; k++)
+   // Construction de la liste des N vagues [debutIdx .. finIdx] de la section ZigZag
+   int vaguesDebut[12];
+   int vaguesFin[12];
+   int nbVaguesSection = 0;
+
+   if(scoreZZ.nbPivots >= 2)
+   {
+      for(int vp = 0; vp < scoreZZ.nbPivots - 1 && nbVaguesSection < 11; vp++)
       {
-         cumul += CalculerContributionBougieTrancheUOP(
-            bougies[k], basT, hautT,
-            typeChevauchement, poidsCorps, poidsMeche
-         );
+         vaguesDebut[nbVaguesSection] = MathMin(scoreZZ.pivots[vp].index, scoreZZ.pivots[vp + 1].index);
+         vaguesFin[nbVaguesSection]   = MathMax(scoreZZ.pivots[vp].index, scoreZZ.pivots[vp + 1].index);
+         nbVaguesSection++;
+      }
+      int dernierPivIdx = scoreZZ.pivots[scoreZZ.nbPivots - 1].index;
+      if(indexDoji > dernierPivIdx && nbVaguesSection < 12)
+      {
+         vaguesDebut[nbVaguesSection] = dernierPivIdx;
+         vaguesFin[nbVaguesSection]   = indexDoji;
+         nbVaguesSection++;
+      }
+   }
+   else
+   {
+      vaguesDebut[0]  = idxDebutFenetre;
+      vaguesFin[0]    = indexDoji;
+      nbVaguesSection = 1;
+   }
+
+   // Lecture de DROITE vers la GAUCHE (de la vague la plus récente V1 vers la plus ancienne)
+   // Règle de Plage de Prix Consommée : dès qu'une vague a consommé une plage de prix, les vagues
+   // plus anciennes à gauche n'ont plus le droit d'utiliser ni d'additionner sur cette plage !
+   bool   aPlageConsommee = false;
+   double consommeMin     = DBL_MAX;
+   double consommeMax     = -DBL_MAX;
+
+   for(int vIdx = nbVaguesSection - 1; vIdx >= 0; vIdx--)
+   {
+      int idxDebV = MathMax(0, vaguesDebut[vIdx]);
+      int idxFinV = MathMin(indexDoji, vaguesFin[vIdx]);
+      if(idxFinV < idxDebV)
+         continue;
+
+      double vagueMin = bougies[idxDebV].low;
+      double vagueMax = bougies[idxDebV].high;
+      for(int kb = idxDebV; kb <= idxFinV; kb++)
+      {
+         if(bougies[kb].low < vagueMin)
+            vagueMin = bougies[kb].low;
+         if(bougies[kb].high > vagueMax)
+            vagueMax = bougies[kb].high;
       }
 
-      densiteTranche[t] = cumul;
-      if(cumul > 0.0)
+      for(int t = 0; t < NOMBRE_TRANCHES_UOP; t++)
       {
-         sommeDensites += cumul;
+         double basT    = prixMin + t * pasTranche;
+         double hautT   = basT + pasTranche;
+         double centreT = (basT + hautT) * 0.5;
+
+         // Si la tranche ne fait pas partie de cette vague, on passe
+         if(hautT < vagueMin || basT > vagueMax)
+            continue;
+
+         // Si cette tranche tombe dans la plage déjà consommée par une vague plus récente (à droite) : IGNORÉE !
+         bool dejaDansPlage = aPlageConsommee && (centreT >= consommeMin && centreT <= consommeMax);
+         if(trancheConsommee[t] || dejaDansPlage)
+            continue;
+
+         double cumulVague = 0.0;
+         for(int k = idxDebV; k <= idxFinV; k++)
+         {
+            cumulVague += CalculerContributionBougieTrancheUOP(
+               bougies[k], basT, hautT,
+               typeChevauchement, poidsCorps, poidsMeche
+            );
+         }
+
+         densiteTranche[t]   = cumulVague;
+         trancheConsommee[t] = true;
+      }
+
+      if(!aPlageConsommee)
+      {
+         consommeMin     = vagueMin;
+         consommeMax     = vagueMax;
+         aPlageConsommee = true;
+      }
+      else
+      {
+         consommeMin = MathMin(consommeMin, vagueMin);
+         consommeMax = MathMax(consommeMax, vagueMax);
+      }
+   }
+
+   double sommeDensites = 0.0;
+   int nbTranchesActives = 0;
+   for(int t = 0; t < NOMBRE_TRANCHES_UOP; t++)
+   {
+      if(densiteTranche[t] > 0.0)
+      {
+         sommeDensites += densiteTranche[t];
          nbTranchesActives++;
       }
    }
@@ -479,6 +590,54 @@ int CalculerPaliersUOPSMC(
       }
    }
 
+   // 🛡️ GARDE-FOU SPÉCIAL PETITE LIQUIDITÉ (Vitesse 1 : Score < 40 pts)
+   // Si des paliers UOP existent à l'intérieur de la dernière petite vague (avant le sommet/creux précédent),
+   // on ne conserve que ceux-là pour éviter un TP1 trop éloigné.
+   if(scoreZZ.plafondDerniereVagueActif && ArraySize(paliersSortie) > 0 && nbPivots > 0)
+   {
+      double borneDerniereVague = 0.0;
+      bool aBorne = false;
+      for(int p = nbPivots - 1; p >= 0; p--)
+      {
+         if(estAchat && pivots[p].estHaut && pivots[p].prix > prixEntree)
+         {
+            borneDerniereVague = pivots[p].prix;
+            aBorne = true;
+            break;
+         }
+         if(!estAchat && !pivots[p].estHaut && pivots[p].prix < prixEntree)
+         {
+            borneDerniereVague = pivots[p].prix;
+            aBorne = true;
+            break;
+         }
+      }
+
+      if(aBorne)
+      {
+         PalierUOPCandidatSMC paliersFiltres[];
+         for(int idxP = 0; idxP < ArraySize(paliersSortie); idxP++)
+         {
+            bool dansVague = estAchat
+               ? (paliersSortie[idxP].prixCible <= borneDerniereVague)
+               : (paliersSortie[idxP].prixCible >= borneDerniereVague);
+            if(dansVague)
+            {
+               int nf = ArraySize(paliersFiltres);
+               ArrayResize(paliersFiltres, nf + 1);
+               paliersFiltres[nf]       = paliersSortie[idxP];
+               paliersFiltres[nf].ordre = nf + 1;
+            }
+         }
+         if(ArraySize(paliersFiltres) > 0)
+         {
+            ArrayResize(paliersSortie, ArraySize(paliersFiltres));
+            for(int idxCopy = 0; idxCopy < ArraySize(paliersFiltres); idxCopy++)
+               paliersSortie[idxCopy] = paliersFiltres[idxCopy];
+         }
+      }
+   }
+
    return ArraySize(paliersSortie);
 }
 
@@ -559,6 +718,143 @@ bool ValiderDojiAvecPlageTPSMC(
       }
       return (highDoji >= plusHautPlage - marge);
    }
+}
+
+/**
+ * 🧲 Recherche un Support (en VENTE) ou une Résistance (en ACHAT) toujours actif (non cassé)
+ * situé en face du prix d'entrée, et vérifie si tout le trajet [prixEntree ➔ S/R]
+ * est couvert par les corridors de chevauchement UOP avec un bon taux moyen.
+ *
+ * Exemple :
+ * double prixCibleSR = 0.0;
+ * bool trouve = TrouverCibleLiquiditeSRAvecChevauchementSMC(
+ *    toutesLesZonesShved, totalZonesShved, bougies, indexHorizonVerrouillage,
+ *    doji.type, prixEntree, paliersCandidats, nbPaliers,
+ *    1.5, 70.0, 1, prixCibleSR
+ * );
+ */
+bool TrouverCibleLiquiditeSRAvecChevauchementSMC(
+   const ZoneShvedSMC &toutesLesZonesShved[],
+   int totalZonesShved,
+   const BougieSMC &bougies[],
+   int indexHorizon,
+   ENUM_DIRECTION_SMC typeSetup,
+   double prixEntree,
+   const PalierUOPCandidatSMC &paliersUOP[],
+   int nbPaliersUOP,
+   double tauxMinChevauchementTrajet,
+   double couvertureMinPourcent,
+   int ordreCibleVise,
+   double &prixCibleSRSortie
+)
+{
+   prixCibleSRSortie = 0.0;
+   if(totalZonesShved <= 0 || nbPaliersUOP <= 0)
+      return false;
+
+   bool estAchat = (typeSetup == DIRECTION_ACHAT);
+   double ciblesValides[];
+   double distancesValides[];
+
+   for(int z = 0; z < totalZonesShved; z++)
+   {
+      ZoneShvedSMC zone = toutesLesZonesShved[z];
+
+      // 1️⃣ En ACHAT on cherche une RESISTANCE au-dessus ; en VENTE un SUPPORT en dessous
+      if(estAchat && zone.type != ZONE_RESISTANCE)
+         continue;
+      if(!estAchat && zone.type != ZONE_SUPPORT)
+         continue;
+
+      // 2️⃣ La zone doit être née avant ou à l'horizon de confirmation
+      if(zone.indexOrigine > indexHorizon)
+         continue;
+
+      double prixCible = estAchat
+         ? (zone.prixBas > prixEntree ? zone.prixBas : zone.prixMedian)
+         : (zone.prixHaut < prixEntree ? zone.prixHaut : zone.prixMedian);
+
+      if(estAchat && prixCible <= prixEntree)
+         continue;
+      if(!estAchat && prixCible >= prixEntree)
+         continue;
+
+      // 3️⃣ Vérifier que le Support / Résistance est TOUJOURS ACTIF (non cassé jusqu'à indexHorizon)
+      bool estCasse = false;
+      for(int k = zone.indexOrigine + 1; k <= indexHorizon; k++)
+      {
+         if(estAchat && bougies[k].close > zone.prixHaut)
+         {
+            estCasse = true;
+            break;
+         }
+         if(!estAchat && bougies[k].close < zone.prixBas)
+         {
+            estCasse = true;
+            break;
+         }
+      }
+      if(estCasse)
+         continue;
+
+      // 4️⃣ Vérifier le taux de chevauchement et la couverture sur le trajet [prixEntree ➔ prixCible]
+      double minTrajet = MathMin(prixEntree, prixCible);
+      double maxTrajet = MathMax(prixEntree, prixCible);
+      double distTotale = MathMax(_Point, maxTrajet - minTrajet);
+
+      double longueurCouverte = 0.0;
+      double sommePondereeTaux = 0.0;
+
+      for(int p = 0; p < nbPaliersUOP; p++)
+      {
+         double basIntersection  = MathMax(minTrajet, paliersUOP[p].prixBasZone);
+         double hautIntersection = MathMin(maxTrajet, paliersUOP[p].prixHautZone);
+         if(hautIntersection > basIntersection)
+         {
+            double seg = hautIntersection - basIntersection;
+            longueurCouverte  += seg;
+            sommePondereeTaux += seg * paliersUOP[p].tauxMoyenChevauchement;
+         }
+      }
+
+      double pctCouvert = MathMin(100.0, (longueurCouverte / distTotale) * 100.0);
+      double tauxMoyenTrajet = (longueurCouverte > 0.0) ? (sommePondereeTaux / distTotale) : 0.0;
+
+      if(pctCouvert >= couvertureMinPourcent && tauxMoyenTrajet >= tauxMinChevauchementTrajet)
+      {
+         int n = ArraySize(ciblesValides);
+         ArrayResize(ciblesValides, n + 1);
+         ArrayResize(distancesValides, n + 1);
+         ciblesValides[n]    = prixCible;
+         distancesValides[n] = distTotale;
+      }
+   }
+
+   int nbValides = ArraySize(ciblesValides);
+   if(nbValides <= 0)
+      return false;
+
+   // Tri par distance croissante depuis le prix d'entrée
+   for(int i = 0; i < nbValides - 1; i++)
+   {
+      for(int j = i + 1; j < nbValides; j++)
+      {
+         if(distancesValides[j] < distancesValides[i])
+         {
+            double tmpD = distancesValides[i];
+            distancesValides[i] = distancesValides[j];
+            distancesValides[j] = tmpD;
+
+            double tmpC = ciblesValides[i];
+            ciblesValides[i] = ciblesValides[j];
+            ciblesValides[j] = tmpC;
+         }
+      }
+   }
+
+   int idxRetenu = MathMax(0, MathMin(nbValides - 1, ordreCibleVise - 1));
+   prixCibleSRSortie = ciblesValides[idxRetenu];
+   return true;
 }
 
 #endif // MODULE_03_ZIGZAG_DYNAMIQUE_UOP_MQH

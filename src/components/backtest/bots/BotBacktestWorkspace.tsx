@@ -92,7 +92,7 @@ export function BotBacktestWorkspace() {
   }, [sessions, sessionActiveId]);
 
   // ─── Paramètres de configuration du Bot ─────────────────────────────────
-  const [palierTPVise, setPalierTPVise] = useState<'AUTO' | 'TP1' | 'TP2' | 'TP3'>('AUTO');
+  const [palierTPVise, setPalierTPVise] = useState<'AUTO' | 'TP1' | 'TP2' | 'TP3'>('TP1');
   const [typeChevauchement, setTypeChevauchement] = useState<TypeChevauchementUOP>('PONDERE');
   const [capitalInitial, setCapitalInitial] = useState<number>(10000);
   const [risquePourcent, setRisquePourcent] = useState<number>(1.0);

@@ -195,7 +195,91 @@ export function parserCsvPrix(contenuTextuel: string): Bougie[] {
     throw new Error("Aucune bougie valide n'a pu être extraite du fichier.");
   }
 
-  console.log(`✅ [CSV Parser] ${resultats.length} bougies parsées avec succès.`);
+  // Garantir le tri chronologique strict et l'absence de doublons non consécutifs
+  const bougiesPropres = nettoyerEtTrierBougies(resultats);
+
+  console.log(`✅ [CSV Parser] ${bougiesPropres.length} bougies parsées avec succès.`);
+  return bougiesPropres;
+}
+
+/**
+ * Convertit le champ `time` d'une bougie (nombre ou chaîne de date) en timestamp Unix (secondes).
+ *
+ * Exemple :
+ * const ts = extraireTimestampSecondes(1577664000); // 1577664000
+ */
+export function extraireTimestampSecondes(temps: number | string): number {
+  if (typeof temps === 'number') {
+    return temps;
+  }
+  const ms = Date.parse(temps);
+  return isNaN(ms) ? 0 : Math.floor(ms / 1000);
+}
+
+/**
+ * Garantit qu'une liste de bougies est strictement triée par ordre chronologique croissant
+ * et fusionne les éventuels doublons de timestamp (ex: bougie W1 ou D1 à cheval sur deux années).
+ * Indispensable pour éviter l'erreur Lightweight Charts : "data must be asc ordered by time".
+ *
+ * Exemple :
+ * const bougiesPropres = nettoyerEtTrierBougies(bougiesBrutes);
+ */
+export function nettoyerEtTrierBougies(bougies: Bougie[]): Bougie[] {
+  if (!bougies || bougies.length <= 1) {
+    return bougies || [];
+  }
+
+  // 1️⃣ Vérifier en un seul passage si le tableau est déjà strictement croissant
+  let estDejaStrictementCroissant = true;
+  let estTrieAvecDoublons = true;
+  let tempsPrecedent = extraireTimestampSecondes(bougies[0].time);
+
+  for (let i = 1; i < bougies.length; i++) {
+    const tempsActuel = extraireTimestampSecondes(bougies[i].time);
+    if (tempsActuel <= tempsPrecedent) {
+      estDejaStrictementCroissant = false;
+      if (tempsActuel < tempsPrecedent) {
+        estTrieAvecDoublons = false;
+        break;
+      }
+    }
+    tempsPrecedent = tempsActuel;
+  }
+
+  // Si tout est déjà strictement croissant, on retourne le tableau tel quel sans copie inutile
+  if (estDejaStrictementCroissant) {
+    return bougies;
+  }
+
+  // 2️⃣ Si l'ordre chronologique n'est pas respecté, on trie une copie du tableau
+  const listeTriee = estTrieAvecDoublons
+    ? bougies
+    : [...bougies].sort((a, b) => extraireTimestampSecondes(a.time) - extraireTimestampSecondes(b.time));
+
+  // 3️⃣ Fusion des bougies ayant exactement le même timestamp (ex: semaine à cheval entre fin 2019 et début 2020)
+  const resultats: Bougie[] = [];
+  let dernierTemps = -Infinity;
+
+  for (let i = 0; i < listeTriee.length; i++) {
+    const bougie = listeTriee[i];
+    const temps = extraireTimestampSecondes(bougie.time);
+    if (!temps || isNaN(temps)) continue;
+
+    if (temps === dernierTemps && resultats.length > 0) {
+      // Fusion OHLC : on conserve l'ouverture initiale et la dernière clôture
+      const precedente = resultats[resultats.length - 1];
+      resultats[resultats.length - 1] = {
+        ...precedente,
+        high: Math.max(precedente.high, bougie.high),
+        low: Math.min(precedente.low, bougie.low),
+        close: bougie.close,
+      };
+    } else if (temps > dernierTemps) {
+      resultats.push(bougie);
+      dernierTemps = temps;
+    }
+  }
+
   return resultats;
 }
 
@@ -208,9 +292,9 @@ const cacheAgregationMTF = new Map<string, Bougie[]>();
  * Utilise un cache mémoïsé ultra-rapide pour des performances maximales.
  */
 export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): Bougie[] {
-  // 1 minute : pas d'agrégation nécessaire
+  // 1 minute : pas d'agrégation nécessaire, mais on s'assure de l'ordre strict sans doublons
   if (timeframeSuperior === '1m' || timeframeSuperior === 'M1') {
-    return bougiesM1;
+    return nettoyerEtTrierBougies(bougiesM1);
   }
 
   if (!bougiesM1 || bougiesM1.length === 0) {

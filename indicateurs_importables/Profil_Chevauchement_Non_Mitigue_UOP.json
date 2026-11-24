@@ -29,12 +29,12 @@
   "definitionsVariables": [
     {
       "cle": "zigzagDepth",
-      "label": "Sensibilité Pivots ZigZag",
-      "description": "Nombre de bougies de confirmation à gauche et à droite pour délimiter les sommets et creux",
+      "label": "Sensibilité Pivots ZigZag (1 à 8)",
+      "description": "Nombre de bougies de confirmation à gauche et à droite pour délimiter les sommets et creux (1 = micro-vagues, 8 = grandes vagues)",
       "type": "number",
       "valeurParDefaut": 8,
-      "min": 2,
-      "max": 50,
+      "min": 1,
+      "max": 8,
       "step": 1,
       "groupe": "Structure ZigZag"
     },

@@ -213,7 +213,11 @@ bool EvaluerDojiCompletUniqueSMC(
    int seuilScoreGrandMouvement,
    double pointSymbole,
    int digitsSymbole,
-   SetupOrchestreSMC_MT5 &setupSortie
+   SetupOrchestreSMC_MT5 &setupSortie,
+   bool activerTPCibleLiquiditeSR = false,
+   ENUM_COMPORTEMENT_ABSENCE_SR comportementAbsenceSR = ABSENCE_SR_REPLI_UOP,
+   double tauxMinChevauchementTrajetSR = 1.5,
+   double couvertureMinTrajetSRPct = 70.0
 )
 {
    ZeroMemory(setupSortie);
@@ -277,19 +281,22 @@ bool EvaluerDojiCompletUniqueSMC(
       aMeilleureZone, meilleureZone, zigzagDepthMin, zigzagDepthMax, scoreZZ
    );
 
-   int depthActif = activerZigZagDynamique ? scoreZZ.zigzagDepthRetenu : zigzagDepthSecours;
+   int depthActif    = activerZigZagDynamique ? scoreZZ.zigzagDepthRetenu : zigzagDepthSecours;
+   int nbVaguesActif = activerZigZagDynamique ? scoreZZ.nbVaguesSuperposeesRetenu : nbVaguesSuperposees;
 
-   // 4️⃣ Profil UOP
+   // 4️⃣ Profil UOP (Verrouillé à la 3ème bougie de confirmation)
+   int indexHorizonVerrouillage = MathMin(totalBougies - 1, indexDoji + nbBougiesConfirmation);
+
    PalierUOPCandidatSMC paliersCandidats[];
    int nbPaliers = CalculerPaliersUOPSMC(
-      bougies, indexDoji, doji.type, prixEntree, depthActif, nbVaguesSuperposees,
+      bougies, indexHorizonVerrouillage, doji.type, prixEntree, depthActif, nbVaguesActif,
       typeChevauchementUOP, poidsCorpsUOP, poidsMecheUOP, scoreZZ, paliersCandidats
    );
 
-   if(nbPaliers == 0 && depthActif != zigzagDepthSecours)
+   if(nbPaliers == 0 && depthActif != 2)
    {
       nbPaliers = CalculerPaliersUOPSMC(
-         bougies, indexDoji, doji.type, prixEntree, zigzagDepthSecours, nbVaguesSuperposees,
+         bougies, indexHorizonVerrouillage, doji.type, prixEntree, 2, 2,
          typeChevauchementUOP, poidsCorpsUOP, poidsMecheUOP, scoreZZ, paliersCandidats
       );
    }
@@ -366,6 +373,28 @@ bool EvaluerDojiCompletUniqueSMC(
          double multSecours = viserGrand ? 2.5 : 1.5;
          prixTP  = estAchat ? (prixEntree + distanceSL * multSecours) : (prixEntree - distanceSL * multSecours);
          ordreTP = viserGrand ? 2 : 1;
+      }
+   }
+
+   // 🧲 [OPTIONNEL] Cible de Liquidité S/R Actif (non cassé) + Trajet Chevauchement UOP
+   if(activerTPCibleLiquiditeSR)
+   {
+      int ordreCibleSR = (palierTPVise == PALIER_TP3) ? 3 : ((palierTPVise == PALIER_TP2) ? 2 : 1);
+      double prixCibleSR = 0.0;
+      bool aTrouveSR = TrouverCibleLiquiditeSRAvecChevauchementSMC(
+         toutesLesZonesShved, totalZonesShved, bougies, indexHorizonVerrouillage,
+         doji.type, prixEntree, paliersCandidats, nbPaliers,
+         tauxMinChevauchementTrajetSR, couvertureMinTrajetSRPct, ordreCibleSR, prixCibleSR
+      );
+
+      if(aTrouveSR && prixCibleSR > 0.0)
+      {
+         prixTP  = prixCibleSR;
+         ordreTP = ordreCibleSR;
+      }
+      else if(comportementAbsenceSR == ABSENCE_SR_REJETER_SETUP)
+      {
+         return false; // Mode strict : aucun S/R actif avec trajet de chevauchement valide ➔ Rejet du setup
       }
    }
 

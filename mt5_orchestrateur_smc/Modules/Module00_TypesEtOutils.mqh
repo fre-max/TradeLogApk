@@ -64,6 +64,13 @@ enum ENUM_TYPE_CHEVAUCHEMENT_UOP
    UOP_CORPS_ET_MECHES = 2  // Bougie entière (High..Low = 1.0)
 };
 
+// Comportement lorsqu'aucun Support/Résistance actif avec trajet de chevauchement valide n'est trouvé
+enum ENUM_COMPORTEMENT_ABSENCE_SR
+{
+   ABSENCE_SR_REPLI_UOP     = 0, // Repli sur le TP UOP normal (Souple)
+   ABSENCE_SR_REJETER_SETUP = 1  // Rejeter le setup (Strict - S/R obligatoire)
+};
+
 // Statut de confirmation du setup (après observation des N bougies de confirmation)
 enum ENUM_STATUT_SETUP_SMC
 {
@@ -199,19 +206,22 @@ struct PivotZigZagSMC
 };
 
 /**
- * 🌊 Détails du Score de Liquidation (/100) pilotant le ZigZag Dynamique (depth 4 à 20)
+ * 🌊 Détails du Score de Prise de Liquidité (/100) pilotant la Boîte à 3 Vitesses ZigZag & UOP
  */
 struct DetailsScoreLiquidationZigZagSMC
 {
-   int            scoreTotal;               // Score sur 100 (Cassure /40 + Bougie&Zone /30 + Retests /30)
-   int            pointsProfondeurCassure;  // Sur 40 pts
-   int            pointsTailleBougieEtZone; // Sur 30 pts
-   int            pointsRetestsSR;          // Sur 30 pts (pondéré par les collines)
+   int            scoreTotal;               // Score sur 100 (Collines /50 + S/R /25 + Mèche /25)
+   int            pointsProfondeurCassure;  // Sur 25 pts (profondeur mèche)
+   int            pointsTailleBougieEtZone; // Sur 25 pts (durée de vie / force S/R)
+   int            pointsRetestsSR;          // Sur 50 pts (collines de retest)
    double         ratioProfondeurATR;
    double         ratioTailleBougieATR;
    double         ratioEpaisseurZoneATR;
    int            nombreRetests;
-   int            zigzagDepthRetenu;        // Taille dynamique des vagues ZigZag (entre 4 et 20)
+   int            vitesseRetenue;           // 1 = Micro-vagues, 2 = Vagues Moyennes, 3 = Grandes Vagues
+   int            zigzagDepthRetenu;        // Finesse dynamique du ZigZag (2-3, 5-7 ou 9-14+)
+   int            nbVaguesSuperposeesRetenu;// Nombre de vagues superposées (2, 3 ou 4)
+   bool           plafondDerniereVagueActif;// Garde-fou actif en Vitesse 1 (< 40 pts)
    int            nbPivots;
    PivotZigZagSMC pivots[MAX_PIVOTS_ZIGZAG];
 };

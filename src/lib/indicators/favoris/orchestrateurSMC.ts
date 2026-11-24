@@ -21,6 +21,8 @@ import {
   calculerUnmitigatedOverlapProfile,
   type ResultatUOP,
   type TPOptimalUOP,
+  type PalierSuperpositionVagues,
+  type VagueOverlapProfile,
 } from './unmitigatedOverlapProfile';
 
 /**
@@ -394,7 +396,7 @@ export interface ParametresOrchestrateurSMC {
 
   // ─── 🚀 Moteur d'Énergie & Coût des Péages UOP (Variables Externes Réglables) ───
   modeCalculTP?: 'STANDARD_SHVED' | 'ENERGIE_FRICTION'; // Méthode de calcul du TP optimal (défaut: 'ENERGIE_FRICTION')
-  palierTPVise?: 'AUTO' | 'TP1' | 'TP2' | 'TP3'; // Choix forcé du palier TP ('AUTO', 'TP1', 'TP2', 'TP3') (défaut: 'AUTO')
+  palierTPVise?: 'TP1' | 'TP2' | 'TP3' | 'AUTO'; // Choix forcé ou dynamique du palier TP (défaut: 'TP1')
   peagePalierUOP?: number;               // [COND-FRICTION-02] Forfait en points de carburant pour franchir un palier UOP (défaut: 100)
   coutParATR?: number;                   // [COND-FRICTION-01] Consommation de base en points de carburant par unité d'ATR parcourue (défaut: 50)
   coutFrictionFortOverlap?: number;      // [COND-FRICTION-01] Multiplicateur de coût en zone à Fort Overlap / autoroute (défaut: 0.5)
@@ -426,6 +428,12 @@ export interface ParametresOrchestrateurSMC {
   activerFiltrePlageTP?: boolean;        // [COND-PLAGE-TP-01] Exige que le Doji soit l'extrême absolu de toute la plage entre la bougie contenant le TP et le Doji (défaut: true)
   maxReculPlageTP?: number;              // Nombre max de bougies de recul pour trouver la bougie contenant le prix du TP (défaut: 100)
 
+  // ─── 🧲 Cible de Liquidité S/R Actif (Non Cassé) + Trajet Chevauchement UOP ───
+  activerTPCibleLiquiditeSR?: boolean;   // Active la recherche d'un Support/Résistance actif (non cassé) en face comme TP si tout le trajet a un bon chevauchement (défaut: false)
+  comportementAbsenceSR?: 'REPLI_TP_UOP' | 'REJETER_SETUP'; // Choix si aucun S/R actif n'est joignable : 'REPLI_TP_UOP' (garde le TP UOP) ou 'REJETER_SETUP' (filtre strict)
+  tauxMinChevauchementTrajetSR?: number; // Taux moyen minimum de bougies de chevauchement requis sur tout le trajet vers le S/R cible (défaut: 1.5)
+  couvertureMinTrajetSRPourcent?: number;// Pourcentage minimum du trajet vers le S/R devant être couvert par du chevauchement (défaut: 70%)
+
   // ─── 🕯️ Traitement Anatomique des Bougies UOP (Corps vs Mèches) ───
   typeChevauchementUOP?: 'PONDERE' | 'CORPS_SEUL' | 'CORPS_ET_MECHES'; // Traitement anatomique du chevauchement dans l'UOP (défaut: 'PONDERE')
   poidsCorpsUOP?: number;               // Poids attribué au corps de la bougie (défaut: 1.0)
@@ -437,6 +445,7 @@ export interface ParametresOrchestrateurSMC {
   afficherPointsLiquidation?: boolean;   // Affiche le badge compact des points de liquidité captés sur le Doji (défaut: true)
   afficherSegmentSR?: boolean;           // Segment discontinu du S/R Shved balayé (défaut: true)
   afficherPaliersUOP?: boolean;          // Micro-segments pointillés très fins pour chaque palier d'overlap UOP rencontré (défaut: true)
+  afficherProfilVolumeUOP?: boolean;     // 📊 Affiche l'histogramme Volume Profile des chevauchements ayant déterminé le TP (défaut: true)
   afficherSegmentSL?: boolean;           // Micro-segment court pour le Stop Loss (défaut: true)
   afficherSegmentTP?: boolean;           // Micro-segment court pour le Take Profit (défaut: true)
   dureeSegmentsCibles?: number;          // Nombre de bougies de longueur pour les segments SL/TP/Paliers (défaut: 3)
@@ -495,22 +504,26 @@ export interface DetailsCarburantLiquidation {
 }
 
 /**
- * 🌊 Détails du Score d'Ampleur de Liquidation (sur 100 points) servant à régler
- * dynamiquement la taille des vagues ZigZag (entre depthMin=4 et depthMax=20)
- * pour la détermination du Take Profit UOP.
+ * 🌊 Détails du Score de Prise de Liquidité (sur 100 points) et de la Boîte de Vitesses (3 vitesses)
+ * servant à régler dynamiquement le ZigZag et l'indicateur UOP pour un TP1 sur-mesure.
  */
 export interface DetailsScoreLiquidationZigZag {
-  scoreTotal: number;               // Score final sur 100 points (Profondeur /40 + Taille /30 + Retests /30)
-  pointsProfondeurCassure: number;  // Sur 40 pts : profondeur de cassure du S/R comparée à l'ATR
-  pointsTailleBougieEtZone: number; // Sur 30 pts : amplitude de la bougie de liquidation + épaisseur zone S/R
-  pointsRetestsSR: number;          // Sur 30 pts : nombre de retests accumulés sur le S/R avant cassure
+  scoreTotal: number;               // Score final sur 100 points (Retests/Collines /50 + Durée S/R /25 + Mèche /25)
+  pointsProfondeurCassure: number;  // Sur 25 pts : profondeur de la mèche de balayage comparée à l'ATR
+  pointsTailleBougieEtZone: number; // Sur 25 pts : durée de vie du S/R (ou force bougie + zone)
+  pointsRetestsSR: number;          // Sur 50 pts : nombre et qualité des collines de retest avant cassure
   ratioProfondeurATR: number;       // Profondeur de la cassure / ATR moyen
   ratioTailleBougieATR: number;     // Taille de la bougie de liquidation / ATR moyen
   ratioEpaisseurZoneATR: number;    // Épaisseur de la zone S/R / ATR moyen
-  nombreRetests: number;            // Nombre de retests du S/R
-  zigzagDepthRetenu: number;        // Taille du ZigZag calculée dynamiquement (entre 4 et 20)
-  zigzagDepthMin: number;           // Borne minimale (défaut: 4)
-  zigzagDepthMax: number;           // Borne maximale (défaut: 20)
+  dureeVieBougiesSR?: number;       // Âge en bougies du niveau S/R au moment de la liquidation
+  nombreRetests: number;            // Nombre de vrais retests du S/R
+  vitesseRetenue: 1 | 2 | 3;        // Vitesse automatique (1 = Micro-vagues, 2 = Moyennes, 3 = Grandes)
+  zigzagDepthRetenu: number;        // Finesse du ZigZag retenue (ex: 2-3 en Vitesse 1, 5-7 en Vitesse 2, 9-14+ en Vitesse 3)
+  zigzagBackstepRetenu: number;     // Backstep ZigZag retenu (1 en Vitesse 1, 2 en Vitesse 2, 3 en Vitesse 3)
+  nbVaguesSuperposeesRetenu: number;// Nombre de vagues superposées UOP (2 en Vitesse 1, 3 en Vitesse 2, 4 en Vitesse 3)
+  plafondDerniereVagueActif: boolean;// Garde-fou actif en Vitesse 1 (< 40 pts) : confine le TP1 dans la dernière petite vague
+  zigzagDepthMin: number;           // Borne minimale (défaut: 2)
+  zigzagDepthMax: number;           // Borne maximale (défaut: 14)
   categorieVagues: 'PETITES_VAGUES' | 'VAGUES_MOYENNES' | 'GRANDES_VAGUES';
   resumeExplication: string;        // Explication claire en français affichée sur le graphique
   pivotsZigZag?: { index: number; temps: number | string; prix: number; type: 'HIGH' | 'LOW' }[]; // Pivots ZigZag retenus pour le tracé diagnostic
@@ -543,6 +556,8 @@ export interface SetupOrchestreSMC {
   // Validation du Range (les 3 bougies)
   bougiesObservees: number;     // Nombre de bougies écoulées après le Doji
   bougieInvalidationIndex?: number; // Index de la bougie ayant invalidé le SL si annulé
+  indexConfirmation?: number;   // Index de la 3ème bougie de confirmation où le TP est verrouillé
+  tempsConfirmation?: number | string; // Date de la 3ème bougie de confirmation
 
   // Cible Take Profit Optimal (UOP)
   prixTP?: number;              // Prix cible du Take Profit
@@ -563,8 +578,19 @@ export interface SetupOrchestreSMC {
   detailsScoreLiquidationZigZag?: DetailsScoreLiquidationZigZag; // 🌊 Score /100 de liquidation et réglage dynamique du ZigZag
   tousPaliersUOPCandidats?: TPOptimalUOP[]; // Tous les paliers UOP candidats disponibles
 
+  // 📊 Données du Profil de Chevauchement ("Volume Profile UOP") ayant déterminé le TP
+  stepUOP?: number;             // Pas de prix de chaque barre horizontale du profil
+  seuilBleuFonceUOP?: number;   // Seuil de bougies pour qualifier une barre dense ("bleu foncé")
+  paliersSuperpositionUOP?: PalierSuperpositionVagues[]; // Barres horizontales cumulées du profil de chevauchement
+  vaguesSuperposeesUOP?: VagueOverlapProfile[];          // Les N vagues ZigZag (2, 3 ou 4) utilisées pour ce profil
+  borneDernierePetiteVague?: number;                     // 🛡️ Plafond/Plancher Garde-Fou de la dernière petite vague (Vitesse 1)
+
   // 🎯 Filtre Plage Temporelle TP UOP
   infoPlageTP?: InfoValidationPlageTP; // Détails de validation de la plage temporelle du TP
+
+  // 🧲 Cible de Liquidité S/R Actif (Non Cassé) avec Trajet de Chevauchement validé
+  cibleLiquiditeSR?: InfoCibleLiquiditeSR; // Support ou Résistance actif retenu comme Take Profit
+  toutesCiblesSRAnalysees?: InfoCibleLiquiditeSR[]; // Tous les S/R actifs en face analysés avec leur taux de chevauchement
 
   // Cycle de vie post-confirmation
   estTermine: boolean;          // Vrai si le TP ou le SL a été touché par la suite
@@ -588,6 +614,174 @@ export interface ResultatOrchestrateurSMC {
     totalVentesConfirmees: number;
     ratioMoyenRR: number;
     tauxReussiteTP: number;      // % de trades gagnants parmi les terminés
+  };
+}
+
+// ─── 🧲 CIBLE DE LIQUIDITÉ S/R ACTIF + TRAJET DE CHEVAUCHEMENT UOP ───────────
+
+/**
+ * Détails d'un Support ou d'une Résistance actif (non cassé) évalué comme cible de Take Profit
+ * avec vérification du taux de chevauchement UOP sur tout le trajet [Entrée ➔ S/R].
+ */
+export interface InfoCibleLiquiditeSR {
+  zone: ZoneShved;
+  prixCible: number;
+  distancePoints: number;
+  tauxMoyenChevauchementTrajet: number;
+  pourcentageTrajetCouvert: number;
+  estTrajetValide: boolean;
+  motif: string;
+}
+
+/**
+ * Recherche les Supports (en VENTE) ou Résistances (en ACHAT) toujours actifs (non cassés)
+ * situés en face du prix d'entrée, et vérifie pour chacun si tout le trajet [prixEntree ➔ S/R]
+ * possède un bon taux de chevauchement dans le profil UOP.
+ * 
+ * Exemple :
+ * const resSR = trouverCiblesLiquiditeSRAvecChevauchement({
+ *   toutesLesZonesShved, bougies, indexHorizon: 45, typeSetup: 'ACHAT',
+ *   prixEntree: 1.0850, paliersSuperposition: uop.paliersSuperposition, stepUOP: uop.step,
+ *   tauxMinChevauchementTrajet: 1.5, couvertureMinPourcent: 70
+ * });
+ */
+export function trouverCiblesLiquiditeSRAvecChevauchement(options: {
+  toutesLesZonesShved: ZoneShved[];
+  bougies: Bougie[];
+  indexHorizon: number;
+  typeSetup: 'ACHAT' | 'VENTE';
+  prixEntree: number;
+  paliersSuperposition: PalierSuperpositionVagues[];
+  stepUOP: number;
+  tauxMinChevauchementTrajet: number;
+  couvertureMinPourcent: number;
+  borneMaxVitesse1?: number;
+}): {
+  ciblesValides: InfoCibleLiquiditeSR[];
+  toutesCiblesAnalysees: InfoCibleLiquiditeSR[];
+} {
+  const {
+    toutesLesZonesShved,
+    bougies,
+    indexHorizon,
+    typeSetup,
+    prixEntree,
+    paliersSuperposition,
+    stepUOP,
+    tauxMinChevauchementTrajet,
+    couvertureMinPourcent,
+    borneMaxVitesse1,
+  } = options;
+
+  const estAchat = typeSetup === 'ACHAT';
+  const toutesCiblesAnalysees: InfoCibleLiquiditeSR[] = [];
+  const pasSecurise = Math.max(0.00001, stepUOP || 0.0001);
+
+  for (const zone of toutesLesZonesShved) {
+    // 1️⃣ Filtrer selon la direction : en ACHAT on vise une RESISTANCE en haut, en VENTE un SUPPORT en bas
+    if (estAchat && zone.type !== 'RESISTANCE') continue;
+    if (!estAchat && zone.type !== 'SUPPORT') continue;
+
+    // 2️⃣ La zone doit exister avant ou au moment de la confirmation (pas de fuite du futur)
+    const indexNaissance = zone.indexOrigine ?? 0;
+    if (indexNaissance > indexHorizon) continue;
+
+    // 3️⃣ Déterminer le niveau de prix cible du S/R (entrée du mur de liquidité)
+    const prixCible = estAchat
+      ? (zone.prixBas > prixEntree ? zone.prixBas : zone.prixMedian)
+      : (zone.prixHaut < prixEntree ? zone.prixHaut : zone.prixMedian);
+
+    // La cible doit être devant le prix d'entrée
+    if (estAchat && prixCible <= prixEntree) continue;
+    if (!estAchat && prixCible >= prixEntree) continue;
+
+    // Respect éventuel du plafond/plancher de Vitesse 1 (petite liquidité)
+    if (borneMaxVitesse1 !== undefined) {
+      if (estAchat && prixCible > borneMaxVitesse1) continue;
+      if (!estAchat && prixCible < borneMaxVitesse1) continue;
+    }
+
+    // 4️⃣ Vérifier que le Support / Résistance est TOUJOURS ACTIF (non cassé jusqu'à indexHorizon)
+    let estCasse = false;
+    const finVerif = Math.min(indexHorizon, bougies.length - 1);
+    for (let k = indexNaissance + 1; k <= finVerif; k++) {
+      const b = bougies[k];
+      if (!b) continue;
+      // Une résistance est cassée si une bougie clôture au-dessus de son prixHaut
+      if (estAchat && b.close > zone.prixHaut) {
+        estCasse = true;
+        break;
+      }
+      // Un support est cassé si une bougie clôture en dessous de son prixBas
+      if (!estAchat && b.close < zone.prixBas) {
+        estCasse = true;
+        break;
+      }
+    }
+    if (estCasse) continue;
+
+    // 5️⃣ Vérifier le taux de chevauchement UOP sur TOUT LE TRAJET [prixEntree ➔ prixCible]
+    const minTrajet = Math.min(prixEntree, prixCible);
+    const maxTrajet = Math.max(prixEntree, prixCible);
+    const distancePoints = maxTrajet - minTrajet;
+
+    const nbPas = Math.max(1, Math.round(distancePoints / pasSecurise));
+    let sommeTauxSurTrajet = 0;
+    let nbPasCouverts = 0;
+    const tolerancePrix = pasSecurise * 0.85;
+
+    for (let i = 0; i <= nbPas; i++) {
+      const prixEchantillon = nbPas === 0
+        ? minTrajet
+        : minTrajet + (i / nbPas) * distancePoints;
+
+      // Recherche de la barre du profil de chevauchement couvrant ce prix
+      let meilleurTauxPas = 0;
+      let ecartMin = Infinity;
+      for (const palier of paliersSuperposition) {
+        const ecart = Math.abs(palier.prix - prixEchantillon);
+        if (ecart <= tolerancePrix && ecart < ecartMin) {
+          ecartMin = ecart;
+          meilleurTauxPas = palier.sommeBougies;
+        }
+      }
+
+      sommeTauxSurTrajet += meilleurTauxPas;
+      if (meilleurTauxPas >= 1) {
+        nbPasCouverts++;
+      }
+    }
+
+    const totalEchantillons = nbPas + 1;
+    const tauxMoyenChevauchementTrajet = Number((sommeTauxSurTrajet / totalEchantillons).toFixed(2));
+    const pourcentageTrajetCouvert = Number(((nbPasCouverts / totalEchantillons) * 100).toFixed(1));
+
+    const estTrajetValide =
+      tauxMoyenChevauchementTrajet >= tauxMinChevauchementTrajet &&
+      pourcentageTrajetCouvert >= couvertureMinPourcent;
+
+    const motif = estTrajetValide
+      ? `✅ Cible S/R active validée (${zone.type} @ ${prixCible.toFixed(5)} · trajet couvert à ${pourcentageTrajetCouvert}% · chevauchement moy. ${tauxMoyenChevauchementTrajet}b)`
+      : `❌ Trajet vers S/R insuffisant (couvert à ${pourcentageTrajetCouvert}% < ${couvertureMinPourcent}% ou moy. ${tauxMoyenChevauchementTrajet}b < ${tauxMinChevauchementTrajet}b)`;
+
+    toutesCiblesAnalysees.push({
+      zone,
+      prixCible,
+      distancePoints,
+      tauxMoyenChevauchementTrajet,
+      pourcentageTrajetCouvert,
+      estTrajetValide,
+      motif,
+    });
+  }
+
+  // Trier par distance croissante depuis le prix d'entrée (le S/R actif le plus proche est TP1)
+  toutesCiblesAnalysees.sort((a, b) => a.distancePoints - b.distancePoints);
+  const ciblesValides = toutesCiblesAnalysees.filter((c) => c.estTrajetValide);
+
+  return {
+    ciblesValides,
+    toutesCiblesAnalysees,
   };
 }
 
@@ -861,19 +1055,24 @@ export function calculerCarburantLiquidation(options: {
 }
 
 /**
- * Calcule le Score d'Ampleur de Liquidation (sur 100 points) pour régler dynamiquement
- * la taille des vagues ZigZag (`zigzagDepth` entre `zigzagDepthMin=4` et `zigzagDepthMax=20`).
+ * Calcule le Score de Prise de Liquidité (sur 100 points) et pilote la Boîte de Vitesses (3 vitesses)
+ * pour adapter le ZigZag et le nombre de vagues superposées dans l'UOP.
  *
  * Pourquoi cette fonction existe :
- * Au lieu d'utiliser une valeur fixe de ZigZag (ex: 8), on adapte la taille des vagues UOP
- * à la quantité réelle de liquidité que le marché a récupérée :
- *   - Si la cassure du S/R est profonde, avec une grande bougie et plusieurs retests ➔ Score élevé ➔ Grandes vagues ZigZag (TP ambitieux).
- *   - Si la liquidité récupérée est faible ➔ Score bas ➔ Petites vagues ZigZag (TP prudent et réaliste).
+ * Plus un Support/Résistance a accumulé d'ordres (retests avec collines, ancienneté, mèche profonde),
+ * plus le marché a de carburant pour parcourir de grandes vagues. À l'inverse, sur une petite prise
+ * de liquidité locale, le ZigZag doit zoomer sur des micro-vagues (depth 2-3, 2 vagues max) pour
+ * proposer un TP1 court, réaliste et atteignable.
  *
- * Barème sur 100 points (3 piliers validés) :
- *   1️⃣ Pilier 1 — Profondeur de la cassure au-delà du S/R (sur 40 points)
- *   2️⃣ Pilier 2 — Taille de la bougie de liquidation & Épaisseur de la zone S/R (sur 30 points)
- *   3️⃣ Pilier 3 — Nombre de retests du S/R avant la cassure (sur 30 points)
+ * Barème sur 100 points (3 critères) :
+ *   1️⃣ Critère 1 — Retests et Collines du S/R (sur 50 points : 0=0pt, 1=15pts, 2=30pts, 3+=50pts)
+ *   2️⃣ Critère 2 — Durée de vie / Importance du S/R (sur 25 points : <15b=5pts, 15-40b=15pts, >40b=25pts)
+ *   3️⃣ Critère 3 — Profondeur du Balayage / Mèche (sur 25 points : <0.4x ATR=5pts, 0.4-1.0x=15pts, >1.0x=25pts)
+ *
+ * Boîte de Vitesses Automatique :
+ *   🟢 Vitesse 1 (0 à 39 pts)  ➔ Micro-Vagues (depth 2-3, backstep 1, 2 vagues max, garde-fou dernière vague)
+ *   🟡 Vitesse 2 (40 à 69 pts) ➔ Vagues Moyennes (depth 5-7, backstep 2, 3 vagues)
+ *   🔥 Vitesse 3 (70 à 100 pts)➔ Grandes Vagues (depth 9-14+, backstep 3, 4 vagues)
  *
  * Exemple d'utilisation :
  * const scoreZigZag = calculerScoreLiquidationZigZag({
@@ -882,11 +1081,10 @@ export function calculerCarburantLiquidation(options: {
  *   amplitudeBougieSweep: 0.0032,
  *   epaisseurZoneSR: 0.0012,
  *   nombreRetests: 3,
- *   zigzagDepthMin: 4,
- *   zigzagDepthMax: 20,
+ *   dureeVieBougiesSR: 45,
  * });
- * console.log(scoreZigZag.scoreTotal); // 95
- * console.log(scoreZigZag.zigzagDepthRetenu); // 19 (Grandes vagues)
+ * console.log(scoreZigZag.scoreTotal); // 100
+ * console.log(scoreZigZag.vitesseRetenue); // 3 (Grandes Vagues)
  */
 export function calculerScoreLiquidationZigZag(options: {
   profondeurMeche: number;
@@ -895,111 +1093,122 @@ export function calculerScoreLiquidationZigZag(options: {
   epaisseurZoneSR: number;
   nombreRetests: number;
   collinesRetests?: DetailCollineRetest[];
+  dureeVieBougiesSR?: number;
   zigzagDepthMin?: number;
   zigzagDepthMax?: number;
 }): DetailsScoreLiquidationZigZag {
   // 1️⃣ Sécurisation des valeurs d'entrée pour éviter toute division par zéro
   const atrSecurise = Math.max(0.00001, options.hauteurMoyenne);
-  const depthMin = Math.max(2, Math.round(options.zigzagDepthMin ?? 4));
-  const depthMax = Math.max(depthMin + 1, Math.round(options.zigzagDepthMax ?? 20));
+  const depthMin = Math.max(1, Math.round(options.zigzagDepthMin ?? 1));
+  const depthMax = Math.max(depthMin + 1, Math.round(options.zigzagDepthMax ?? 8));
   const nbRetests =
     options.collinesRetests !== undefined
       ? options.collinesRetests.length
       : Math.max(0, Math.round(options.nombreRetests));
 
-  // Calcul des ratios par rapport à la taille moyenne des bougies (ATR)
+  // Calcul des ratios de la liquidation (notre Doji personnalisé) par rapport à la moyenne des bougies (ATR)
   const ratioProfondeurATR = Number((Math.max(0, options.profondeurMeche) / atrSecurise).toFixed(2));
   const ratioTailleBougieATR = Number((Math.max(0, options.amplitudeBougieSweep) / atrSecurise).toFixed(2));
   const ratioEpaisseurZoneATR = Number((Math.max(0, options.epaisseurZoneSR) / atrSecurise).toFixed(2));
 
-  // 2️⃣ PILIER 1 : Profondeur de la cassure au-delà du S/R (sur 40 points max)
-  // Plus le marché plonge profondément derrière le S/R pour chasser les stops, plus il gagne de points
+  // 2️⃣ CRITÈRE 1 : Retests et Collines du S/R avant la cassure (sur 50 points max — Critère Roi 👑)
+  let pointsRetestsSR = 0;
+  if (options.collinesRetests !== undefined) {
+    const nbCollines = options.collinesRetests.length;
+    const aCollineMajeure = options.collinesRetests.some((c) => c.qualite === 'MAJEURE');
+    const aCollineSolide = options.collinesRetests.some((c) => c.qualite === 'SOLIDE');
+
+    if (nbCollines >= 3 || (nbCollines === 2 && aCollineMajeure)) {
+      pointsRetestsSR = 50;
+    } else if (nbCollines === 2) {
+      pointsRetestsSR = 30;
+    } else if (nbCollines === 1) {
+      pointsRetestsSR = aCollineMajeure ? 30 : aCollineSolide ? 20 : 15;
+    } else {
+      pointsRetestsSR = 0;
+    }
+  } else {
+    if (nbRetests >= 3) {
+      pointsRetestsSR = 50;
+    } else if (nbRetests === 2) {
+      pointsRetestsSR = 30;
+    } else if (nbRetests === 1) {
+      pointsRetestsSR = 15;
+    } else {
+      pointsRetestsSR = 0;
+    }
+  }
+
+  // 3️⃣ CRITÈRE 2 : Taille de la Liquidation (notre Doji personnalisé) & Force du S/R (sur 25 points max 🕯️)
+  let pointsTailleBougieEtZone = 5;
+  if (ratioTailleBougieATR >= 1.8 || (options.dureeVieBougiesSR !== undefined && options.dureeVieBougiesSR > 40)) {
+    pointsTailleBougieEtZone = 25; // Grand Doji de liquidation (>= 1.8x ATR) ou S/R majeur
+  } else if (ratioTailleBougieATR >= 1.2 || ratioEpaisseurZoneATR >= 0.4 || (options.dureeVieBougiesSR !== undefined && options.dureeVieBougiesSR >= 15)) {
+    pointsTailleBougieEtZone = 15; // Doji de liquidation moyen (1.2x à 1.8x ATR)
+  } else {
+    pointsTailleBougieEtZone = 5;  // Petit Doji de liquidation (< 1.2x ATR)
+  }
+
+  // 4️⃣ CRITÈRE 3 : Profondeur de la Mèche de Liquidation du Doji (sur 25 points max ⚡)
   let pointsProfondeurCassure = 5;
-  if (ratioProfondeurATR >= 1.2) {
-    pointsProfondeurCassure = 40; // Plongeon institutionnel massif (> 1.2x ATR)
-  } else if (ratioProfondeurATR >= 0.8) {
-    pointsProfondeurCassure = 34; // Plongeon profond (0.8x à 1.2x ATR)
-  } else if (ratioProfondeurATR >= 0.5) {
-    pointsProfondeurCassure = 26; // Cassure franche (0.5x à 0.8x ATR)
-  } else if (ratioProfondeurATR >= 0.3) {
-    pointsProfondeurCassure = 18; // Cassure modérée (0.3x à 0.5x ATR)
-  } else if (ratioProfondeurATR >= 0.1) {
-    pointsProfondeurCassure = 10; // Cassure légère (0.1x à 0.3x ATR)
+  if (ratioProfondeurATR > 1.0) {
+    pointsProfondeurCassure = 25; // Plongeon profond (> 1.0x ATR)
+  } else if (ratioProfondeurATR >= 0.4) {
+    pointsProfondeurCassure = 15; // Balayage franc (0.4x à 1.0x ATR)
   } else {
-    pointsProfondeurCassure = 5;  // Effleurement très léger (< 0.1x ATR)
+    pointsProfondeurCassure = 5;  // Effleurement léger (< 0.4x ATR)
   }
 
-  // 3️⃣ PILIER 2 : Taille de la bougie de liquidation (sur 20 pts) + Épaisseur du S/R (sur 10 pts) = 30 points max
-  let pointsBougie = 5;
-  if (ratioTailleBougieATR >= 2.0) {
-    pointsBougie = 20; // Bougie géante institutionnelle (>= 2.0x ATR)
-  } else if (ratioTailleBougieATR >= 1.4) {
-    pointsBougie = 15; // Grande bougie directionnelle (1.4x à 2.0x ATR)
-  } else if (ratioTailleBougieATR >= 1.0) {
-    pointsBougie = 10; // Bougie standard (1.0x à 1.4x ATR)
-  } else {
-    pointsBougie = 5;  // Petite bougie (< 1.0x ATR)
-  }
-
-  let pointsZoneSR = 2;
-  if (ratioEpaisseurZoneATR >= 0.8) {
-    pointsZoneSR = 10; // Zone S/R épaisse (gros bloc d'ordres >= 0.8x ATR)
-  } else if (ratioEpaisseurZoneATR >= 0.4) {
-    pointsZoneSR = 7;  // Zone S/R d'épaisseur moyenne (0.4x à 0.8x ATR)
-  } else if (ratioEpaisseurZoneATR > 0) {
-    pointsZoneSR = 4;  // Zone S/R fine (< 0.4x ATR)
-  } else {
-    pointsZoneSR = 2;  // Aucune épaisseur mesurable
-  }
-
-  const pointsTailleBougieEtZone = Math.min(30, pointsBougie + pointsZoneSR);
-
-  // 4️⃣ PILIER 3 : Retests du S/R avant la cassure pondérés par la taille de leur colline (sur 30 points max)
-  // Un retest précédé d'un grand sommet (montagne >= 4x ATR) vaut beaucoup plus qu'une petite colline !
-  let pointsRetestsSR = 5;
-  if (options.collinesRetests && options.collinesRetests.length > 0) {
-    const sommePointsCollines = options.collinesRetests.reduce(
-      (acc, colline) => acc + colline.pointsAttribues,
-      0
-    );
-    pointsRetestsSR = Math.min(30, 5 + sommePointsCollines);
-  } else if (options.collinesRetests && options.collinesRetests.length === 0) {
-    pointsRetestsSR = 5; // 0 vrai retest validé
-  } else if (nbRetests >= 3) {
-    pointsRetestsSR = 30; // 3 retests ou plus : énorme piscine de liquidité
-  } else if (nbRetests === 2) {
-    pointsRetestsSR = 20; // 2 retests : liquidité solide
-  } else if (nbRetests === 1) {
-    pointsRetestsSR = 10; // 1 retest : liquidité modérée
-  } else {
-    pointsRetestsSR = 5;  // 0 retest (zone vierge)
-  }
-
-  // 5️⃣ Score Total sur 100 et Conversion en Profondeur ZigZag Dynamique
+  // 5️⃣ Score Total sur 100 et Calcul de zigzagDepth (de 1 à 8) selon la taille de la liquidation
   const scoreTotal = Math.min(
     100,
-    Math.max(0, pointsProfondeurCassure + pointsTailleBougieEtZone + pointsRetestsSR)
+    Math.max(0, pointsRetestsSR + pointsTailleBougieEtZone + pointsProfondeurCassure)
   );
 
-  const zigzagDepthRetenu = Math.round(
-    depthMin + (scoreTotal / 100) * (depthMax - depthMin)
+  // Variation directe et fluide de zigzagDepth entre depthMin (1) et depthMax (8)
+  const progressionDepth = Math.max(0, Math.min(1, (scoreTotal - 10) / 90));
+  const zigzagDepthRetenu = Math.max(
+    depthMin,
+    Math.min(depthMax, Math.round(depthMin + progressionDepth * (depthMax - depthMin)))
   );
 
+  let vitesseRetenue: 1 | 2 | 3 = 2;
   let categorieVagues: 'PETITES_VAGUES' | 'VAGUES_MOYENNES' | 'GRANDES_VAGUES' = 'VAGUES_MOYENNES';
+  let zigzagBackstepRetenu = 2;
+  let nbVaguesSuperposeesRetenu = 3;
+  let plafondDerniereVagueActif = false;
+
   if (scoreTotal < 40) {
+    // 🟢 VITESSE 1 : Petite Liquidation (0 à 39 pts) ➔ Micro-Vagues (depth 1 à 3, 2 vagues max)
+    vitesseRetenue = 1;
     categorieVagues = 'PETITES_VAGUES';
-  } else if (scoreTotal >= 70) {
+    zigzagBackstepRetenu = 1;
+    nbVaguesSuperposeesRetenu = 2;
+    plafondDerniereVagueActif = true;
+  } else if (scoreTotal < 70) {
+    // 🟡 VITESSE 2 : Liquidation Moyenne (40 à 69 pts) ➔ Vagues Moyennes (depth 3 à 5, 3 vagues)
+    vitesseRetenue = 2;
+    categorieVagues = 'VAGUES_MOYENNES';
+    zigzagBackstepRetenu = 2;
+    nbVaguesSuperposeesRetenu = 3;
+    plafondDerniereVagueActif = false;
+  } else {
+    // 🔥 VITESSE 3 : Grosse Liquidation (70 à 100 pts) ➔ Grandes Vagues (depth 6 à 8, 4 vagues)
+    vitesseRetenue = 3;
     categorieVagues = 'GRANDES_VAGUES';
+    zigzagBackstepRetenu = 3;
+    nbVaguesSuperposeesRetenu = 4;
+    plafondDerniereVagueActif = false;
   }
 
   const labelCategorie =
     categorieVagues === 'GRANDES_VAGUES'
-      ? 'Grandes Vagues'
+      ? 'Vitesse 3 : Grandes Vagues'
       : categorieVagues === 'VAGUES_MOYENNES'
-        ? 'Vagues Moyennes'
-        : 'Petites Vagues';
+        ? 'Vitesse 2 : Vagues Moyennes'
+        : 'Vitesse 1 : Micro-Vagues';
 
-  const resumeExplication = `Score Liq: ${scoreTotal}/100 (Cassure: ${pointsProfondeurCassure}/40 | Bougie+S/R: ${pointsTailleBougieEtZone}/30 | Retests: ${pointsRetestsSR}/30) ➔ ZigZag Depth: ${zigzagDepthRetenu} (${labelCategorie})`;
+  const resumeExplication = `Score Liq: ${scoreTotal}/100 (Collines: ${pointsRetestsSR}/50 | S/R: ${pointsTailleBougieEtZone}/25 | Mèche: ${pointsProfondeurCassure}/25) ➔ ${labelCategorie} (ZigZag Depth: ${zigzagDepthRetenu}, ${nbVaguesSuperposeesRetenu} vagues)`;
 
   return {
     scoreTotal,
@@ -1009,8 +1218,13 @@ export function calculerScoreLiquidationZigZag(options: {
     ratioProfondeurATR,
     ratioTailleBougieATR,
     ratioEpaisseurZoneATR,
+    dureeVieBougiesSR: options.dureeVieBougiesSR,
     nombreRetests: nbRetests,
+    vitesseRetenue,
     zigzagDepthRetenu,
+    zigzagBackstepRetenu,
+    nbVaguesSuperposeesRetenu,
+    plafondDerniereVagueActif,
     zigzagDepthMin: depthMin,
     zigzagDepthMax: depthMax,
     categorieVagues,
@@ -1397,6 +1611,12 @@ export function calculerOrchestrateurSMC(
   const exigerAutorouteUOP = parametres.exigerAutorouteUOP !== false; // [COND-UOP-04] Actif par défaut !
   const minTauxChevauchementAutoroute = Math.max(0.5, Number(parametres.minTauxChevauchementAutoroute ?? 1.5));
   const exigerDebutEtFinDansPlage = Boolean(parametres.exigerDebutEtFinDansPlage ?? false);
+
+  // 🧲 Variables Externes : Cible de Liquidité S/R Actif + Trajet Chevauchement UOP
+  const activerTPCibleLiquiditeSR = Boolean(parametres.activerTPCibleLiquiditeSR ?? false);
+  const comportementAbsenceSR = parametres.comportementAbsenceSR || 'REPLI_TP_UOP';
+  const tauxMinChevauchementTrajetSR = Math.max(0.1, Number(parametres.tauxMinChevauchementTrajetSR ?? 1.5));
+  const couvertureMinTrajetSRPourcent = Math.max(10, Math.min(100, Number(parametres.couvertureMinTrajetSRPourcent ?? 70)));
   const lookbackShved = Math.max(500, Number(parametres.maxLookbackBars ?? bougies.length));
   const bullColor = parametres.bullColor || '#00E676';
   const bearColor = parametres.bearColor || '#F23645';
@@ -1432,24 +1652,41 @@ export function calculerOrchestrateurSMC(
     ...resultatShved.resistances,
   ];
 
-  // 3️⃣ Extraction du Profil UOP (Chevauchement & TP Optimaux)
-  // On crée un cache par profondeur de ZigZag (zigzagDepth entre 4 et 20) pour que chaque setup
-  // puisse utiliser sa propre taille de vagues dynamique sans recalculer inutilement le même depth.
-  const zigzagDepthDefaut = Number(parametres.zigzagDepth ?? 8);
+  // 3️⃣ Extraction du Profil UOP (Chevauchement & TP Optimaux pilotés par zigzagDepth de 1 à 8)
+  const zigzagDepthDefaut = Number(parametres.zigzagDepth ?? 4);
   const activerZigZagDynamique = parametres.activerZigZagDynamique !== false;
-  const zigzagDepthMinParam = Number(parametres.zigzagDepthMin ?? 4);
-  const zigzagDepthMaxParam = Number(parametres.zigzagDepthMax ?? 20);
-  const cacheUOPParDepth = new Map<number, ResultatUOP>();
+  const zigzagDepthMinParam = Number(parametres.zigzagDepthMin ?? 1);
+  const zigzagDepthMaxParam = Number(parametres.zigzagDepthMax ?? 8);
+  const cacheUOPParDepthEtHorizon = new Map<string, ResultatUOP>();
 
-  const obtenirUOPPourDepth = (depthCible: number): ResultatUOP => {
-    const depthArrondi = Math.max(2, Math.round(depthCible));
-    const dejaEnCache = cacheUOPParDepth.get(depthArrondi);
+  // Calcule le profil UOP jusqu'à un horizon de bougies donné (verrouillé à la 3ème bougie)
+  const obtenirUOPPourDepthEtHorizon = (
+    depthCible: number,
+    horizon: number,
+    backstepCible = 2,
+    nbVaguesCible = 3
+  ): ResultatUOP => {
+    const depthArrondi = Math.max(1, Math.round(depthCible));
+    const cleCache = `${depthArrondi}_${backstepCible}_${nbVaguesCible}_${horizon}`;
+    const dejaEnCache = cacheUOPParDepthEtHorizon.get(cleCache);
     if (dejaEnCache) {
       return dejaEnCache;
     }
-    const nouveauUOP = calculerUnmitigatedOverlapProfile(bougies, {
+
+    // 🔒 Verrouillage : restreint l'historique strictement jusqu'à la 3ème bougie de confirmation
+    // Ainsi, les bougies qui se forment plus tard ne changent JAMAIS le TP calculé de ce setup !
+    const bougiesHorizon = horizon >= bougies.length - 1
+      ? bougies
+      : bougies.slice(0, horizon + 1);
+
+    // En Vitesse 1 (2 petites vagues superposées), un chevauchement de 2 bougies suffit à former un couloir local
+    const seuilBleuAdapte = nbVaguesCible <= 2 ? 2 : 3;
+
+    const nouveauUOP = calculerUnmitigatedOverlapProfile(bougiesHorizon, {
       zigzagDepth: depthArrondi,
-      nbVaguesSuperposees: Number(parametres.nbVaguesSuperposees ?? 4),
+      zigzagBackstep: backstepCible,
+      nbVaguesSuperposees: nbVaguesCible,
+      seuilBougiesBleuFonce: seuilBleuAdapte,
       typeChevauchementUOP: parametres.typeChevauchementUOP ?? 'PONDERE',
       poidsCorps: parametres.poidsCorpsUOP ?? 1.0,
       poidsMeche: parametres.poidsMecheUOP ?? 0.25,
@@ -1460,11 +1697,9 @@ export function calculerOrchestrateurSMC(
       afficherProlongation: false,
       afficherDebugTP: true, // 🔍 Génère la cartographie détaillée des blocs et creux UOP pour l'inspection sur le graphique
     });
-    cacheUOPParDepth.set(depthArrondi, nouveauUOP);
+    cacheUOPParDepthEtHorizon.set(cleCache, nouveauUOP);
     return nouveauUOP;
   };
-
-  const resultatUOP: ResultatUOP = obtenirUOPPourDepth(zigzagDepthDefaut);
 
   // 4️⃣ Détection des Dojis personnalisés avec leur plage ciblée (BLOC 1)
   const signauxDojis: SignalDojiAvecPlage[] = detecterDojisAvecPlage(bougies, parametres);
@@ -1519,6 +1754,7 @@ export function calculerOrchestrateurSMC(
     // pour adapter dynamiquement la taille des vagues ZigZag (entre 4 et 20).
     let profondeurMecheSetup = distanceSL;
     let epaisseurZoneSRSetup = 0;
+    let dureeVieBougiesSRSetup: number | undefined;
     if (meilleureZone) {
       profondeurMecheSetup = estAchat
         ? Math.max(0, meilleureZone.zone.prixMedian - prixSL)
@@ -1526,6 +1762,9 @@ export function calculerOrchestrateurSMC(
       epaisseurZoneSRSetup = Math.abs(
         meilleureZone.zone.prixHaut - meilleureZone.zone.prixBas
       );
+      if (meilleureZone.zone.indexOrigine !== undefined) {
+        dureeVieBougiesSRSetup = Math.max(1, indexDoji - meilleureZone.zone.indexOrigine);
+      }
     }
 
     const bougieDojiActuelle = bougies[indexDoji];
@@ -1542,43 +1781,92 @@ export function calculerOrchestrateurSMC(
       epaisseurZoneSR: epaisseurZoneSRSetup,
       nombreRetests: meilleureZone?.retestsAvant ?? 0,
       collinesRetests: meilleureZone?.collinesRetests,
+      dureeVieBougiesSR: dureeVieBougiesSRSetup,
       zigzagDepthMin: zigzagDepthMinParam,
       zigzagDepthMax: zigzagDepthMaxParam,
     });
 
-    // Si le ZigZag dynamique est actif (par défaut: true), on récupère le profil UOP
-    // correspondant au zigzagDepthRetenu calculé par le Score de Liquidation (/100) de ce setup !
-    let uopActifPourSetup: ResultatUOP = resultatUOP;
-    if (activerZigZagDynamique) {
-      uopActifPourSetup = obtenirUOPPourDepth(detailsScoreLiquidationZigZag.zigzagDepthRetenu);
-    }
+    // 🔒 VERROUILLAGE DU TP À LA 3ÈME BOUGIE DE CONFIRMATION
+    // Si la 3ème bougie a clôturé, l'horizon est bloqué à (indexDoji + nbBougiesConfirmation).
+    // Si nous sommes encore dans les bougies d'observation, l'horizon est la dernière bougie connue.
+    const indexHorizonConfirmation = Math.min(indexDoji + nbBougiesConfirmation, bougies.length - 1);
+
+    const depthActif = activerZigZagDynamique
+      ? detailsScoreLiquidationZigZag.zigzagDepthRetenu
+      : zigzagDepthDefaut;
+    const backstepActif = activerZigZagDynamique
+      ? detailsScoreLiquidationZigZag.zigzagBackstepRetenu
+      : 3;
+    const nbVaguesActif = activerZigZagDynamique
+      ? detailsScoreLiquidationZigZag.nbVaguesSuperposeesRetenu
+      : Number(parametres.nbVaguesSuperposees ?? 4);
+
+    let uopActifPourSetup: ResultatUOP = obtenirUOPPourDepthEtHorizon(
+      depthActif,
+      indexHorizonConfirmation,
+      backstepActif,
+      nbVaguesActif
+    );
+    const uopRepliDefaut: ResultatUOP = obtenirUOPPourDepthEtHorizon(
+      2,
+      indexHorizonConfirmation,
+      1,
+      2
+    );
 
     // Extraction des candidats TP dans la direction du setup
     let tpsCandidats = estAchat
       ? (uopActifPourSetup.tpOptimauxAchat || []).filter((tp) => tp.prixCible > prixEntree)
       : (uopActifPourSetup.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
 
-    // Repli de sécurité sur l'UOP par défaut (depth=8) si l'échantillon de bougies est trop court
-    // pour un grand ZigZag (ex: petits tableaux de tests unitaires de 20 bougies)
-    if (tpsCandidats.length === 0 && uopActifPourSetup !== resultatUOP) {
+    // Repli de sécurité sur micro-vagues (depth=2, 2 vagues) si l'échantillon de bougies est trop court
+    if (tpsCandidats.length === 0 && uopActifPourSetup !== uopRepliDefaut) {
       const tpsRepli = estAchat
-        ? (resultatUOP.tpOptimauxAchat || []).filter((tp) => tp.prixCible > prixEntree)
-        : (resultatUOP.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
+        ? (uopRepliDefaut.tpOptimauxAchat || []).filter((tp) => tp.prixCible > prixEntree)
+        : (uopRepliDefaut.tpOptimauxVente || []).filter((tp) => tp.prixCible < prixEntree);
       if (tpsRepli.length > 0) {
         tpsCandidats = tpsRepli;
-        uopActifPourSetup = resultatUOP;
+        uopActifPourSetup = uopRepliDefaut;
       }
     }
 
-    // Sauvegarde des derniers pivots ZigZag (jusqu'à la bougie du Doji) pour le tracé diagnostic sur le graphique
-    const pivotsAvantDoji = (uopActifPourSetup.pivots || []).filter((p) => p.index <= indexDoji);
-    const pivotsPertinents = (pivotsAvantDoji.length >= 2 ? pivotsAvantDoji : (uopActifPourSetup.pivots || [])).slice(-6);
+    // 🌊 Sauvegarde de la SECTION EXACTE de ZigZag ayant servi à calculer le TP de ce setup
+    // Pour N vagues superposées (2, 3 ou 4 selon la Vitesse), la section comporte exactement N + 1 pivots !
+    const tousPivotsHorizon = uopActifPourSetup.pivots || [];
+    const nbPivotsSection = Math.max(2, nbVaguesActif + 1);
+    const pivotsPertinents = tousPivotsHorizon.slice(-nbPivotsSection);
+    const pivotsAvantDoji = tousPivotsHorizon.filter((p) => p.index <= indexDoji);
     detailsScoreLiquidationZigZag.pivotsZigZag = pivotsPertinents.map((p) => ({
       index: p.index,
       temps: p.temps,
       prix: p.prix,
       type: p.estHaut ? 'HIGH' : 'LOW',
     }));
+
+    // 🛡️ GARDE-FOU SPÉCIAL PETITE LIQUIDITÉ (Vitesse 1 : Score < 40 pts)
+    // En petite liquidité, on confine la recherche du TP1 à l'intérieur de la dernière petite vague
+    // (sans chercher à casser le sommet ou le creux de la petite vague précédente).
+    let borneDernierePetiteVague: number | undefined;
+    for (let p = pivotsAvantDoji.length - 1; p >= 0; p--) {
+      const piv = pivotsAvantDoji[p];
+      if (estAchat && piv.estHaut && piv.prix > prixEntree) {
+        borneDernierePetiteVague = piv.prix;
+        break;
+      }
+      if (!estAchat && !piv.estHaut && piv.prix < prixEntree) {
+        borneDernierePetiteVague = piv.prix;
+        break;
+      }
+    }
+
+    if (activerZigZagDynamique && detailsScoreLiquidationZigZag.plafondDerniereVagueActif && tpsCandidats.length > 0 && borneDernierePetiteVague !== undefined) {
+      const tpsDansDerniereVague = tpsCandidats.filter((tp) =>
+        estAchat ? tp.prixCible <= borneDernierePetiteVague! : tp.prixCible >= borneDernierePetiteVague!
+      );
+      if (tpsDansDerniereVague.length > 0) {
+        tpsCandidats = tpsDansDerniereVague;
+      }
+    }
 
     // ────────────────────────────────────────────────────────────────────────────
     // 🛣️ [COND-UOP-04] CONDITION D'AUTOROUTE UOP OBLIGATOIRE EN FACE DU TRADE
@@ -1605,8 +1893,8 @@ export function calculerOrchestrateurSMC(
       }
     }
 
-    // B. CIBLE TP OPTIMAL & MOTEUR D'ÉNERGIE UOP (CARBURANT VS FRICTION)
-    const palierTPVise = parametres.palierTPVise || 'AUTO';
+    // B. CIBLE TP OPTIMAL & MOTEUR D'ÉNERGIE UOP (TP1 PAR DÉFAUT)
+    const palierTPVise = parametres.palierTPVise || 'TP1';
     let tpSelectionne: TPOptimalUOP | undefined;
     let prixTP: number | undefined;
     let ordreTP: number = 1;
@@ -1779,6 +2067,51 @@ export function calculerOrchestrateurSMC(
     }
 
     // ────────────────────────────────────────────────────────────────────────────
+    // 🧲 [OPTIONNEL] CIBLE DE LIQUIDITÉ S/R ACTIF (NON CASSÉ) + TRAJET CHEVAUCHEMENT
+    // ────────────────────────────────────────────────────────────────────────────
+    // Si activé dans les variables externes, on cherche un Support (en Vente) ou une
+    // Résistance (en Achat) toujours actif en face du prix d'entrée, à condition que
+    // tout le trajet jusqu'à ce S/R ait un bon taux de chevauchement UOP.
+    let cibleLiquiditeSR: InfoCibleLiquiditeSR | undefined;
+    let toutesCiblesSRAnalysees: InfoCibleLiquiditeSR[] | undefined;
+
+    if (activerTPCibleLiquiditeSR) {
+      const rechercheSR = trouverCiblesLiquiditeSRAvecChevauchement({
+        toutesLesZonesShved,
+        bougies,
+        indexHorizon: indexHorizonConfirmation,
+        typeSetup: doji.type,
+        prixEntree,
+        paliersSuperposition: uopActifPourSetup.paliersSuperposition || [],
+        stepUOP: uopActifPourSetup.step || 0.0001,
+        tauxMinChevauchementTrajet: tauxMinChevauchementTrajetSR,
+        couvertureMinPourcent: couvertureMinTrajetSRPourcent,
+        borneMaxVitesse1:
+          activerZigZagDynamique && detailsScoreLiquidationZigZag.plafondDerniereVagueActif
+            ? borneDernierePetiteVague
+            : undefined,
+      });
+
+      toutesCiblesSRAnalysees = rechercheSR.toutesCiblesAnalysees;
+
+      if (rechercheSR.ciblesValides.length > 0) {
+        // Sélection du S/R actif selon le palier visé (TP1 -> 1er S/R, TP2 -> 2ème S/R, TP3 -> 3ème S/R)
+        let indexSR = 0;
+        if (palierTPVise === 'TP2') indexSR = 1;
+        else if (palierTPVise === 'TP3') indexSR = 2;
+        const indexSREffectif = Math.min(indexSR, rechercheSR.ciblesValides.length - 1);
+
+        cibleLiquiditeSR = rechercheSR.ciblesValides[indexSREffectif];
+        prixTP = cibleLiquiditeSR.prixCible;
+        ordreTP = indexSREffectif + 1;
+      } else if (comportementAbsenceSR === 'REJETER_SETUP') {
+        // Mode strict choisi par l'utilisateur : aucun S/R actif avec trajet de chevauchement valide ➔ REJET DU SETUP !
+        continue;
+      }
+      // Sinon ('REPLI_TP_UOP') : on garde le prixTP normal du profil de chevauchement UOP
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────
     // 🎯 [COND-PLAGE-TP-01] FILTRE PLAGE TEMPORELLE DU TP UOP (ORCHESTRATEUR)
     // ────────────────────────────────────────────────────────────────────────────
     // Vérification que le Doji forme l'extrême absolu de toute la plage entre la bougie
@@ -1925,6 +2258,8 @@ export function calculerOrchestrateurSMC(
       zonesShvedCandidates: zonesDansPlage,
       bougiesObservees,
       bougieInvalidationIndex,
+      indexConfirmation: indexHorizonConfirmation,
+      tempsConfirmation: bougies[indexHorizonConfirmation]?.time ?? doji.temps,
       prixTP,
       ordreTP,
       palierTPVise,
@@ -1940,7 +2275,14 @@ export function calculerOrchestrateurSMC(
       paliersAnalyses,
       etapesPaliersUOP,
       tousPaliersUOPCandidats: tpsCandidats,
+      stepUOP: uopActifPourSetup.step,
+      seuilBleuFonceUOP: nbVaguesActif <= 2 ? 2 : 3,
+      paliersSuperpositionUOP: uopActifPourSetup.paliersSuperposition,
+      vaguesSuperposeesUOP: uopActifPourSetup.vaguesSuperposees,
+      borneDernierePetiteVague: detailsScoreLiquidationZigZag.plafondDerniereVagueActif ? borneDernierePetiteVague : undefined,
       infoPlageTP,
+      cibleLiquiditeSR,
+      toutesCiblesSRAnalysees,
       estTermine,
       resultatTrade,
       indexSortieTrade,
@@ -2062,6 +2404,10 @@ export function calculerOrchestrateurSMC(
 
       // Micro-segment court du Take Profit Optimal (Vert continu)
       if (afficherSegmentTP && prixTP !== undefined) {
+        const labelCibleTP = cibleLiquiditeSR
+          ? `🧲 TP S/R (${ratioRR}R | ${cibleLiquiditeSR.pourcentageTrajetCouvert}% couv.)`
+          : `TP (${ratioRR}R${carburantInitial ? ` | ${carburantInitial}pts` : ''})`;
+
         lignes.push({
           id: `orchestre-tp-${indexDoji}`,
           prix: prixTP,
@@ -2070,7 +2416,7 @@ export function calculerOrchestrateurSMC(
           couleur: '#00E676',
           epaisseur: 1.5,
           style: 'solid',
-          label: `TP (${ratioRR}R${carburantInitial ? ` | ${carburantInitial}pts` : ''})`,
+          label: labelCibleTP,
         });
       }
 

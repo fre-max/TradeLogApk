@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { Bougie } from '@/lib/chartDataHelper'
+import { nettoyerEtTrierBougies, type Bougie } from '@/lib/chartDataHelper'
 import type { MacroEvent, FundamentalSnapshot } from '@/types/fundamental'
 import { computeSnapshotAtTimestamp } from '@/lib/fundamentalEngine'
 import type { IndicatorScript } from '@/types/indicatorScript'
@@ -385,11 +385,13 @@ export const useBacktestStore = create<BacktestState>()(
   // Initialise la session avec de nouvelles données
   // Par défaut, on affiche les 150 premières bougies pour donner du contexte au trader
   chargerDonnees: (donnees, nomActif) => {
-    console.log(`🚀 [Backtest Store] Chargement de ${donnees.length} bougies pour ${nomActif}`);
-    const indexInitial = donnees.length - 1;
+    // Nettoyer et trier les bougies par ordre chronologique strict avant stockage
+    const donneesPropres = nettoyerEtTrierBougies(donnees);
+    console.log(`🚀 [Backtest Store] Chargement de ${donneesPropres.length} bougies pour ${nomActif}`);
+    const indexInitial = Math.max(0, donneesPropres.length - 1);
     set({
       actif: nomActif,
-      donneesCompletes: donnees,
+      donneesCompletes: donneesPropres,
       indexCourant: indexInitial,
       estEnLecture: false,
       positionActive: null,
@@ -405,12 +407,12 @@ export const useBacktestStore = create<BacktestState>()(
 
     console.log(`📥 [Backtest Store] Injection de ${anciennesDonnees.length} anciennes bougies au début.`);
     
-    // Concaténer les anciennes données suivies par les données actuelles
-    const nouvellesDonnees = [...anciennesDonnees, ...donneesCompletes];
+    // Concaténer et fusionner les éventuels doublons de frontière d'année (ex: semaine à cheval fin 2019 / début 2020)
+    const nouvellesDonnees = nettoyerEtTrierBougies([...anciennesDonnees, ...donneesCompletes]);
     
-    // Décalage nécessaire de tous les index référencés
-    const decalage = anciennesDonnees.length;
-    const nouvelIndexCourant = indexCourant + decalage;
+    // Le décalage réel correspond au nombre net de nouvelles bougies ajoutées au début
+    const decalage = Math.max(0, nouvellesDonnees.length - donneesCompletes.length);
+    const nouvelIndexCourant = Math.min(nouvellesDonnees.length - 1, indexCourant + decalage);
 
     let positionMiseAJour = null;
     if (positionActive) {
@@ -436,8 +438,12 @@ export const useBacktestStore = create<BacktestState>()(
   },
 
   // Met à jour les données pour le changement d'unité de temps (MTF) sans réinitialiser la session
-  mettreAJourDonneesMtf: (nouvellesDonnees) => {
+  mettreAJourDonneesMtf: (nouvellesDonneesBrutes) => {
     const { donneesCompletes, indexCourant, positionActive, historiqueSimule } = get();
+    if (nouvellesDonneesBrutes.length === 0) return;
+
+    // Garantir que les nouvelles données agrégées sont strictement triées sans aucun doublon
+    const nouvellesDonnees = nettoyerEtTrierBougies(nouvellesDonneesBrutes);
     if (nouvellesDonnees.length === 0) return;
 
     console.log(`⏱️ [Backtest Store] Changement d'UT (MTF) : recalcul de la position et de l'historique...`);

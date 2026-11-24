@@ -20,6 +20,7 @@ import {
   ExtendedLine,
 } from '@/lib/lightweight-charts-drawing-custom';
 import { useBacktestStore, type PositionSimulee } from '@/store/backtestStore';
+import { nettoyerEtTrierBougies } from '@/lib/chartDataHelper';
 import { useUIStore } from '@/store';
 import type { BoundingBoxYOLO } from '@/types/dataset';
 import {
@@ -1568,9 +1569,10 @@ export const BacktestChart = React.forwardRef<
     const timeScale = chartRef.current?.timeScale();
     const rangeVisuellePrecedente = timeScale ? timeScale.getVisibleLogicalRange() : null;
 
-    const donneesVisibles = donneesCompletes
-      .slice(0, indexCourant + 1)
-      .map((b) => ({ ...b, time: b.time as Time }));
+    // Sécurité finale : garantir que les bougies envoyées à Lightweight Charts sont strictement
+    // triées par ordre croissant et sans doublons de timestamp (évite le crash "Assertion failed")
+    const donneesTranchees = nettoyerEtTrierBougies(donneesCompletes.slice(0, indexCourant + 1));
+    const donneesVisibles = donneesTranchees.map((b) => ({ ...b, time: b.time as Time }));
     seriesRef.current.setData(donneesVisibles);
 
     if (chartRef.current && timeScale) {

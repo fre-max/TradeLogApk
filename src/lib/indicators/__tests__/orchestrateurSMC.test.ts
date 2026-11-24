@@ -8,6 +8,7 @@ import {
   analyserRetestsAvecCollines,
   trouverBougieContenantPrixTP,
   validerDojiAvecPlageTP,
+  trouverCiblesLiquiditeSRAvecChevauchement,
   type InfoValidationPlageTP,
 } from '../favoris/orchestrateurSMC';
 
@@ -540,21 +541,21 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(setupTP3.prixTP).toBeGreaterThan(setupTP2.prixTP ?? 0);
   });
 
-  it('expose le paramètre palierTPVise dans le catalogue officiel', async () => {
+  it('expose le paramètre palierTPVise dans le catalogue officiel (défaut TP1)', async () => {
     const { INDICATEURS_PAR_DEFAUT } = await import('../indicatorEngine');
     const scriptOrchestre = INDICATEURS_PAR_DEFAUT.find(
       (s) => s.id === 'script-orchestrateur-smc'
     );
     expect(scriptOrchestre).toBeDefined();
-    expect(scriptOrchestre?.parametres?.palierTPVise).toBe('AUTO');
+    expect(scriptOrchestre?.parametres?.palierTPVise).toBe('TP1');
 
     const varPalier = scriptOrchestre?.definitionsVariables?.find(
       (v) => v.cle === 'palierTPVise'
     );
     expect(varPalier).toBeDefined();
     expect(varPalier?.type).toBe('select');
-    expect(varPalier?.valeurParDefaut).toBe('AUTO');
-    expect(varPalier?.options?.map((o) => o.value)).toEqual(['AUTO', 'TP1', 'TP2', 'TP3']);
+    expect(varPalier?.valeurParDefaut).toBe('TP1');
+    expect(varPalier?.options?.map((o) => o.value)).toContain('TP1');
   });
 
   it('expose le paramètre typeChevauchementUOP et ses pondérations anatomiques', async () => {
@@ -576,45 +577,66 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(varType?.options?.map((o) => o.value)).toEqual(['PONDERE', 'CORPS_SEUL', 'CORPS_ET_MECHES']);
   });
 
-  it('ajuste dynamiquement la taille des vagues ZigZag (zigzagDepth entre 4 et 20) selon le Score de Liquidation (/100)', () => {
-    // 1️⃣ Cas d'une FAIBLE liquidation : effleurement léger (< 0.1x ATR), petite bougie, 0 retest
+  it('ajuste dynamiquement zigzagDepth (de 1 à 8) selon la taille de la liquidation (Doji personnalisé)', () => {
+    // 1️⃣ VITESSE 1 — Petite liquidation : 0 retest (0/50), petit Doji (5/25), effleurement léger (5/25) -> 10/100 => zigzagDepth = 1
     const scoreFaible = calculerScoreLiquidationZigZag({
-      profondeurMeche: 0.5,      // 0.05x ATR
+      profondeurMeche: 0.5,      // 0.05x ATR (< 0.4x -> 5/25)
       hauteurMoyenne: 10,        // ATR = 10
-      amplitudeBougieSweep: 8,   // 0.8x ATR
+      amplitudeBougieSweep: 8,   // 0.8x ATR (< 1.2x -> 5/25)
       epaisseurZoneSR: 2,        // 0.2x ATR
-      nombreRetests: 0,
-      zigzagDepthMin: 4,
-      zigzagDepthMax: 20,
+      nombreRetests: 0,          // 0 retest -> 0/50
     });
 
+    expect(scoreFaible.pointsRetestsSR).toBe(0);
+    expect(scoreFaible.pointsTailleBougieEtZone).toBe(5);
     expect(scoreFaible.pointsProfondeurCassure).toBe(5);
-    expect(scoreFaible.pointsTailleBougieEtZone).toBe(9); // 5 (petite bougie) + 4 (zone fine)
-    expect(scoreFaible.pointsRetestsSR).toBe(5);
-    expect(scoreFaible.scoreTotal).toBe(19);
+    expect(scoreFaible.scoreTotal).toBe(10);
+    expect(scoreFaible.vitesseRetenue).toBe(1);
     expect(scoreFaible.categorieVagues).toBe('PETITES_VAGUES');
-    expect(scoreFaible.zigzagDepthRetenu).toBeGreaterThanOrEqual(4);
-    expect(scoreFaible.zigzagDepthRetenu).toBeLessThanOrEqual(8);
+    expect(scoreFaible.zigzagDepthRetenu).toBe(1);
+    expect(scoreFaible.zigzagBackstepRetenu).toBe(1);
+    expect(scoreFaible.nbVaguesSuperposeesRetenu).toBe(2);
+    expect(scoreFaible.plafondDerniereVagueActif).toBe(true);
 
-    // 2️⃣ Cas d'une MASSIVE liquidation : plongeon profond (>= 1.2x ATR), bougie géante (>= 2.0x ATR), zone épaisse, 3+ retests
-    const scoreMassif = calculerScoreLiquidationZigZag({
-      profondeurMeche: 15,       // 1.5x ATR -> 40/40
-      hauteurMoyenne: 10,        // ATR = 10
-      amplitudeBougieSweep: 25,  // 2.5x ATR -> 20/20
-      epaisseurZoneSR: 10,       // 1.0x ATR -> 10/10
-      nombreRetests: 4,          // 4 retests -> 30/30
-      zigzagDepthMin: 4,
-      zigzagDepthMax: 20,
+    // 2️⃣ VITESSE 2 — Liquidation moyenne : 2 retests (30/50), Doji moyen (15/25), mèche franche (15/25) -> 60/100 => zigzagDepth = 5
+    const scoreMoyen = calculerScoreLiquidationZigZag({
+      profondeurMeche: 6,        // 0.6x ATR (0.4 à 1.0x -> 15/25)
+      hauteurMoyenne: 10,
+      amplitudeBougieSweep: 14,  // 1.4x ATR -> 15/25
+      epaisseurZoneSR: 5,
+      nombreRetests: 2,          // 2 retests -> 30/50
+      dureeVieBougiesSR: 25,
     });
 
-    expect(scoreMassif.pointsProfondeurCassure).toBe(40);
-    expect(scoreMassif.pointsTailleBougieEtZone).toBe(30);
-    expect(scoreMassif.pointsRetestsSR).toBe(30);
+    expect(scoreMoyen.scoreTotal).toBe(60);
+    expect(scoreMoyen.vitesseRetenue).toBe(2);
+    expect(scoreMoyen.categorieVagues).toBe('VAGUES_MOYENNES');
+    expect(scoreMoyen.zigzagDepthRetenu).toBeGreaterThanOrEqual(4);
+    expect(scoreMoyen.zigzagDepthRetenu).toBeLessThanOrEqual(5);
+    expect(scoreMoyen.zigzagBackstepRetenu).toBe(2);
+    expect(scoreMoyen.nbVaguesSuperposeesRetenu).toBe(3);
+    expect(scoreMoyen.plafondDerniereVagueActif).toBe(false);
+
+    // 3️⃣ VITESSE 3 — Grosse liquidation : 4 retests (50/50), grand Doji (25/25), plongeon profond (25/25) -> 100/100 => zigzagDepth = 8
+    const scoreMassif = calculerScoreLiquidationZigZag({
+      profondeurMeche: 15,       // 1.5x ATR (> 1.0x -> 25/25)
+      hauteurMoyenne: 10,        // ATR = 10
+      amplitudeBougieSweep: 25,  // 2.5x ATR (>= 1.8x -> 25/25)
+      epaisseurZoneSR: 10,       // 1.0x ATR
+      nombreRetests: 4,          // 4 retests -> 50/50
+    });
+
+    expect(scoreMassif.pointsRetestsSR).toBe(50);
+    expect(scoreMassif.pointsTailleBougieEtZone).toBe(25);
+    expect(scoreMassif.pointsProfondeurCassure).toBe(25);
     expect(scoreMassif.scoreTotal).toBe(100);
+    expect(scoreMassif.vitesseRetenue).toBe(3);
     expect(scoreMassif.categorieVagues).toBe('GRANDES_VAGUES');
-    expect(scoreMassif.zigzagDepthRetenu).toBe(20);
+    expect(scoreMassif.zigzagDepthRetenu).toBe(8);
+    expect(scoreMassif.zigzagBackstepRetenu).toBe(3);
+    expect(scoreMassif.nbVaguesSuperposeesRetenu).toBe(4);
     expect(scoreMassif.resumeExplication).toContain('Score Liq: 100/100');
-    expect(scoreMassif.resumeExplication).toContain('ZigZag Depth: 20');
+    expect(scoreMassif.resumeExplication).toContain('ZigZag Depth: 8');
   });
 
   it('attache detailsScoreLiquidationZigZag sur chaque setup généré par calculerOrchestrateurSMC', () => {
@@ -640,8 +662,8 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     const setup = res.setups[0];
     expect(setup.detailsScoreLiquidationZigZag).toBeDefined();
     expect(setup.detailsScoreLiquidationZigZag?.scoreTotal).toBeGreaterThan(0);
-    expect(setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBeGreaterThanOrEqual(4);
-    expect(setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBeLessThanOrEqual(20);
+    expect(setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBeGreaterThanOrEqual(1);
+    expect(setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBeLessThanOrEqual(8);
     expect(setup.detailsScoreLiquidationZigZag?.resumeExplication).toContain('ZigZag Depth:');
   });
 
@@ -725,6 +747,204 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     expect(carbuMajeur.pointsRetests).toBe(150);
     expect(carbuMineur.pointsRetests).toBe(60);
     expect(carbuMajeur.carburantTotal).toBeGreaterThan(carbuMineur.carburantTotal);
+  });
+
+  it('verrouille le TP du setup à celui calculé lors de la 3ème bougie de confirmation', () => {
+    // 1️⃣ Création d'un historique avec un setup confirmé à la 3ème bougie (index 19)
+    const bougiesBase: Bougie[] = [];
+
+    // 15 bougies plates initiales
+    for (let k = 0; k < 15; k++) {
+      bougiesBase.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Doji Achat (Spring) aux bougies 15 et 16
+    bougiesBase.push(creerBougie(15000, 99.0, 99.0, 85.0, 86.0));
+    bougiesBase.push(creerBougie(16000, 86.0, 99.0, 86.0, 98.8));
+
+    // 3 bougies de confirmation du range (Low > 85.0)
+    bougiesBase.push(creerBougie(17000, 98.8, 101.0, 95.0, 100.0));
+    bougiesBase.push(creerBougie(18000, 100.0, 103.0, 96.0, 102.0));
+    bougiesBase.push(creerBougie(19000, 102.0, 105.0, 99.0, 104.0));
+
+    const resConfirmation = calculerOrchestrateurSMC(bougiesBase, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      palierTPVise: 'TP1',
+    });
+
+    expect(resConfirmation.setups.length).toBeGreaterThanOrEqual(1);
+    const tpAuMomentConfirmation = resConfirmation.setups[0].prixTP;
+    expect(tpAuMomentConfirmation).toBeDefined();
+
+    // 2️⃣ Ajout de 10 bougies supplémentaires qui modifient la structure ultérieure
+    const bougiesPlusTard: Bougie[] = [
+      ...bougiesBase,
+      creerBougie(20000, 104.0, 106.0, 102.0, 105.0),
+      creerBougie(21000, 105.0, 110.0, 103.0, 108.0),
+      creerBougie(22000, 108.0, 112.0, 106.0, 111.0),
+      creerBougie(23000, 111.0, 116.0, 109.0, 115.0),
+      creerBougie(24000, 115.0, 120.0, 113.0, 118.0),
+      creerBougie(25000, 118.0, 122.0, 116.0, 120.0),
+    ];
+
+    const resFutur = calculerOrchestrateurSMC(bougiesPlusTard, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      palierTPVise: 'TP1',
+      masquerSetupsTermines: false,
+    });
+
+    const setupFutur = resFutur.setups.find((s) => s.indexDoji === resConfirmation.setups[0].indexDoji);
+    expect(setupFutur).toBeDefined();
+    // 🔒 Le TP doit être strictement identique et verrouillé à celui calculé lors de la 3ème bougie
+    expect(setupFutur?.prixTP).toBe(tpAuMomentConfirmation);
+    // 📊 Les données de l'histogramme Volume Profile UOP de la 3ème bougie doivent être attachées au setup
+    expect(setupFutur?.indexConfirmation).toBe(19);
+    expect(setupFutur?.tempsConfirmation).toBe(19000);
+    expect(setupFutur?.stepUOP).toBeGreaterThan(0);
+    expect(Array.isArray(setupFutur?.paliersSuperpositionUOP)).toBe(true);
+    expect(Array.isArray(setupFutur?.vaguesSuperposeesUOP)).toBe(true);
+  });
+
+  it('cible un S/R actif non cassé uniquement si tout le trajet a un bon taux de chevauchement et respecte comportementAbsenceSR', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 20; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // 1️⃣ Test direct de trouverCiblesLiquiditeSRAvecChevauchement :
+    // - Résistance 1 (active, non cassée, née à l'index 6) à 110..112 avec un trajet bien couvert (100 -> 110)
+    // - Résistance 2 (née à l'index 1 et déjà cassée à l'index 3 par une clôture à 116) à 113..115 -> doit être ignorée
+    // - Résistance 3 (active, née à l'index 6 mais loin à 130..132 avec un trou sans chevauchement entre 115 et 130) -> trajet invalide
+    bougies[3] = creerBougie(3000, 112, 116, 110, 116); // Cassure de la Résistance 2 à l'index 3 (avant la naissance des Résistances 1 et 3 à l'index 6)
+
+    const paliersSuperposition = [];
+    for (let p = 100; p <= 112; p += 1) {
+      paliersSuperposition.push({
+        prix: p,
+        nbVagues: 2,
+        vaguesIndices: [0],
+        sommeBougies: 3, // Fort chevauchement (3 bougies) sur tout le trajet [100..110]
+        tauxMoyenBougies: 3,
+        estBleuFonce: true,
+        isMitigated: false,
+      });
+    }
+
+    const resSR = trouverCiblesLiquiditeSRAvecChevauchement({
+      toutesLesZonesShved: [
+        {
+          id: 'res-active-valide',
+          type: 'RESISTANCE',
+          prixBas: 110,
+          prixHaut: 112,
+          prixMedian: 111,
+          retests: 2,
+          force: 'VERIFIED',
+          estFaible: false,
+          estCassee: false,
+          dateDebut: 6000,
+          dateFin: 19000,
+          indexOrigine: 6,
+        },
+        {
+          id: 'res-cassee',
+          type: 'RESISTANCE',
+          prixBas: 113,
+          prixHaut: 115,
+          prixMedian: 114,
+          retests: 1,
+          force: 'WEAK',
+          estFaible: true,
+          estCassee: true,
+          dateDebut: 1000,
+          dateFin: 19000,
+          indexOrigine: 1,
+        },
+        {
+          id: 'res-active-trajet-vide',
+          type: 'RESISTANCE',
+          prixBas: 130,
+          prixHaut: 132,
+          prixMedian: 131,
+          retests: 3,
+          force: 'PROVEN',
+          estFaible: false,
+          estCassee: false,
+          dateDebut: 6000,
+          dateFin: 19000,
+          indexOrigine: 6,
+        },
+      ],
+      bougies,
+      indexHorizon: 19,
+      typeSetup: 'ACHAT',
+      prixEntree: 100,
+      paliersSuperposition,
+      stepUOP: 1,
+      tauxMinChevauchementTrajet: 1.5,
+      couvertureMinPourcent: 70,
+    });
+
+    // La résistance cassée est ignorée, les 2 résistances actives sont analysées
+    expect(resSR.toutesCiblesAnalysees.length).toBe(2);
+    // Seule la résistance active à 110 possède un trajet couvert à 100% avec moyenne 3b
+    expect(resSR.ciblesValides.length).toBe(1);
+    expect(resSR.ciblesValides[0].zone.id).toBe('res-active-valide');
+    expect(resSR.ciblesValides[0].prixCible).toBe(110);
+    expect(resSR.ciblesValides[0].pourcentageTrajetCouvert).toBe(100);
+    expect(resSR.ciblesValides[0].tauxMoyenChevauchementTrajet).toBe(3);
+
+    // 2️⃣ Test du choix externe comportementAbsenceSR ('REPLI_TP_UOP' vs 'REJETER_SETUP')
+    // Sur une série sans résistance active au-dessus :
+    const bougiesSetup: Bougie[] = [];
+    for (let k = 0; k < 15; k++) {
+      bougiesSetup.push(creerBougie(k * 1000, 100, 101, 99, 100));
+    }
+    bougiesSetup.push(creerBougie(15000, 99.5, 99.5, 88.0, 89.0));
+    bougiesSetup.push(creerBougie(16000, 89.0, 99.8, 89.0, 99.6));
+    bougiesSetup.push(creerBougie(17000, 99.6, 100.5, 97.0, 100.2));
+    bougiesSetup.push(creerBougie(18000, 100.2, 100.8, 98.0, 100.5));
+    bougiesSetup.push(creerBougie(19000, 100.5, 101.0, 99.0, 100.8));
+
+    // A. Lorsque le S/R actif à 101 valide le seuil (1.5b), il est retenu comme cibleLiquiditeSR
+    const resAvecSR = calculerOrchestrateurSMC(bougiesSetup, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      activerTPCibleLiquiditeSR: true,
+      comportementAbsenceSR: 'REJETER_SETUP',
+      tauxMinChevauchementTrajetSR: 1.5,
+    });
+    expect(resAvecSR.setups.length).toBe(1);
+    expect(resAvecSR.setups[0].cibleLiquiditeSR).toBeDefined();
+
+    // B. Lorsqu'aucun S/R actif n'atteint un seuil élevé (ex: 8.0b) :
+    // - En mode 'REPLI_TP_UOP', le setup est conservé et bascule sur le TP UOP normal
+    const resRepli = calculerOrchestrateurSMC(bougiesSetup, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      activerTPCibleLiquiditeSR: true,
+      comportementAbsenceSR: 'REPLI_TP_UOP',
+      tauxMinChevauchementTrajetSR: 8.0,
+    });
+    expect(resRepli.setups.length).toBe(1);
+    expect(resRepli.setups[0].cibleLiquiditeSR).toBeUndefined();
+
+    // - En mode 'REJETER_SETUP', le setup est strictement rejeté
+    const resStrict = calculerOrchestrateurSMC(bougiesSetup, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      activerTPCibleLiquiditeSR: true,
+      comportementAbsenceSR: 'REJETER_SETUP',
+      tauxMinChevauchementTrajetSR: 8.0,
+    });
+    expect(resStrict.setups.length).toBe(0);
   });
 });
 
