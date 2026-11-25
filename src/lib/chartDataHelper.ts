@@ -348,9 +348,13 @@ export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): 
     return Math.floor(timestampSec / 3600) * 3600;
   };
 
-  const groupes = new Map<number, Bougie[]>();
+  // 🚀 Agrégation linéaire en un seul passage O(N) quand les bougies M1 sont déjà triées chronologiquement.
+  // Évite de créer 370 000 copies d'objets + 74 000 tableaux intermédiaires et tris lors du changement d'UT.
+  const resultats: Bougie[] = [];
+  let estStrictementCroissant = true;
+  let dernierBucket = -Infinity;
+  let bougieCourante: Bougie | null = null;
 
-  // Regrouper les bougies M1 par intervalle de temps
   for (let i = 0; i < bougiesM1.length; i++) {
     const b = bougiesM1[i];
     const timestampSec = typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time as string) / 1000);
@@ -358,43 +362,77 @@ export function agregerBougies(bougiesM1: Bougie[], timeframeSuperior: string): 
 
     const bucketStart = getBucketStart(timestampSec);
 
-    let groupe = groupes.get(bucketStart);
-    if (!groupe) {
-      groupe = [];
-      groupes.set(bucketStart, groupe);
+    if (bucketStart === dernierBucket && bougieCourante !== null) {
+      // Même bougie agrégée : mise à jour directe en place O(1)
+      if (b.high > bougieCourante.high) bougieCourante.high = b.high;
+      if (b.low < bougieCourante.low) bougieCourante.low = b.low;
+      bougieCourante.close = b.close;
+    } else if (bucketStart > dernierBucket) {
+      // Nouvelle bougie agrégée strictement postérieure
+      bougieCourante = {
+        time: bucketStart,
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+      };
+      resultats.push(bougieCourante);
+      dernierBucket = bucketStart;
+    } else {
+      // Données source non triées : on bascule sur le repli sécurisé par Map
+      estStrictementCroissant = false;
+      break;
     }
-    groupe.push({
-      ...b,
-      time: timestampSec
-    });
   }
 
-  const resultats: Bougie[] = [];
+  let finalAggregated: Bougie[];
 
-  // Agrégation optimisée de chaque bucket (boucle linéaire directe sans spread)
-  for (const [bucketTime, listeM1] of groupes.entries()) {
-    listeM1.sort((a, b) => (a.time as number) - (b.time as number));
+  if (estStrictementCroissant) {
+    finalAggregated = resultats;
+  } else {
+    // Repli sécurisé sans tableaux intermédiaires ni spread inutile si la source n'était pas triée
+    const groupes = new Map<number, { time: number; minT: number; maxT: number; open: number; high: number; low: number; close: number }>();
 
-    const open = listeM1[0].open;
-    const close = listeM1[listeM1.length - 1].close;
+    for (let i = 0; i < bougiesM1.length; i++) {
+      const b = bougiesM1[i];
+      const timestampSec = typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time as string) / 1000);
+      if (isNaN(timestampSec)) continue;
 
-    let maxHigh = -Infinity;
-    let minLow = Infinity;
-    for (let j = 0; j < listeM1.length; j++) {
-      if (listeM1[j].high > maxHigh) maxHigh = listeM1[j].high;
-      if (listeM1[j].low < minLow) minLow = listeM1[j].low;
+      const bucketStart = getBucketStart(timestampSec);
+      const existant = groupes.get(bucketStart);
+      if (!existant) {
+        groupes.set(bucketStart, {
+          time: bucketStart,
+          minT: timestampSec,
+          maxT: timestampSec,
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+        });
+      } else {
+        if (b.high > existant.high) existant.high = b.high;
+        if (b.low < existant.low) existant.low = b.low;
+        if (timestampSec < existant.minT) {
+          existant.minT = timestampSec;
+          existant.open = b.open;
+        }
+        if (timestampSec >= existant.maxT) {
+          existant.maxT = timestampSec;
+          existant.close = b.close;
+        }
+      }
     }
 
-    resultats.push({
-      time: bucketTime,
-      open,
-      high: maxHigh,
-      low: minLow,
-      close
-    });
+    const bucketTries = Array.from(groupes.values()).sort((a, b) => a.time - b.time);
+    finalAggregated = bucketTries.map((g) => ({
+      time: g.time,
+      open: g.open,
+      high: g.high,
+      low: g.low,
+      close: g.close,
+    }));
   }
-
-  const finalAggregated = resultats.sort((a, b) => (a.time as number) - (b.time as number));
 
   // Conserver au maximum 50 séries agrégées en cache pour économiser la mémoire mobile
   if (cacheAgregationMTF.size >= 50) {

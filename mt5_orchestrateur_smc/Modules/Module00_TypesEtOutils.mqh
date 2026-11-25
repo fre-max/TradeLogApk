@@ -14,7 +14,7 @@
 #define MAX_TOUCHES_IGNOREES    10
 #define MAX_ZONES_CANDIDATES    15
 #define MAX_PALIERS_UOP         6
-#define MAX_PIVOTS_ZIGZAG       12
+#define MAX_PIVOTS_ZIGZAG       16
 
 // ─── 📊 Énumérations de Réglages et Statuts ─────────────────────────────────────
 

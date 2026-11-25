@@ -83,6 +83,25 @@ export interface ContexteRestaurationReplay {
   };
 }
 
+/**
+ * 🎬 Configuration du Mode Testeur de Stratégie Visuel (Style Strategy Tester MT5)
+ * Permet de faire défiler les bougies en direct pendant que le Bot Fractal (HTF ➔ LTF)
+ * ou Mono-Timeframe détecte les setups, ouvre les positions et permet de basculer
+ * librement d'une unité de temps à l'autre (H4 ⇄ M15 / M30 / M5) sans perdre le fil.
+ */
+export interface ConfigTesteurVisuelBotSMC {
+  actif: boolean;
+  modeFractal: boolean;        // true = Fractal HTF ➔ LTF (ex: 4h ➔ 15m), false = Mono-TF
+  timeframeHTF: string;        // Ex: '4h'
+  timeframeLTF: string;        // Ex: '15m'
+  filtreZoneOB: 'TOUTE_LA_PLAGE' | 'TOUT_OB_PROTEGE' | 'DERNIER_OB_UNIQUEMENT';
+  capitalInitial: number;      // Ex: 10000
+  risquePourcent: number;      // Ex: 1.0
+  pauseAutoSurSetupHTF: boolean; // Met en pause dès qu'un Setup Maître HTF est confirmé
+  pauseAutoSurTradeLTF: boolean; // Met en pause dès qu'un trade LTF est ouvert par le bot
+  parametresSMC: Record<string, any>;
+}
+
 interface BacktestState {
   // Informations de session
   actif: string;
@@ -179,6 +198,12 @@ interface BacktestState {
   toggleVisibiliteScript: (id: string) => void;
   retirerScriptDuGraphique: (id: string) => void;
   sauvegarderScriptIndicateur: (script: IndicatorScript) => void;
+
+  // ─── 🎬 Testeur de Stratégie Visuel du Bot SMC (Style MT5) ─────────────────
+  testeurVisuelBot: ConfigTesteurVisuelBotSMC | null;
+  demarrerTesteurVisuelBot: (config: ConfigTesteurVisuelBotSMC) => void;
+  mettreAJourTesteurVisuelBot: (partiel: Partial<ConfigTesteurVisuelBotSMC>) => void;
+  arreterTesteurVisuelBot: () => void;
 }
 
 // Le store utilise le middleware 'persist' de Zustand pour sauvegarder l'état de session
@@ -209,6 +234,47 @@ export const useBacktestStore = create<BacktestState>()(
 
   // Contexte de restauration de replay (clic depuis le journal)
   contexteRestauration: null as ContexteRestaurationReplay | null,
+
+  // ─── 🎬 Testeur de Stratégie Visuel du Bot SMC (Style MT5) ─────────────────
+  testeurVisuelBot: null as ConfigTesteurVisuelBotSMC | null,
+  demarrerTesteurVisuelBot: (config) => {
+    // Active automatiquement l'indicateur Chef d'Orchestre SMC sur le graphique avec le Calque Fractal HTF
+    const scripts = get().scriptsIndicateurs.length > 0 ? get().scriptsIndicateurs : recupererIndicateursStockes();
+    const nouveauxScripts = scripts.map((s) => {
+      if (s.id === 'script-orchestrateur-smc') {
+        const maj: IndicatorScript = {
+          ...s,
+          visibleSurGraphique: true,
+          parametres: {
+            ...s.parametres,
+            ...config.parametresSMC,
+            activerCalqueFractalHTF: config.modeFractal,
+            timeframeMaitreFractal: config.timeframeHTF || '4h',
+            afficherOrderBlocksProteges: true,
+          },
+          misAJourLe: new Date().toISOString(),
+        };
+        sauvegarderIndicateurStocke(maj);
+        return maj;
+      }
+      return s;
+    });
+
+    set({
+      testeurVisuelBot: { ...config, actif: true },
+      scriptsIndicateurs: nouveauxScripts,
+      positionActive: null,
+      historiqueSimule: [],
+    });
+  },
+  mettreAJourTesteurVisuelBot: (partiel) => {
+    const actuel = get().testeurVisuelBot;
+    if (!actuel) return;
+    set({ testeurVisuelBot: { ...actuel, ...partiel } });
+  },
+  arreterTesteurVisuelBot: () => {
+    set({ testeurVisuelBot: null, estEnLecture: false });
+  },
 
   // Mode Analyse Fondamentale - État initial
   fundamentalModeEnabled: false,
@@ -454,21 +520,29 @@ export const useBacktestStore = create<BacktestState>()(
       ? (typeof bougieReference.time === 'number' ? bougieReference.time : Date.parse(bougieReference.time as string) / 1000)
       : null;
 
-    // Helper pour trouver le nouvel index correspondant à une date dans les nouvelles données
+    // Helper par dichotomie O(log N) pour trouver l'index correspondant à une date sans parcourir 75 000+ bougies
     const trouverNouvelIndex = (dateRef: string | number | undefined): number | undefined => {
       if (dateRef === undefined) return undefined;
       const tRef = typeof dateRef === 'number' ? dateRef : Date.parse(dateRef) / 1000;
       if (isNaN(tRef)) return undefined;
 
-      // Trouver l'index de la bougie la plus proche <= tRef
-      let index = nouvellesDonnees.findIndex((b) => {
-        const t = typeof b.time === 'number' ? b.time : Date.parse(b.time as string) / 1000;
-        return t > tRef;
-      });
-
-      if (index === -1) return nouvellesDonnees.length - 1;
-      if (index > 0) return index - 1;
-      return 0;
+      let gauche = 0;
+      let droite = nouvellesDonnees.length - 1;
+      let resultat = 0;
+      while (gauche <= droite) {
+        const milieu = (gauche + droite) >>> 1;
+        const t =
+          typeof nouvellesDonnees[milieu].time === 'number'
+            ? (nouvellesDonnees[milieu].time as number)
+            : Date.parse(nouvellesDonnees[milieu].time as string) / 1000;
+        if (t <= tRef) {
+          resultat = milieu;
+          gauche = milieu + 1;
+        } else {
+          droite = milieu - 1;
+        }
+      }
+      return resultat;
     };
 
     // 2. Calculer le nouvel indexCourant

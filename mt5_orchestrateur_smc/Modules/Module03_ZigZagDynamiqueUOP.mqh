@@ -37,83 +37,40 @@ void CalculerScoreLiquidationZigZagSMC(
 )
 {
    double atrSecurise = MathMax(_Point, hauteurMoyenneATR);
-   int depthMin       = MathMax(1, zigzagDepthMin);
-   int depthMax       = MathMax(depthMin + 1, zigzagDepthMax);
+   int depthMin       = MathMax(1, MathMin(8, zigzagDepthMin));
+   int depthMax       = MathMax(depthMin, MathMin(8, zigzagDepthMax));
    int nbRetests      = aZoneScoree ? zoneScoree.nbCollines : 0;
 
    double ratioProfondeurATR    = NormalizeDouble(MathMax(0.0, profondeurMeche) / atrSecurise, 2);
    double ratioTailleBougieATR  = NormalizeDouble(MathMax(0.0, amplitudeBougieSweep) / atrSecurise, 2);
    double ratioEpaisseurZoneATR = NormalizeDouble(MathMax(0.0, epaisseurZoneSR) / atrSecurise, 2);
 
-   // 1️⃣ CRITÈRE 1 : Retests et Collines du S/R avant la cassure (sur 50 points max)
-   int pointsRetestsSR = 0;
-   if(aZoneScoree && zoneScoree.nbCollines > 0)
-   {
-      bool aCollineMajeure = false;
-      bool aCollineSolide  = false;
-      for(int c = 0; c < zoneScoree.nbCollines; c++)
-      {
-         if(zoneScoree.collines[c].qualite == COLLINE_MAJEURE)
-            aCollineMajeure = true;
-         else if(zoneScoree.collines[c].qualite == COLLINE_SOLIDE)
-            aCollineSolide = true;
-      }
-
-      if(zoneScoree.nbCollines >= 3 || (zoneScoree.nbCollines == 2 && aCollineMajeure))
-         pointsRetestsSR = 50;
-      else if(zoneScoree.nbCollines == 2)
-         pointsRetestsSR = 30;
-      else if(zoneScoree.nbCollines == 1)
-         pointsRetestsSR = aCollineMajeure ? 30 : (aCollineSolide ? 20 : 15);
-   }
-
-   // 2️⃣ CRITÈRE 2 : Taille de la Liquidation (notre Doji personnalisé) & Force S/R (sur 25 points max)
-   int pointsTailleBougieEtZone = 5;
-   if(ratioTailleBougieATR >= 1.8)
-      pointsTailleBougieEtZone = 25;
-   else if(ratioTailleBougieATR >= 1.2 || ratioEpaisseurZoneATR >= 0.4)
-      pointsTailleBougieEtZone = 15;
-   else
-      pointsTailleBougieEtZone = 5;
-
-   // 3️⃣ CRITÈRE 3 : Profondeur du Balayage / Mèche de Liquidation (sur 25 points max)
-   int pointsProfondeurCassure = 5;
-   if(ratioProfondeurATR > 1.0)
-      pointsProfondeurCassure = 25;
-   else if(ratioProfondeurATR >= 0.4)
-      pointsProfondeurCassure = 15;
-   else
-      pointsProfondeurCassure = 5;
-
-   // 4️⃣ Score Total sur 100 et Calcul de zigzagDepth (de 1 à 8) selon la taille de la liquidation
-   int scoreTotal = MathMin(100, MathMax(0, pointsRetestsSR + pointsTailleBougieEtZone + pointsProfondeurCassure));
-   double progDepth = MathMax(0.0, MathMin(1.0, ((double)scoreTotal - 10.0) / 90.0));
+   // 🕯️ Calcul de zigzagDepth (de 1 à 8) basé UNIQUEMENT sur la taille du Doji (ratioTailleBougieATR)
+   double progDepth = MathMax(0.0, MathMin(1.0, (ratioTailleBougieATR - 1.2) / 2.8));
    int zigzagDepthRetenu = MathMax(depthMin, MathMin(depthMax, (int)MathRound((double)depthMin + progDepth * (double)(depthMax - depthMin))));
+   int scoreTotal = (int)MathRound(10.0 + progDepth * 90.0);
+   int pointsTailleBougieEtZone = scoreTotal;
+   int pointsRetestsSR = 0;
+   int pointsProfondeurCassure = 0;
 
    int vitesseRetenue            = 2;
-   int nbVaguesSuperposeesRetenu = 3;
+   int nbVaguesSuperposeesRetenu = 10;
    bool plafondDerniereVague     = false;
 
-   if(scoreTotal < 40)
+   if(zigzagDepthRetenu <= 3)
    {
-      // 🟢 VITESSE 1 : Petite Liquidation (0 à 39 pts) -> Micro-Vagues (depth 1 à 3, 2 vagues max)
+      // 🟢 VITESSE 1 : Petit / Moyen Doji (Depth 1 à 3) -> 10 vagues superposées
       vitesseRetenue            = 1;
-      nbVaguesSuperposeesRetenu = 2;
-      plafondDerniereVague      = true;
    }
-   else if(scoreTotal < 70)
+   else if(zigzagDepthRetenu <= 5)
    {
-      // 🟡 VITESSE 2 : Liquidation Moyenne (40 à 69 pts) -> Vagues Moyennes (depth 3 à 5, 3 vagues)
+      // 🟡 VITESSE 2 : Grand Doji (Depth 4 à 5) -> 10 vagues superposées
       vitesseRetenue            = 2;
-      nbVaguesSuperposeesRetenu = 3;
-      plafondDerniereVague      = false;
    }
    else
    {
-      // 🔥 VITESSE 3 : Grosse Liquidation (70 à 100 pts) -> Grandes Vagues (depth 6 à 8, 4 vagues)
+      // 🔥 VITESSE 3 : Très Grand Doji (Depth 6 à 8) -> 10 vagues superposées
       vitesseRetenue            = 3;
-      nbVaguesSuperposeesRetenu = 4;
-      plafondDerniereVague      = false;
    }
 
    sortieScoreZZ.scoreTotal                = scoreTotal;
@@ -331,12 +288,12 @@ int CalculerPaliersUOPSMC(
       nbVaguesSection = 1;
    }
 
-   // Lecture de DROITE vers la GAUCHE (de la vague la plus récente V1 vers la plus ancienne)
-   // Règle de Plage de Prix Consommée : dès qu'une vague a consommé une plage de prix, les vagues
-   // plus anciennes à gauche n'ont plus le droit d'utiliser ni d'additionner sur cette plage !
-   bool   aPlageConsommee = false;
-   double consommeMin     = DBL_MAX;
-   double consommeMax     = -DBL_MAX;
+   // Lecture de DROITE vers la GAUCHE (de la vague la plus récente V1 vers la plus ancienne V10)
+   // Règle de Plages de Prix Consommées : chaque vague conserve son propre intervalle [min, max] consommé
+   // afin que deux vagues séparées ne bloquent pas artificiellement l'espace intermédiaire !
+   double consommeMins[14];
+   double consommeMaxs[14];
+   int    nbPlagesConsommees = 0;
 
    for(int vIdx = nbVaguesSection - 1; vIdx >= 0; vIdx--)
    {
@@ -365,8 +322,16 @@ int CalculerPaliersUOPSMC(
          if(hautT < vagueMin || basT > vagueMax)
             continue;
 
-         // Si cette tranche tombe dans la plage déjà consommée par une vague plus récente (à droite) : IGNORÉE !
-         bool dejaDansPlage = aPlageConsommee && (centreT >= consommeMin && centreT <= consommeMax);
+         // Si cette tranche tombe dans l'une des plages déjà consommées par une vague plus récente (à droite) : IGNORÉE !
+         bool dejaDansPlage = false;
+         for(int pc = 0; pc < nbPlagesConsommees; pc++)
+         {
+            if(centreT >= consommeMins[pc] && centreT <= consommeMaxs[pc])
+            {
+               dejaDansPlage = true;
+               break;
+            }
+         }
          if(trancheConsommee[t] || dejaDansPlage)
             continue;
 
@@ -383,16 +348,11 @@ int CalculerPaliersUOPSMC(
          trancheConsommee[t] = true;
       }
 
-      if(!aPlageConsommee)
+      if(nbPlagesConsommees < 14)
       {
-         consommeMin     = vagueMin;
-         consommeMax     = vagueMax;
-         aPlageConsommee = true;
-      }
-      else
-      {
-         consommeMin = MathMin(consommeMin, vagueMin);
-         consommeMax = MathMax(consommeMax, vagueMax);
+         consommeMins[nbPlagesConsommees] = vagueMin;
+         consommeMaxs[nbPlagesConsommees] = vagueMax;
+         nbPlagesConsommees++;
       }
    }
 
@@ -407,9 +367,12 @@ int CalculerPaliersUOPSMC(
       }
    }
 
-   double seuilDense = (nbTranchesActives > 0)
-      ? MathMax(1.5, (sommeDensites / (double)nbTranchesActives) * 0.85)
-      : 1.5;
+   // Seuil de chevauchement "Bleu Foncé" aligné à 100% avec l'application TypeScript (3 bougies par défaut, 2 en micro-vagues)
+   double seuilDense = (nbVaguesSuperposees <= 2) ? 2.0 : 3.0;
+   if(nbTranchesActives > 0 && (sommeDensites / (double)nbTranchesActives) < seuilDense)
+   {
+      seuilDense = MathMax(1.5, (sommeDensites / (double)nbTranchesActives) * 0.85);
+   }
 
    // Regroupement des tranches situées devant le prix d'entrée avec absorption des creux <= 5%
    bool estAchat = (directionSetup == DIRECTION_ACHAT);

@@ -98,10 +98,10 @@ input bool                         InpActiverZigZagDynamique     = true;        
 input int                          InpZigZagDepthMin             = 1;           // Taille minimale des vagues ZigZag (1 = petite liquidation)
 input int                          InpZigZagDepthMax             = 8;           // Taille maximale des vagues ZigZag (8 = forte liquidation)
 input int                          InpZigZagDepthSecours         = 8;           // Profondeur ZigZag fixe si le mode dynamique est désactivé
-input int                          InpNbVaguesSuperposees        = 4;           // Nombre de vagues ZigZag superposées dans l'UOP
-input ENUM_TYPE_CHEVAUCHEMENT_UOP  InpTypeChevauchementUOP       = UOP_PONDERE; // Anatomie UOP (Pondéré Corps/Mèches, Corps seul, Complet)
-input double                       InpPoidsCorpsUOP              = 1.0;         // Poids attribué au corps de la bougie dans l'UOP
-input double                       InpPoidsMecheUOP              = 0.25;        // Poids attribué aux mèches dans l'UOP
+input int                          InpNbVaguesSuperposees        = 10;                  // Nombre de vagues ZigZag superposées dans l'UOP (10 dernières vagues)
+input ENUM_TYPE_CHEVAUCHEMENT_UOP  InpTypeChevauchementUOP       = UOP_CORPS_ET_MECHES; // Anatomie UOP (Corps et Mèches par défaut)
+input double                       InpPoidsCorpsUOP              = 1.0;                 // Poids attribué au corps de la bougie dans l'UOP
+input double                       InpPoidsMecheUOP              = 1.0;                 // Poids attribué aux mèches dans l'UOP
 input bool                         InpExigerAutorouteUOP         = true;        // Exiger une vraie autoroute fluide UOP en face du trade
 input double                       InpMinTauxAutoroute           = 1.5;         // Taux minimum de chevauchement pour valider l'autoroute
 input bool                         InpActiverFiltrePlageTP             = true;                 // Exiger que le Doji soit l'extrême absolu depuis la bougie TP

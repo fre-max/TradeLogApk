@@ -1,12 +1,20 @@
 import React, { useState, useMemo } from 'react';
+import type { Bougie } from '@/lib/chartDataHelper';
 import type { SetupOrchestreSMC, ZoneShvedAvecScore } from '@/lib/indicators/favoris/orchestrateurSMC';
-import { calculerPorteeDynamiqueUOP } from '@/lib/indicators/favoris/orchestrateurSMC';
+import {
+  calculerPorteeDynamiqueUOP,
+  recalculerSetupAvecProfondeurZigZag,
+} from '@/lib/indicators/favoris/orchestrateurSMC';
 
 interface DiagnosticVoletLateralSMCProps {
   // Le setup réel actuellement sélectionné
   setup: SetupOrchestreSMC;
   // Liste complète des setups détectés pour la navigation
   setupsTotaux?: SetupOrchestreSMC[];
+  // Bougies visibles du graphique (pour recalculer en temps réel le ZigZag et le Volume Profile UOP selon la Profondeur)
+  bougies?: Bougie[];
+  // Callback de modification en temps réel de la variable « Profondeur » (zigzagDepth) pour ce setup
+  onChangeProfondeur?: (nouvelleProfondeur: number | null) => void;
   // Callback lors du changement de setup
   onSelectSetup?: (setup: SetupOrchestreSMC) => void;
   // Fermeture du volet
@@ -26,12 +34,48 @@ interface DiagnosticVoletLateralSMCProps {
 export function DiagnosticVoletLateralSMC({
   setup,
   setupsTotaux = [],
+  bougies = [],
+  onChangeProfondeur,
   onSelectSetup,
   onClose,
   onSimulationChange,
 }: DiagnosticVoletLateralSMCProps) {
   // État de repliement du volet (mode réduit pour libérer tout le graphique si besoin)
   const [estReplie, setEstReplie] = useState(false);
+
+  // Valeurs de la variable « Profondeur » (zigzagDepth) pour ce setup
+  const profondeurOriginale =
+    setup.profondeurZigZagOriginale ??
+    setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu ??
+    4;
+  const profondeurActuelle =
+    setup.profondeurZigZagPersonnalisee ??
+    setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu ??
+    profondeurOriginale;
+  const estProfondeurModifiee = profondeurActuelle !== profondeurOriginale;
+
+  // Comparateur en temps réel des Profondeurs 1 à 8 pour voir laquelle aurait le mieux convenu à ce trade
+  const comparatifProfondeurs = useMemo(() => {
+    if (!bougies || bougies.length === 0) return [];
+    const liste = [1, 2, 3, 4, 5, 6, 7, 8].map((prof) => {
+      const sim = recalculerSetupAvecProfondeurZigZag(setup, bougies, prof);
+      return {
+        profondeur: prof,
+        prixTP: sim.prixTP,
+        ratioRR: sim.ratioRR ?? 0,
+        resultatTrade: sim.resultatTrade,
+        nbVagues: sim.detailsScoreLiquidationZigZag?.nbVaguesSuperposeesRetenu ?? 3,
+      };
+    });
+    return liste;
+  }, [setup, bougies]);
+
+  // Identifie la Profondeur ayant donné le meilleur ratio R:R parmi celles qui ont touché le TP
+  const meilleureProfondeurGagnante = useMemo(() => {
+    const gagnantes = comparatifProfondeurs.filter((c) => c.resultatTrade === 'TP_TOUCHE');
+    if (gagnantes.length === 0) return null;
+    return gagnantes.reduce((best, curr) => (curr.ratioRR > best.ratioRR ? curr : best), gagnantes[0]).profondeur;
+  }, [comparatifProfondeurs]);
 
   // Valeurs réelles issues du calcul initial
   const carburantReel = setup.carburantInitial ?? setup.detailsCarburant?.carburantTotal ?? 300;
@@ -240,6 +284,153 @@ export function DiagnosticVoletLateralSMC({
         {/* ═══════════════ ONGLET SIMULATION TP & UOP ═══════════════ */}
         {ongletActif === 'simulation' && (
           <>
+            {/* ─── 🌊 CONTRÔLE EN TEMPS RÉEL DE LA VARIABLE « PROFONDEUR » (ZIGZAG DEPTH) PAR SETUP ─── */}
+            <div className="p-3 rounded-xl bg-gradient-to-br from-purple-950/40 to-slate-900/80 border border-purple-500/40 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-purple-300 text-xs flex items-center gap-1.5">
+                  🌊 Variable « Profondeur » (ZigZag)
+                </span>
+                {estProfondeurModifiee ? (
+                  <button
+                    onClick={() => onChangeProfondeur && onChangeProfondeur(null)}
+                    className="text-[9.5px] px-2 py-0.5 rounded bg-purple-900/80 hover:bg-purple-800 text-purple-200 border border-purple-400/40 font-semibold transition-colors"
+                    title="Revenir à la valeur calculée automatiquement par l'indicateur"
+                  >
+                    ↺ Auto ({profondeurOriginale})
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-950/80 text-purple-300 border border-purple-500/30">
+                    Auto : {profondeurOriginale}
+                  </span>
+                )}
+              </div>
+
+              {/* Boutons rapides 1 à 8 */}
+              <div className="grid grid-cols-8 gap-1">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((val) => {
+                  const estActif = profondeurActuelle === val;
+                  const estAuto = profondeurOriginale === val;
+                  const estIdéal = meilleureProfondeurGagnante === val;
+                  return (
+                    <button
+                      key={val}
+                      onClick={() => onChangeProfondeur && onChangeProfondeur(val)}
+                      className={`relative py-1.5 rounded-lg font-mono font-bold text-xs transition-all border ${
+                        estActif
+                          ? estProfondeurModifiee
+                            ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-md scale-105'
+                            : 'bg-purple-600 text-white border-purple-400 shadow-md scale-105'
+                          : estAuto
+                            ? 'bg-purple-950/80 text-purple-200 border-purple-500/50 hover:bg-purple-900'
+                            : 'bg-slate-800/80 text-slate-300 border-white/10 hover:bg-slate-700'
+                      }`}
+                      title={
+                        estAuto
+                          ? `Profondeur ${val} (Valeur Auto de l'indicateur)`
+                          : `Tester la Profondeur ${val} en direct sur ce setup`
+                      }
+                    >
+                      {val}
+                      {estIdéal && (
+                        <span
+                          className="absolute -top-1 -right-1 text-[8px]"
+                          title="Meilleure Profondeur gagnante (TP Touché avec le meilleur R:R)"
+                        >
+                          🏆
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Curseur continu (1 à 15) pour tester aussi au-delà de 8 si souhaité */}
+              <div className="space-y-1 pt-0.5">
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-slate-400">Ajustement fin (1 à 15) :</span>
+                  <span className="font-mono font-bold text-purple-200">
+                    Profondeur = {profondeurActuelle}{' '}
+                    {estProfondeurModifiee ? `(Auto: ${profondeurOriginale})` : '(Auto)'}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="15"
+                  step="1"
+                  value={profondeurActuelle}
+                  onChange={(e) => onChangeProfondeur && onChangeProfondeur(Number(e.target.value))}
+                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-400"
+                />
+              </div>
+
+              {/* 📊 Tableau comparatif instantané : Quelle Profondeur (1 à 8) aurait le mieux convenu pour ce trade ? */}
+              {comparatifProfondeurs.length > 0 && (
+                <div className="pt-1 space-y-1">
+                  <div className="text-[10px] font-bold text-slate-300 flex items-center justify-between">
+                    <span>📊 Comparatif Profondeurs (1 à 8) sur ce trade :</span>
+                    <span className="text-[9px] text-slate-400 font-normal">Cliquez pour afficher</span>
+                  </div>
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-black/35 divide-y divide-white/5">
+                    {comparatifProfondeurs.map((item) => {
+                      const estSelectionne = item.profondeur === profondeurActuelle;
+                      const estAuto = item.profondeur === profondeurOriginale;
+                      const estIdeal = item.profondeur === meilleureProfondeurGagnante;
+                      return (
+                        <button
+                          key={item.profondeur}
+                          onClick={() => onChangeProfondeur && onChangeProfondeur(item.profondeur)}
+                          className={`w-full px-2 py-1.5 flex items-center justify-between text-left text-[10px] font-mono transition-colors ${
+                            estSelectionne
+                              ? 'bg-purple-900/50 text-white font-bold'
+                              : 'hover:bg-white/5 text-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.2 rounded bg-slate-800 text-purple-300 font-bold">
+                              Prof. {item.profondeur}
+                            </span>
+                            {estAuto && (
+                              <span className="text-[8.5px] px-1 rounded bg-purple-950 text-purple-300 border border-purple-500/40">
+                                Auto
+                              </span>
+                            )}
+                            {estIdeal && (
+                              <span className="text-[8.5px] px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                🏆 Idéal
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-300">
+                              TP: {item.prixTP !== undefined ? item.prixTP.toFixed(4) : '-'}
+                            </span>
+                            <span className="text-cyan-300 font-bold">{item.ratioRR}R</span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                                item.resultatTrade === 'TP_TOUCHE'
+                                  ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-500/40'
+                                  : item.resultatTrade === 'SL_TOUCHE'
+                                    ? 'bg-rose-950/90 text-rose-300 border border-rose-500/40'
+                                    : 'bg-slate-800 text-slate-400'
+                              }`}
+                            >
+                              {item.resultatTrade === 'TP_TOUCHE'
+                                ? '✅ TP'
+                                : item.resultatTrade === 'SL_TOUCHE'
+                                  ? '❌ SL'
+                                  : '⏳'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* 🎯 Validation Plage TP UOP */}
             {setupAffiche.infoPlageTP && (
               <div className="p-2.5 rounded-xl bg-cyan-950/25 border border-cyan-500/40 text-[10.5px] space-y-1">

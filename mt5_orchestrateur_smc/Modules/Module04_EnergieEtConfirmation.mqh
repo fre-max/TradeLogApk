@@ -217,6 +217,16 @@ void VerifierConfirmationEtCycleDeVieSMC(
    setup.tempsSortieTrade = 0;
 
    // 1️⃣ Observation des N bougies de confirmation (bougies clôturées uniquement)
+   // Chaque bougie doit respecter le SL ET rester sous Close(B2) + AmplitudeDuDoji (en Achat) ou au-dessus de Close(B2) - AmplitudeDuDoji (en Vente)
+   int idxB1 = MathMax(0, setup.indexDoji - 1);
+   double ampDoji = MathMax(
+      bougies[setup.indexDoji].high - bougies[setup.indexDoji].low,
+      bougies[idxB1].high - bougies[idxB1].low
+   );
+   double borneRange = estAchat
+      ? (setup.prixEntree + ampDoji)
+      : (setup.prixEntree - ampDoji);
+
    int finObs = MathMin(indexDerniereCloturee, indexFinConfirmation);
    for(int k = setup.indexDoji + 1; k <= finObs; k++)
    {
@@ -224,8 +234,11 @@ void VerifierConfirmationEtCycleDeVieSMC(
       bool slCasse = estAchat
          ? (bougies[k].low <= setup.prixSL)
          : (bougies[k].high >= setup.prixSL);
+      bool depasseBorneRange = estAchat
+         ? (bougies[k].close > borneRange)
+         : (bougies[k].close < borneRange);
 
-      if(slCasse)
+      if(slCasse || depasseBorneRange)
       {
          setup.statut = SETUP_ANNULE;
          return;

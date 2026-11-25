@@ -5166,6 +5166,9 @@ return {
     parametres: {
       nbBougiesConfirmation: 3,
       afficherSetupsAnnules: false,
+      bornerRangeConfirmationParAmplitudeDoji: true,
+      typeVerificationBorneRange: 'CLOTURE',
+      multiplicateurAmplitudeBorneRange: 1.0,
       masquerSetupsTermines: true,
       modeCalculTP: 'ENERGIE_FRICTION',
       palierTPVise: 'TP1',
@@ -5190,12 +5193,15 @@ return {
       afficherProfilVolumeUOP: true,
       afficherSegmentSL: true,
       afficherSegmentTP: true,
+      afficherOrderBlocksProteges: true,
+      activerCalqueFractalHTF: true,
+      timeframeMaitreFractal: '4h',
       dureeSegmentsCibles: 3,
       activerZigZagDynamique: true,
       zigzagDepthMin: 1,
       zigzagDepthMax: 8,
       zigzagDepth: 4,
-      nbVaguesSuperposees: 4,
+      nbVaguesSuperposees: 10,
       activerAchat: true,
       activerVente: true,
       activerFiltreTaille: true,
@@ -5214,9 +5220,9 @@ return {
       comportementAbsenceSR: 'REPLI_TP_UOP',
       tauxMinChevauchementTrajetSR: 1.5,
       couvertureMinTrajetSRPourcent: 70,
-      typeChevauchementUOP: 'PONDERE',
+      typeChevauchementUOP: 'CORPS_ET_MECHES',
       poidsCorpsUOP: 1.0,
-      poidsMecheUOP: 0.25,
+      poidsMecheUOP: 1.0,
       bullColor: '#00E676',
       bearColor: '#F23645',
     },
@@ -5317,6 +5323,37 @@ return {
         description: 'Affiche un repère discret sur les signaux invalidés par une sortie du range',
         type: 'boolean',
         valeurParDefaut: false,
+        groupe: 'Validation du Range (Confirmation)',
+      },
+      {
+        cle: 'bornerRangeConfirmationParAmplitudeDoji',
+        label: 'Borner le Range (3 Bougies) par Clôture B2 + Amplitude Doji',
+        description: 'Exige que chacune des 3 bougies du range reste comprise entre le SL et Close(B2) + AmplitudeDuDoji (en Achat) ou Close(B2) - AmplitudeDuDoji (en Vente)',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Validation du Range (Confirmation)',
+      },
+      {
+        cle: 'typeVerificationBorneRange',
+        label: 'Vérification de la Borne Haute/Basse du Range',
+        description: 'Choisir si c\'est la clôture (Close) ou toute la bougie (mèche comprise High/Low) qui ne doit pas dépasser Close(B2) ± AmplitudeDuDoji',
+        type: 'select',
+        valeurParDefaut: 'CLOTURE',
+        options: [
+          { label: 'Clôture des 3 bougies (Close)', value: 'CLOTURE' },
+          { label: 'Bougie entière avec mèche (High / Low)', value: 'MECHE' },
+        ],
+        groupe: 'Validation du Range (Confirmation)',
+      },
+      {
+        cle: 'multiplicateurAmplitudeBorneRange',
+        label: 'Multiplicateur d\'Amplitude du Doji pour le Range',
+        description: 'Multiplicateur appliqué à l\'amplitude du Doji pour définir la borne du range (1.0 = Close(B2) ± 1x AmplitudeDuDoji)',
+        type: 'number',
+        valeurParDefaut: 1.0,
+        min: 0.25,
+        max: 5.0,
+        step: 0.25,
         groupe: 'Validation du Range (Confirmation)',
       },
       {
@@ -5508,13 +5545,13 @@ return {
       {
         cle: 'typeChevauchementUOP',
         label: 'Traitement Anatomique des Bougies UOP',
-        description: 'PONDERE (Corps=1.0, Mèches=0.25 : filtre le bruit), CORPS_SEUL (Ignore 100% des mèches) ou CORPS_ET_MECHES (Égalitaire)',
+        description: 'CORPS_ET_MECHES (Prend en compte toute la bougie : corps + mèches = 1.0), PONDERE (Corps=1.0, Mèches=0.25) ou CORPS_SEUL',
         type: 'select',
-        valeurParDefaut: 'PONDERE',
+        valeurParDefaut: 'CORPS_ET_MECHES',
         options: [
-          { label: 'Pondéré (Corps = 1.0, Mèches = 0.25 - Recommandé)', value: 'PONDERE' },
-          { label: 'Corps Seul (Ignore les mèches éphémères)', value: 'CORPS_SEUL' },
-          { label: 'Corps et Mèches (Classique / Égalitaire)', value: 'CORPS_ET_MECHES' },
+          { label: 'Corps et Mèches (Toute la bougie High..Low - Recommandé)', value: 'CORPS_ET_MECHES' },
+          { label: 'Pondéré (Corps = 1.0, Mèches = 0.25)', value: 'PONDERE' },
+          { label: 'Corps Seul (Ignore les mèches)', value: 'CORPS_SEUL' },
         ],
         groupe: 'Take Profit Optimal & Proportionnalité',
       },
@@ -5531,10 +5568,10 @@ return {
       },
       {
         cle: 'poidsMecheUOP',
-        label: 'Poids des Mèches Éphémères UOP',
-        description: 'Densité de liquidité accordée aux mèches de passage (défaut: 0.25)',
+        label: 'Poids des Mèches de Bougie UOP',
+        description: 'Densité de liquidité accordée aux mèches des bougies (défaut: 1.0)',
         type: 'number',
-        valeurParDefaut: 0.25,
+        valeurParDefaut: 1.0,
         min: 0.0,
         max: 1.0,
         step: 0.05,
@@ -5617,11 +5654,11 @@ return {
       {
         cle: 'zigzagDepthMax',
         label: 'Taille Max des Vagues ZigZag (Forte Liquidation)',
-        description: 'Profondeur maximale du ZigZag lorsque notre Doji de liquidation est massif (défaut: 8)',
+        description: 'Profondeur maximale du ZigZag lorsque notre Doji de liquidation est massif (défaut: 8, max: 8)',
         type: 'number',
         valeurParDefaut: 8,
-        min: 2,
-        max: 20,
+        min: 1,
+        max: 8,
         step: 1,
         groupe: 'Vagues ZigZag Dynamiques (Score /100)',
       },
@@ -5687,6 +5724,37 @@ return {
         max: 100,
         step: 5,
         groupe: 'Cible de Liquidité S/R Actif + Chevauchement',
+      },
+      // ─── 🔬 Mode Cockpit Fractal HTF ➔ LTF (Backtest Manuel) ───
+      {
+        cle: 'afficherOrderBlocksProteges',
+        label: '📦 Afficher les Rectangles d\'Order Blocks Protégés',
+        description: 'Trace les rectangles des Order Blocks classiques SMC protégés dans la plage du setup [SL ➔ Close(B2) ± AmplitudeDoji] et met en évidence le Dernier OB Protégé',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Mode Cockpit Fractal HTF ➔ LTF (Backtest Manuel)',
+      },
+      {
+        cle: 'activerCalqueFractalHTF',
+        label: '🏛️ Activer le Calque Maître HTF en Timeframe LTF (M15 / M30)',
+        description: 'Lorsque vous basculez en M15 ou M30 pendant le Replay Manuel, conserve à l\'écran la Grande Plage Protégée H4, le Grand TP H4, les Order Blocks LTF internes et détecte les seconds setups LTF sans filtre UOP',
+        type: 'boolean',
+        valeurParDefaut: true,
+        groupe: 'Mode Cockpit Fractal HTF ➔ LTF (Backtest Manuel)',
+      },
+      {
+        cle: 'timeframeMaitreFractal',
+        label: 'Timeframe Maître HTF (Plage & Grand TP)',
+        description: 'Timeframe supérieur utilisé pour déterminer la plage protégée [SL_HTF ➔ Close(B2) ± AmplitudeDoji] et le Grand TP Premier (défaut: 4h)',
+        type: 'select',
+        valeurParDefaut: '4h',
+        options: [
+          { label: 'H4 (4 Heures - Recommandé)', value: '4h' },
+          { label: 'H1 (1 Heure)', value: '1h' },
+          { label: 'D1 (Journalier)', value: '1d' },
+          { label: 'M30 (30 Minutes)', value: '30m' },
+        ],
+        groupe: 'Mode Cockpit Fractal HTF ➔ LTF (Backtest Manuel)',
       },
     ],
     creeLe: '2026-10-18T00:00:00.000Z',
@@ -5972,6 +6040,31 @@ export function recupererIndicateursStockes(): IndicatorScript[] {
           }
           if (paramsMigres.couleurZigzag === undefined) {
             paramsMigres.couleurZigzag = '#FFA726';
+            aModifieAuVol = true;
+          }
+        }
+
+        // 🔄 Migration automatique du cache localStorage de l'Orchestrateur SMC (plafond strict zigzagDepth de 1 à 8)
+        if (s.id === 'script-orchestrateur-smc') {
+          if (typeof paramsMigres.zigzagDepthMax === 'number' && paramsMigres.zigzagDepthMax > 8) {
+            paramsMigres.zigzagDepthMax = 8;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.zigzagDepthMin === 4 || (typeof paramsMigres.zigzagDepthMin === 'number' && paramsMigres.zigzagDepthMin > 8)) {
+            paramsMigres.zigzagDepthMin = 1;
+            aModifieAuVol = true;
+          }
+          if (typeof paramsMigres.zigzagDepth === 'number' && paramsMigres.zigzagDepth > 8) {
+            paramsMigres.zigzagDepth = 4;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.nbVaguesSuperposees === 4 || paramsMigres.nbVaguesSuperposees === undefined) {
+            paramsMigres.nbVaguesSuperposees = 10;
+            aModifieAuVol = true;
+          }
+          if (paramsMigres.typeChevauchementUOP === 'PONDERE' || paramsMigres.typeChevauchementUOP === undefined) {
+            paramsMigres.typeChevauchementUOP = 'CORPS_ET_MECHES';
+            paramsMigres.poidsMecheUOP = 1.0;
             aModifieAuVol = true;
           }
         }

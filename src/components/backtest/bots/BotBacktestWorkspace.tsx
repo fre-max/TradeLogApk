@@ -60,6 +60,9 @@ export function BotBacktestWorkspace() {
   const setAnneeCloud = useBacktestStore((s) => s.setAnneeCloud);
   const setTimeframeSauvegarde = useBacktestStore((s) => s.setTimeframeSauvegarde);
   const lancerRestaurationContexte = useBacktestStore((s) => s.lancerRestaurationContexte);
+  const demarrerTesteurVisuelBot = useBacktestStore((s) => s.demarrerTesteurVisuelBot);
+  const couperReplayAIndex = useBacktestStore((s) => s.couperReplayAIndex);
+  const setEstEnLecture = useBacktestStore((s) => s.setEstEnLecture);
 
   // Paire et UT affichées
   const paireActuelle = actif && actif !== 'Aucun actif' ? actif : paireCloud || 'XAUUSD';
@@ -93,9 +96,17 @@ export function BotBacktestWorkspace() {
 
   // ─── Paramètres de configuration du Bot ─────────────────────────────────
   const [palierTPVise, setPalierTPVise] = useState<'AUTO' | 'TP1' | 'TP2' | 'TP3'>('TP1');
-  const [typeChevauchement, setTypeChevauchement] = useState<TypeChevauchementUOP>('PONDERE');
+  const [typeChevauchement, setTypeChevauchement] = useState<TypeChevauchementUOP>('CORPS_ET_MECHES');
   const [capitalInitial, setCapitalInitial] = useState<number>(10000);
   const [risquePourcent, setRisquePourcent] = useState<number>(1.0);
+
+  // ─── 🔬 Mode Fractal Multi-Timeframe (Setup LTF à l'intérieur de la plage du Setup HTF) ───
+  const [activerModeFractal, setActiverModeFractal] = useState<boolean>(false);
+  const [timeframeHTFFractal, setTimeframeHTFFractal] = useState<string>('4h');
+  const [timeframeLTFFractal, setTimeframeLTFFractal] = useState<string>('15m');
+  const [filtreZoneOBFractal, setFiltreZoneOBFractal] = useState<
+    'TOUTE_LA_PLAGE' | 'TOUT_OB_PROTEGE' | 'DERNIER_OB_UNIQUEMENT'
+  >('TOUTE_LA_PLAGE');
   
   // ─── Réglages de Fréquence des Setups SMC (Répond à la rareté des positions) ───
   const [modeFrequence, setModeFrequence] = useState<'DYNAMIQUE' | 'EQUILIBRE' | 'STRICT' | 'PERSONNALISE'>('DYNAMIQUE');
@@ -193,12 +204,22 @@ export function BotBacktestWorkspace() {
 
     try {
       // 1. Exécution du moteur de simulation batch avec donneesM1 et filtres calibrés
+      const tfSession = activerModeFractal
+        ? `${timeframeHTFFractal.toUpperCase()}➔${timeframeLTFFractal.toUpperCase()}`
+        : timeframeActuel;
+
       const rapport = executerSimulationOrchestrateurSMC(donneesCompletes, {
         capitalInitial,
         risquePourcent,
         paire: paireActuelle,
         timeframe: timeframeActuel,
         donneesM1: donneesM1 && donneesM1.length > 0 ? donneesM1 : donneesCompletes,
+        modeFractal: {
+          actif: activerModeFractal,
+          timeframeHTF: timeframeHTFFractal,
+          timeframeLTF: timeframeLTFFractal,
+          filtreZoneOB: filtreZoneOBFractal,
+        },
         parametresSMC: {
           palierTPVise,
           typeChevauchementUOP: typeChevauchement,
@@ -212,7 +233,7 @@ export function BotBacktestWorkspace() {
       });
 
       // 2. Enregistrement dans le Journal dédié aux bots
-      const nouvelleSession = enregistrerRapportSimulation(rapport, paireActuelle, timeframeActuel);
+      const nouvelleSession = enregistrerRapportSimulation(rapport, paireActuelle, tfSession);
 
       addToast(
         `✅ Simulation terminée : ${nouvelleSession.totalTrades} trades exécutés (Win Rate : ${nouvelleSession.winratePourcentage}%)`,
@@ -225,6 +246,52 @@ export function BotBacktestWorkspace() {
     } finally {
       setEnSimulation(false);
     }
+  };
+
+  // ─── Action : Lancer le Testeur de Stratégie Visuel (Style MT5) ──────────
+  const lancerBacktestVisuelStyleMT5 = () => {
+    if (!donneesCompletes || donneesCompletes.length < 30) {
+      addToast(
+        '⚠️ Aucune donnée disponible. Cliquez sur "Charger les Bougies" d\'abord.',
+        'info'
+      );
+      return;
+    }
+
+    const tfInitialGraphique = activerModeFractal ? timeframeLTFFractal : timeframeChoisi;
+    setTimeframeSauvegarde(tfInitialGraphique);
+
+    demarrerTesteurVisuelBot({
+      actif: true,
+      modeFractal: activerModeFractal,
+      timeframeHTF: timeframeHTFFractal,
+      timeframeLTF: timeframeLTFFractal,
+      filtreZoneOB: filtreZoneOBFractal,
+      capitalInitial,
+      risquePourcent,
+      pauseAutoSurSetupHTF: false,
+      pauseAutoSurTradeLTF: false,
+      parametresSMC: {
+        palierTPVise,
+        typeChevauchementUOP: typeChevauchement,
+        scoreMinimumShved: scoreShvedMin,
+        exigerAutorouteUOP: exigerAutoroute,
+        minTauxChevauchementAutoroute: seuilAutoroute,
+        activerFiltrePlageTP,
+        exigerDebutEtFinDansPlage: false,
+      },
+    });
+
+    // Positionner le Replay vers le début (bougie 80) pour voir défiler les bougies comme sur MT5
+    const idxDepart = Math.min(80, Math.max(20, Math.floor(donneesCompletes.length * 0.1)));
+    couperReplayAIndex(idxDepart);
+    setEstEnLecture(true);
+
+    addToast(
+      `🎬 Testeur Visuel MT5 démarré (${activerModeFractal ? `Fractal ${timeframeHTFFractal.toUpperCase()} ➔ ${timeframeLTFFractal.toUpperCase()}` : tfInitialGraphique.toUpperCase()}) ! Basculez librement entre H4 et M15 pendant le défilement.`,
+      'success'
+    );
+    setSearchParams({ mode: 'manuel' });
   };
 
   // ─── Action : Replay Link (Positionnement Précis sur le Graphique Replay) ─
@@ -587,6 +654,106 @@ export function BotBacktestWorkspace() {
           </div>
         </div>
 
+        {/* ─── 🔬 Mode Fractal Multi-Timeframe (Setup LTF dans la Plage du Setup HTF + Order Blocks Classiques SMC) ─── */}
+        <div
+          className={cn(
+            'rounded-xl p-4 space-y-3 border transition-all',
+            activerModeFractal
+              ? 'bg-purple-950/20 border-purple-500/50 shadow-sm'
+              : 'bg-bg/60 border-border/80'
+          )}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="text-base">🔬</span>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-txt uppercase tracking-wide">
+                  Mode Fractal Multi-Timeframe (Setup LTF dans Plage HTF)
+                </span>
+                <span className="text-[11px] text-txt3">
+                  1er Setup en HTF (avec chevauchement 10 vagues + Grand TP) ➔ 2ème Setup en LTF dans la plage (SANS filtre chevauchement + Petit SL)
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setActiverModeFractal(!activerModeFractal)}
+              className={cn(
+                'px-3.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer shrink-0',
+                activerModeFractal
+                  ? 'bg-purple-600 text-white border-purple-400 shadow-sm'
+                  : 'bg-surface hover:bg-surface2 text-txt2 border-border'
+              )}
+            >
+              {activerModeFractal ? '✅ Mode Fractal ACTIF (HTF ➔ LTF)' : 'Activer le Mode Fractal HTF ➔ LTF'}
+            </button>
+          </div>
+
+          {activerModeFractal && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-purple-500/30 text-xs">
+              {/* 1. Timeframe Maître HTF */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-purple-300 uppercase">
+                  1️⃣ Timeframe Maître (HTF — Grand TP & Plage)
+                </label>
+                <select
+                  value={timeframeHTFFractal}
+                  onChange={(e) => setTimeframeHTFFractal(e.target.value)}
+                  className="w-full bg-bg border border-purple-500/40 rounded-lg px-2.5 py-1.5 text-xs text-txt outline-none focus:border-purple-400"
+                >
+                  <option value="4h">H4 (4h - Recommandé)</option>
+                  <option value="1h">H1 (1h)</option>
+                  <option value="1d">D1 (1d)</option>
+                  <option value="30m">M30 (30m)</option>
+                </select>
+                <p className="text-[10px] text-txt3">
+                  Calcule le Taux de Chevauchement UOP (10 vagues), les Order Blocks protégés et le Grand TP.
+                </p>
+              </div>
+
+              {/* 2. Timeframe Second Setup LTF */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-cyan-300 uppercase">
+                  2️⃣ Timeframe Interne (LTF — 2ème Setup & Petit SL)
+                </label>
+                <select
+                  value={timeframeLTFFractal}
+                  onChange={(e) => setTimeframeLTFFractal(e.target.value)}
+                  className="w-full bg-bg border border-cyan-500/40 rounded-lg px-2.5 py-1.5 text-xs text-txt outline-none focus:border-cyan-400"
+                >
+                  <option value="15m">M15 (15m - Recommandé)</option>
+                  <option value="30m">M30 (30m)</option>
+                  <option value="5m">M5 (5m)</option>
+                  <option value="1m">M1 (1m)</option>
+                </select>
+                <p className="text-[10px] text-txt3">
+                  Détecte notre Doji + Range 3 bougies dans la plage HTF (sans recalculer le chevauchement).
+                </p>
+              </div>
+
+              {/* 3. Filtre Order Block Classique SMC Protégé */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-emerald-300 uppercase">
+                  3️⃣ Zone & Order Blocks Classiques SMC
+                </label>
+                <select
+                  value={filtreZoneOBFractal}
+                  onChange={(e) => setFiltreZoneOBFractal(e.target.value as any)}
+                  className="w-full bg-bg border border-emerald-500/40 rounded-lg px-2.5 py-1.5 text-xs text-txt outline-none focus:border-emerald-400"
+                >
+                  <option value="TOUTE_LA_PLAGE">Toute la Plage Protégée du Setup HTF</option>
+                  <option value="TOUT_OB_PROTEGE">Contact avec un Order Block SMC Protégé</option>
+                  <option value="DERNIER_OB_UNIQUEMENT">Uniquement sur le Dernier OB (près du SL HTF)</option>
+                </select>
+                <p className="text-[10px] text-txt3">
+                  Le Dernier OB (plus proche du SL HTF) est le rempart ayant la plus forte probabilité de tenir.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* 1. Palier TP Visé */}
           <div className="space-y-1.5">
@@ -623,8 +790,9 @@ export function BotBacktestWorkspace() {
               onChange={(e) => setTypeChevauchement(e.target.value as any)}
               className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-xs font-medium text-txt outline-none focus:border-accent transition-colors"
             >
+              <option value="CORPS_ET_MECHES">Corps et Mèches (Mèche = Corps = 1.0)</option>
               <option value="PONDERE">Pondéré (Corps 1.0 / Mèche 0.25)</option>
-              <option value="BRUT">Brut (Mèche = Corps = 1.0)</option>
+              <option value="CORPS_SEUL">Corps Seul (Ignore les mèches)</option>
             </select>
             <p className="text-[10px] text-txt3">
               Le mode pondéré filtre les faux chevauchements causés par de simples mèches isolées.
@@ -674,29 +842,48 @@ export function BotBacktestWorkspace() {
             </span>
           </div>
 
-          <button
-            id="btn-lancer-backtest-bot"
-            onClick={lancerSimulation}
-            disabled={enSimulation || !donneesCompletes || donneesCompletes.length < 30}
-            className={cn(
-              'w-full sm:w-auto px-5 py-2.5 rounded-lg text-xs md:text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm',
-              enSimulation || !donneesCompletes || donneesCompletes.length < 30
-                ? 'bg-surface2 text-txt3 cursor-not-allowed border border-border'
-                : 'bg-accent hover:bg-accent/90 text-white shadow-accent/20 hover:shadow-md'
-            )}
-          >
-            {enSimulation ? (
-              <>
-                <span className="animate-spin text-base">⏳</span>
-                <span>Calcul de l'Orchestrateur en cours...</span>
-              </>
-            ) : (
-              <>
-                <span className="text-base">⚡</span>
-                <span>Lancer le Backtest du Bot</span>
-              </>
-            )}
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+            <button
+              id="btn-lancer-backtest-visuel-mt5"
+              type="button"
+              onClick={lancerBacktestVisuelStyleMT5}
+              disabled={enSimulation || !donneesCompletes || donneesCompletes.length < 30}
+              className={cn(
+                'w-full sm:w-auto px-5 py-2.5 rounded-lg text-xs md:text-sm font-bold transition-all flex items-center justify-center gap-2 shadow-sm border cursor-pointer',
+                enSimulation || !donneesCompletes || donneesCompletes.length < 30
+                  ? 'bg-surface2 text-txt3 cursor-not-allowed border border-border'
+                  : 'bg-purple-600 hover:bg-purple-500 text-white border-purple-400 shadow-purple-500/20 hover:shadow-md'
+              )}
+              title="Ouvre le graphique Replay style Strategy Tester MT5 : voyez les bougies défiler, les plages H4, les Order Blocks M15, les positions TradingView et changez de Timeframe en direct !"
+            >
+              <span className="text-base">🎬</span>
+              <span>Backtest Visuel (Style MT5)</span>
+            </button>
+
+            <button
+              id="btn-lancer-backtest-bot"
+              onClick={lancerSimulation}
+              disabled={enSimulation || !donneesCompletes || donneesCompletes.length < 30}
+              className={cn(
+                'w-full sm:w-auto px-5 py-2.5 rounded-lg text-xs md:text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm',
+                enSimulation || !donneesCompletes || donneesCompletes.length < 30
+                  ? 'bg-surface2 text-txt3 cursor-not-allowed border border-border'
+                  : 'bg-accent hover:bg-accent/90 text-white shadow-accent/20 hover:shadow-md'
+              )}
+            >
+              {enSimulation ? (
+                <>
+                  <span className="animate-spin text-base">⏳</span>
+                  <span>Calcul de l'Orchestrateur en cours...</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-base">⚡</span>
+                  <span>Backtest Instantané (Stats)</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

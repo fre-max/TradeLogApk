@@ -9,6 +9,7 @@ import {
   trouverBougieContenantPrixTP,
   validerDojiAvecPlageTP,
   trouverCiblesLiquiditeSRAvecChevauchement,
+  recalculerSetupAvecProfondeurZigZag,
   type InfoValidationPlageTP,
 } from '../favoris/orchestrateurSMC';
 
@@ -564,79 +565,74 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
       (s) => s.id === 'script-orchestrateur-smc'
     );
     expect(scriptOrchestre).toBeDefined();
-    expect(scriptOrchestre?.parametres?.typeChevauchementUOP).toBe('PONDERE');
+    expect(scriptOrchestre?.parametres?.typeChevauchementUOP).toBe('CORPS_ET_MECHES');
     expect(scriptOrchestre?.parametres?.poidsCorpsUOP).toBe(1.0);
-    expect(scriptOrchestre?.parametres?.poidsMecheUOP).toBe(0.25);
+    expect(scriptOrchestre?.parametres?.poidsMecheUOP).toBe(1.0);
 
     const varType = scriptOrchestre?.definitionsVariables?.find(
       (v) => v.cle === 'typeChevauchementUOP'
     );
     expect(varType).toBeDefined();
     expect(varType?.type).toBe('select');
-    expect(varType?.valeurParDefaut).toBe('PONDERE');
-    expect(varType?.options?.map((o) => o.value)).toEqual(['PONDERE', 'CORPS_SEUL', 'CORPS_ET_MECHES']);
+    expect(varType?.valeurParDefaut).toBe('CORPS_ET_MECHES');
+    expect(varType?.options?.map((o) => o.value)).toEqual(['CORPS_ET_MECHES', 'PONDERE', 'CORPS_SEUL']);
   });
 
   it('ajuste dynamiquement zigzagDepth (de 1 à 8) selon la taille de la liquidation (Doji personnalisé)', () => {
-    // 1️⃣ VITESSE 1 — Petite liquidation : 0 retest (0/50), petit Doji (5/25), effleurement léger (5/25) -> 10/100 => zigzagDepth = 1
+    // 1️⃣ VITESSE 1 — Petit Doji (0.8x ATR) : même avec des retests S/R, seule la taille du Doji compte => zigzagDepth = 1
     const scoreFaible = calculerScoreLiquidationZigZag({
-      profondeurMeche: 0.5,      // 0.05x ATR (< 0.4x -> 5/25)
+      profondeurMeche: 0.5,
       hauteurMoyenne: 10,        // ATR = 10
-      amplitudeBougieSweep: 8,   // 0.8x ATR (< 1.2x -> 5/25)
-      epaisseurZoneSR: 2,        // 0.2x ATR
-      nombreRetests: 0,          // 0 retest -> 0/50
+      amplitudeBougieSweep: 8,   // 0.8x ATR (<= 1.2x -> zigzagDepth = 1)
+      epaisseurZoneSR: 2,
+      nombreRetests: 4,          // Ignoré volontairement pour ne pas gonfler zigzagDepth !
     });
 
     expect(scoreFaible.pointsRetestsSR).toBe(0);
-    expect(scoreFaible.pointsTailleBougieEtZone).toBe(5);
-    expect(scoreFaible.pointsProfondeurCassure).toBe(5);
+    expect(scoreFaible.pointsProfondeurCassure).toBe(0);
     expect(scoreFaible.scoreTotal).toBe(10);
     expect(scoreFaible.vitesseRetenue).toBe(1);
     expect(scoreFaible.categorieVagues).toBe('PETITES_VAGUES');
     expect(scoreFaible.zigzagDepthRetenu).toBe(1);
     expect(scoreFaible.zigzagBackstepRetenu).toBe(1);
-    expect(scoreFaible.nbVaguesSuperposeesRetenu).toBe(2);
-    expect(scoreFaible.plafondDerniereVagueActif).toBe(true);
+    expect(scoreFaible.nbVaguesSuperposeesRetenu).toBe(10);
+    expect(scoreFaible.plafondDerniereVagueActif).toBe(false);
 
-    // 2️⃣ VITESSE 2 — Liquidation moyenne : 2 retests (30/50), Doji moyen (15/25), mèche franche (15/25) -> 60/100 => zigzagDepth = 5
+    // 2️⃣ VITESSE 2 — Beau Doji (2.5x ATR) => zigzagDepth = 4 ou 5
     const scoreMoyen = calculerScoreLiquidationZigZag({
-      profondeurMeche: 6,        // 0.6x ATR (0.4 à 1.0x -> 15/25)
-      hauteurMoyenne: 10,
-      amplitudeBougieSweep: 14,  // 1.4x ATR -> 15/25
+      profondeurMeche: 6,
+      hauteurMoyenne: 10,        // ATR = 10
+      amplitudeBougieSweep: 25,  // 2.5x ATR -> zigzagDepth = 4
       epaisseurZoneSR: 5,
-      nombreRetests: 2,          // 2 retests -> 30/50
+      nombreRetests: 2,
       dureeVieBougiesSR: 25,
     });
 
-    expect(scoreMoyen.scoreTotal).toBe(60);
     expect(scoreMoyen.vitesseRetenue).toBe(2);
     expect(scoreMoyen.categorieVagues).toBe('VAGUES_MOYENNES');
     expect(scoreMoyen.zigzagDepthRetenu).toBeGreaterThanOrEqual(4);
     expect(scoreMoyen.zigzagDepthRetenu).toBeLessThanOrEqual(5);
     expect(scoreMoyen.zigzagBackstepRetenu).toBe(2);
-    expect(scoreMoyen.nbVaguesSuperposeesRetenu).toBe(3);
+    expect(scoreMoyen.nbVaguesSuperposeesRetenu).toBe(10);
     expect(scoreMoyen.plafondDerniereVagueActif).toBe(false);
 
-    // 3️⃣ VITESSE 3 — Grosse liquidation : 4 retests (50/50), grand Doji (25/25), plongeon profond (25/25) -> 100/100 => zigzagDepth = 8
+    // 3️⃣ VITESSE 3 — Très grand Doji massif (4.0x ATR) => zigzagDepth = 8
     const scoreMassif = calculerScoreLiquidationZigZag({
-      profondeurMeche: 15,       // 1.5x ATR (> 1.0x -> 25/25)
+      profondeurMeche: 15,
       hauteurMoyenne: 10,        // ATR = 10
-      amplitudeBougieSweep: 25,  // 2.5x ATR (>= 1.8x -> 25/25)
-      epaisseurZoneSR: 10,       // 1.0x ATR
-      nombreRetests: 4,          // 4 retests -> 50/50
+      amplitudeBougieSweep: 40,  // 4.0x ATR -> zigzagDepth = 8
+      epaisseurZoneSR: 10,
+      nombreRetests: 0,
     });
 
-    expect(scoreMassif.pointsRetestsSR).toBe(50);
-    expect(scoreMassif.pointsTailleBougieEtZone).toBe(25);
-    expect(scoreMassif.pointsProfondeurCassure).toBe(25);
     expect(scoreMassif.scoreTotal).toBe(100);
     expect(scoreMassif.vitesseRetenue).toBe(3);
     expect(scoreMassif.categorieVagues).toBe('GRANDES_VAGUES');
     expect(scoreMassif.zigzagDepthRetenu).toBe(8);
     expect(scoreMassif.zigzagBackstepRetenu).toBe(3);
-    expect(scoreMassif.nbVaguesSuperposeesRetenu).toBe(4);
-    expect(scoreMassif.resumeExplication).toContain('Score Liq: 100/100');
-    expect(scoreMassif.resumeExplication).toContain('ZigZag Depth: 8');
+    expect(scoreMassif.nbVaguesSuperposeesRetenu).toBe(10);
+    expect(scoreMassif.resumeExplication).toContain('Taille Doji: 4x ATR');
+    expect(scoreMassif.resumeExplication).toContain('ZigZag Depth: 8, 10 vagues');
   });
 
   it('attache detailsScoreLiquidationZigZag sur chaque setup généré par calculerOrchestrateurSMC', () => {
@@ -915,6 +911,8 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
       activerFiltreTaille: false,
       exigerAutorouteUOP: false,
       activerFiltrePlageTP: false,
+      activerZigZagDynamique: false,
+      zigzagDepth: 4,
       activerTPCibleLiquiditeSR: true,
       comportementAbsenceSR: 'REJETER_SETUP',
       tauxMinChevauchementTrajetSR: 1.5,
@@ -946,6 +944,235 @@ describe('🎼 Chef d\'Orchestre SMC (Doji + Shved + UOP + Range Confirmation)',
     });
     expect(resStrict.setups.length).toBe(0);
   });
+
+  it('affiche la valeur de Profondeur (zigzagDepth) sur chaque setup et permet de la modifier en temps réel via recalculerSetupAvecProfondeurZigZag', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 20; k++) {
+      // Oscillation pour créer des vagues ZigZag à différentes échelles
+      const delta = k % 4 < 2 ? k * 0.5 : -k * 0.3;
+      bougies.push(creerBougie(k * 1000, 100 + delta, 106 + delta, 96 + delta, 101 + delta));
+    }
+
+    // Doji Achat aux bougies 20 et 21
+    bougies.push(creerBougie(20000, 96.0, 96.5, 84.0, 85.0));
+    bougies.push(creerBougie(21000, 85.0, 97.0, 85.0, 96.8));
+
+    // 3 bougies de confirmation (22, 23, 24)
+    bougies.push(creerBougie(22000, 96.8, 99.0, 93.0, 98.5));
+    bougies.push(creerBougie(23000, 98.5, 101.0, 96.0, 100.2));
+    bougies.push(creerBougie(24000, 100.2, 103.0, 99.0, 102.5));
+
+    // Bougies ultérieures qui montent jusqu'à 115
+    bougies.push(creerBougie(25000, 102.5, 110.0, 101.0, 109.0));
+    bougies.push(creerBougie(26000, 109.0, 115.0, 107.0, 114.0));
+
+    const res = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      masquerSetupsTermines: false,
+    });
+
+    expect(res.setups.length).toBeGreaterThanOrEqual(1);
+    const setupOrigine = res.setups[0];
+    expect(setupOrigine.profondeurZigZagOriginale).toBeDefined();
+    expect(setupOrigine.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBe(
+      setupOrigine.profondeurZigZagOriginale
+    );
+
+    // Modification en temps réel de la variable « Profondeur » à 1 puis à 7 pour ce setup
+    const setupProf1 = recalculerSetupAvecProfondeurZigZag(setupOrigine, bougies, 1);
+    const setupProf7 = recalculerSetupAvecProfondeurZigZag(setupOrigine, bougies, 7);
+
+    expect(setupProf1.profondeurZigZagPersonnalisee).toBe(1);
+    expect(setupProf1.profondeurZigZagOriginale).toBe(setupOrigine.profondeurZigZagOriginale);
+    expect(setupProf1.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBe(1);
+
+    expect(setupProf7.profondeurZigZagPersonnalisee).toBe(7);
+    expect(setupProf7.profondeurZigZagOriginale).toBe(setupOrigine.profondeurZigZagOriginale);
+    expect(setupProf7.detailsScoreLiquidationZigZag?.zigzagDepthRetenu).toBe(7);
+    expect(setupProf7.detailsScoreLiquidationZigZag?.resumeExplication).toContain('Profondeur testée : 7');
+
+    // Vérifie qu'en présence d'un historique ancien décalé (comme la fenêtre glissante de 350 bougies dans BacktestChart),
+    // recalculerSetupAvecProfondeurZigZag retrouve la bougie exacte par son horodatage et garde les pivots ZigZag et l'histogramme alignés à l'écran !
+    const bougiesAnciennesHorsEcran: Bougie[] = [];
+    for (let old = 0; old < 100; old++) {
+      bougiesAnciennesHorsEcran.push(creerBougie((old - 200) * 1000, 5000, 5010, 4990, 5000));
+    }
+    const datasetCompletDecale = [...bougiesAnciennesHorsEcran, ...bougies];
+    const setupSurDatasetDecale = recalculerSetupAvecProfondeurZigZag(setupOrigine, datasetCompletDecale, 3);
+    const pivotsRecalcules = setupSurDatasetDecale.detailsScoreLiquidationZigZag?.pivotsZigZag || [];
+    expect(pivotsRecalcules.length).toBeGreaterThanOrEqual(2);
+    // Les pivots doivent être dans la plage de prix du setup (~84..115) et non à 5000 !
+    expect(pivotsRecalcules[pivotsRecalcules.length - 1].prix).toBeLessThan(200);
+    expect((setupSurDatasetDecale.paliersSuperpositionUOP || []).length).toBeGreaterThan(0);
+    expect(setupSurDatasetDecale.paliersSuperpositionUOP![0].prix).toBeLessThan(200);
+  });
+
+  it('annule le setup si l\'une des 3 bougies de confirmation dépasse Close(B2) + AmplitudeDuDoji (en Achat)', () => {
+    const bougies: Bougie[] = [];
+    for (let k = 0; k < 15; k++) {
+      bougies.push(creerBougie(k * 1000, 100, 102, 98, 100));
+    }
+
+    // Doji Achat aux bougies 15 et 16 :
+    // B1: High=99, Low=90 (Amplitude B1 = 9)
+    // B2: High=99, Low=90, Close=98.5 (Amplitude B2 = 9, Close(B2) = 98.5)
+    // => AmplitudeDuDoji = 9.0
+    // => Borne Haute autorisée pour les 3 bougies du range = 98.5 + 9.0 = 107.5
+    bougies.push(creerBougie(15000, 99.0, 99.0, 90.0, 91.0));
+    bougies.push(creerBougie(16000, 91.0, 99.0, 90.0, 98.5));
+
+    // Bougies 17, 18, 19 (Range de 3 bougies) :
+    // La 2ème bougie du range (index 18) clôture à 110.0 (> 107.5) -> sortie par le haut du range !
+    bougies.push(creerBougie(17000, 98.5, 103.0, 96.0, 102.0));
+    bougies.push(creerBougie(18000, 102.0, 111.0, 101.0, 110.0));
+    bougies.push(creerBougie(19000, 110.0, 112.0, 105.0, 106.0));
+
+    const resAvecBorne = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      bornerRangeConfirmationParAmplitudeDoji: true,
+    });
+
+    expect(resAvecBorne.setups.length).toBe(1);
+    expect(resAvecBorne.setups[0].borneRangeConfirmation).toBeCloseTo(107.5, 5);
+    expect(resAvecBorne.setups[0].statut).toBe('ANNULE');
+    expect(resAvecBorne.setups[0].bougieInvalidationIndex).toBe(18);
+
+    // Si on désactive la borne dans les variables externes, le setup est confirmé
+    const resSansBorne = calculerOrchestrateurSMC(bougies, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      bornerRangeConfirmationParAmplitudeDoji: false,
+    });
+    expect(resSansBorne.setups[0].statut).toBe('CONFIRME');
+  });
+
+  it('projette le Cockpit Fractal HTF (H4) sur un graphique LTF (15m) avec Plage Protégée, Order Blocks LTF et Second Setup LTF lié au Grand TP H4', () => {
+    const H4_S = 4 * 3600;
+    const M15_S = 15 * 60;
+    const t0 = 1700001600; // Multiple exact de 14400 (4h)
+
+    // 1️⃣ Construction d'un historique M1/M15 qui agrégé en H4 forme un Setup Maître Achat H4
+    const donneesM1: Bougie[] = [];
+
+    // Helper pour remplir un bloc H4 (16 bougies M15)
+    const ajouterBlocH4 = (indexH4: number, open: number, high: number, low: number, close: number) => {
+      const debutH4 = t0 + indexH4 * H4_S;
+      for (let m = 0; m < 16; m++) {
+        const t = debutH4 + m * M15_S;
+        let o = open;
+        let h = (open + high) / 2;
+        let l = (open + low) / 2;
+        let c = close;
+        if (m === 0) o = open;
+        if (m === 5) h = high;
+        if (m === 10) l = low;
+        if (m === 15) c = close;
+        donneesM1.push(creerBougie(t, o, Math.max(o, c, h), Math.min(o, c, l), c));
+      }
+    };
+
+    // 15 bougies H4 initiales oscillantes autour de 100..125 pour offrir de la hauteur ZigZag
+    for (let k = 0; k < 15; k++) {
+      const osc = k % 2 === 0 ? 12 : -6;
+      ajouterBlocH4(k, 105 + osc, 118 + osc, 96 + osc, 108 + osc);
+    }
+
+    // Doji Achat H4 aux blocs H4 #15 (B1) et #16 (B2) :
+    // B1 H4 : Open 100, High 101, Low 85, Close 86
+    ajouterBlocH4(15, 100.0, 101.0, 85.0, 86.0);
+    // B2 H4 : Open 86, High 100, Low 86, Close 99.0 (SL_H4 = 85.0, AmplitudeDoji_H4 = 16.0 => Plage Protégée H4 = [85.0 ➔ 115.0])
+    ajouterBlocH4(16, 86.0, 100.0, 86.0, 99.0);
+
+    // 3 bougies H4 de confirmation (#17, #18, #19) restant dans [85.0 ➔ 115.0]
+    ajouterBlocH4(17, 99.0, 103.0, 94.0, 101.0);
+    ajouterBlocH4(18, 101.0, 104.0, 96.0, 102.0);
+    ajouterBlocH4(19, 102.0, 105.0, 97.0, 103.0);
+
+    // 2️⃣ Au bloc H4 #20 (après la confirmation H4), on construit en M15 :
+    // - Un Order Block Classique Haussier (bougie baissière suivie d'une impulsion haussière avec FVG) dans [85 ➔ 115]
+    // - Un Second Setup Doji M15 + 3 bougies de confirmation M15 avec un petit SL à 91.50
+    const debutBloc20 = t0 + 20 * H4_S;
+    const bougiesM15Bloc20: Bougie[] = [
+      // m=0 : Bougie baissière (Order Block Haussier potentiel : Low=90.0, High=92.0)
+      creerBougie(debutBloc20 + 0 * M15_S, 91.8, 92.0, 90.0, 90.2),
+      // m=1 : Forte impulsion haussière qui casse 92.0
+      creerBougie(debutBloc20 + 1 * M15_S, 90.2, 95.0, 90.1, 94.8),
+      // m=2 : Suite de l'impulsion créant un FVG (Low 93.5 > High m=0 92.0)
+      creerBougie(debutBloc20 + 2 * M15_S, 94.8, 97.0, 93.5, 96.2),
+      // m=3..5 : Retour calme vers 94
+      creerBougie(debutBloc20 + 3 * M15_S, 96.2, 96.5, 93.8, 94.0),
+      creerBougie(debutBloc20 + 4 * M15_S, 94.0, 94.5, 93.2, 93.5),
+      creerBougie(debutBloc20 + 5 * M15_S, 93.5, 94.2, 93.0, 93.8),
+      // m=6 & m=7 : Second Setup Doji Achat en M15 (dans la Plage Protégée H4 [85 ➔ 115])
+      // B1 M15 : Open 93.8, High 94.0, Low 91.5, Close 91.7
+      creerBougie(debutBloc20 + 6 * M15_S, 93.8, 94.0, 91.5, 91.7),
+      // B2 M15 : Open 91.7, High 94.0, Low 91.6, Close 93.7 (Petit SL_LTF = 91.5, Entrée = 93.7)
+      creerBougie(debutBloc20 + 7 * M15_S, 91.7, 94.0, 91.6, 93.7),
+      // m=8, 9, 10 : 3 bougies M15 de confirmation du range LTF
+      creerBougie(debutBloc20 + 8 * M15_S, 93.7, 94.5, 92.8, 94.1),
+      creerBougie(debutBloc20 + 9 * M15_S, 94.1, 94.8, 93.2, 94.4),
+      creerBougie(debutBloc20 + 10 * M15_S, 94.4, 95.2, 93.6, 94.9),
+    ];
+
+    const toutesBougiesM15 = [...donneesM1, ...bougiesM15Bloc20];
+
+    // Exécution de l'Orchestrateur SMC sur le graphique M15 avec le Cockpit Fractal HTF activé
+    const resLTF = calculerOrchestrateurSMC(toutesBougiesM15, {
+      activerFiltreTaille: false,
+      exigerAutorouteUOP: false,
+      activerFiltrePlageTP: false,
+      activerCalqueFractalHTF: true,
+      timeframeMaitreFractal: '4h',
+      chartTimeframe: '15m',
+      donneesM1: toutesBougiesM15,
+      afficherOrderBlocksProteges: true,
+    });
+
+    // 1. La Grande Plage Protégée H4 doit être projetée sous forme de boîte sur le graphique M15
+    const zonesPlageHTF = (resLTF.primitives.boites || []).filter((z) =>
+      z.id?.includes('fractal-htf-plage-')
+    );
+    expect(zonesPlageHTF.length).toBeGreaterThanOrEqual(1);
+
+    // 2. La ligne du GRAND TP 4H et du SL MAÎTRE 4H doivent être projetées
+    const lignesGrandTP = (resLTF.primitives.lignes || []).filter((l) =>
+      l.id?.includes('fractal-htf-tp-')
+    );
+    expect(lignesGrandTP.length).toBeGreaterThanOrEqual(1);
+    expect(lignesGrandTP[0].label).toContain('GRAND TP 4H');
+
+    // 3. Les rectangles d'Order Blocks Classiques LTF détectés dans la plage H4 doivent être tracés
+    const zonesOBLTF = (resLTF.primitives.boites || []).filter((z) =>
+      z.id?.includes('fractal-ltf-ob-')
+    );
+    expect(zonesOBLTF.length).toBeGreaterThanOrEqual(1);
+
+    // 4. Le Second Setup Fractal LTF doit être détecté, connecté au Grand TP H4 correspondant et générer les boîtes Position style TradingView
+    const setupsFractalsLTF = resLTF.setups.filter((s) => s.estSecondSetupFractalLTF && s.type === 'ACHAT');
+    expect(setupsFractalsLTF.length).toBeGreaterThanOrEqual(1);
+    const secondSetup = setupsFractalsLTF[setupsFractalsLTF.length - 1];
+    expect(secondSetup.timeframeMaitreHTF).toBe('4H');
+    expect(
+      lignesGrandTP.some((l) => Math.abs(l.prix - (secondSetup.prixTP ?? 0)) < 0.001)
+    ).toBe(true);
+    expect(secondSetup.prixSL).toBeGreaterThan(85.0); // Petit SL M15 (91.5) >> SL Maître H4 (85.0)
+
+    // Vérifie la présence des boîtes de Position style TradingView (Zone de Gain TP verte + Zone de Risque SL rouge)
+    const boitesPositionTV_TP = (resLTF.primitives.boites || []).filter((b) =>
+      b.id?.startsWith('fractal-ltf-tv-tp-')
+    );
+    const boitesPositionTV_SL = (resLTF.primitives.boites || []).filter((b) =>
+      b.id?.startsWith('fractal-ltf-tv-sl-')
+    );
+    expect(boitesPositionTV_TP.length).toBeGreaterThanOrEqual(1);
+    expect(boitesPositionTV_SL.length).toBeGreaterThanOrEqual(1);
+  });
 });
+
 
 

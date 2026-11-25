@@ -285,7 +285,7 @@ bool EvaluerDojiCompletUniqueSMC(
    int nbVaguesActif = activerZigZagDynamique ? scoreZZ.nbVaguesSuperposeesRetenu : nbVaguesSuperposees;
 
    // 4️⃣ Profil UOP (Verrouillé à la 3ème bougie de confirmation)
-   int indexHorizonVerrouillage = MathMin(totalBougies - 1, indexDoji + nbBougiesConfirmation);
+   int indexHorizonVerrouillage = MathMin(totalLocal - 1, indexDoji + nbBougiesConfirmation);
 
    PalierUOPCandidatSMC paliersCandidats[];
    int nbPaliers = CalculerPaliersUOPSMC(

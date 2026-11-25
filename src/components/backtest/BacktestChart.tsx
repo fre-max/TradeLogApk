@@ -59,7 +59,10 @@ import {
 import { DiagnosticSetupSMCModal } from './DiagnosticSetupSMCModal';
 import { DiagnosticVoletLateralSMC } from './DiagnosticVoletLateralSMC';
 import { DiagnosticVoletLateralSandbox } from './DiagnosticVoletLateralSandbox';
-import type { SetupOrchestreSMC } from '@/lib/indicators/favoris/orchestrateurSMC';
+import {
+  recalculerSetupAvecProfondeurZigZag,
+  type SetupOrchestreSMC,
+} from '@/lib/indicators/favoris/orchestrateurSMC';
 import type { SignalSandboxPlage, ZoneShvedAvecScore } from '@/lib/indicators/favoris/sandboxDojiShvedPlage';
 
 // ─── 🛠️ Seuils de détection tactile élargis ──────────────────────────────────
@@ -182,6 +185,7 @@ interface BacktestChartProps {
   height: number;
   theme: 'dark' | 'light';
   timeframe: string;
+  onChangeTimeframe?: (nouveauTf: string) => void;
   onOpenIndicatorModal?: (scriptId?: string, onglet?: 'indicateurs' | 'configuration' | 'editeur' | 'telemetrie') => void;
 }
 
@@ -208,7 +212,7 @@ export interface BacktestChartHandle {
 export const BacktestChart = React.forwardRef<
   BacktestChartHandle,
   BacktestChartProps
->(({ activeTool, onDrawingComplete, onScrollToLeft, height, theme, timeframe, onOpenIndicatorModal }, ref) => {
+>(({ activeTool, onDrawingComplete, onScrollToLeft, height, theme, timeframe, onChangeTimeframe, onOpenIndicatorModal }, ref) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -659,18 +663,91 @@ export const BacktestChart = React.forwardRef<
   const [surbrillanceSMCActive, setSurbrillanceSMCActive] = useState<boolean>(true);
   const [voletSMCVisible, setVoletSMCVisible] = useState<boolean>(false); // Reste fermé par défaut : 100% visuel sur le graphique
   const [modalSMCVisible, setModalSMCVisible] = useState<boolean>(false);
+  // 🧪 Surcharges de la variable « Profondeur » (zigzagDepth) par ID de setup en temps réel
+  const [profondeurParSetupId, setProfondeurParSetupId] = useState<Record<string, number>>({});
 
   // 🔍 Diagnostic interactif de Setup Sandbox Doji Shved
   const [setupSandboxDiagnostic, setSetupSandboxDiagnostic] = useState<SignalSandboxPlage | null>(null);
   const [zoneSandboxSelectionneeId, setZoneSandboxSelectionneeId] = useState<string | null>(null);
 
-  // 🔍 Liste de tous les setups détectés par le Chef d'Orchestre SMC
+  // 🔍 Liste de tous les setups détectés par le Chef d'Orchestre SMC (avec application en temps réel des profondeurs personnalisées)
   const setupsSMCListe = useMemo<SetupOrchestreSMC[]>(() => {
     const resSMC = resultatsScriptsActifs.find(
       (r) => r.script.id === 'script-orchestrateur-smc' || r.resultat?.typeSpecial === 'orchestrateur-smc'
     );
-    return ((resSMC?.resultat?.donnees as any)?.setups as SetupOrchestreSMC[]) || [];
-  }, [resultatsScriptsActifs]);
+    const setupsBruts: SetupOrchestreSMC[] = ((resSMC?.resultat?.donnees as any)?.setups as SetupOrchestreSMC[]) || [];
+    if (Object.keys(profondeurParSetupId).length === 0) {
+      return setupsBruts;
+    }
+    const debutFenetre = Math.max(0, indexCourant - 350 + 1);
+    const bougiesVisibles = donneesCompletes.slice(debutFenetre, indexCourant + 1);
+    return setupsBruts.map((s) => {
+      const profPerso = profondeurParSetupId[s.id];
+      if (profPerso !== undefined) {
+        return recalculerSetupAvecProfondeurZigZag(s, bougiesVisibles, profPerso);
+      }
+      return s;
+    });
+  }, [resultatsScriptsActifs, profondeurParSetupId, donneesCompletes, indexCourant]);
+
+  // Synchronise automatiquement le setup en cours de diagnostic lorsqu'on change sa profondeur en direct
+  useEffect(() => {
+    if (!setupSMCDiagnostic) return;
+    const setupMaj = setupsSMCListe.find((s) => s.id === setupSMCDiagnostic.id);
+    if (
+      setupMaj &&
+      (setupMaj.prixTP !== setupSMCDiagnostic.prixTP ||
+        setupMaj.profondeurZigZagPersonnalisee !== setupSMCDiagnostic.profondeurZigZagPersonnalisee ||
+        setupMaj.detailsScoreLiquidationZigZag?.zigzagDepthRetenu !==
+          setupSMCDiagnostic.detailsScoreLiquidationZigZag?.zigzagDepthRetenu)
+    ) {
+      setSetupSMCDiagnostic(setupMaj);
+    }
+  }, [setupsSMCListe, setupSMCDiagnostic]);
+
+  // Modifie en temps réel la variable « Profondeur » (zigzagDepth) d'un setup spécifique
+  const modifierProfondeurSetupTempsReel = useCallback(
+    (setupCible: SetupOrchestreSMC, nouvelleProfondeur: number | null) => {
+      const profOrig =
+        setupCible.profondeurZigZagOriginale ??
+        setupCible.detailsScoreLiquidationZigZag?.zigzagDepthRetenu ??
+        4;
+      const profCible =
+        nouvelleProfondeur === null
+          ? profOrig
+          : Math.max(1, Math.min(20, Math.round(nouvelleProfondeur)));
+
+      setProfondeurParSetupId((prev) => {
+        const suivant = { ...prev };
+        if (nouvelleProfondeur === null || profCible === profOrig) {
+          delete suivant[setupCible.id];
+        } else {
+          suivant[setupCible.id] = profCible;
+        }
+        return suivant;
+      });
+
+      // Recalcul immédiat du setup pour que le ZigZag, le Volume Profile UOP et le TP bougent instantanément sur le canvas
+      const currentIdx = stateRef.current.indexCourant;
+      const debutFenetre = Math.max(0, currentIdx - 350 + 1);
+      const bougiesVisibles = stateRef.current.donneesCompletes.slice(
+        debutFenetre,
+        currentIdx + 1
+      );
+      const setupRecalcule = recalculerSetupAvecProfondeurZigZag(
+        setupCible,
+        bougiesVisibles,
+        profCible
+      );
+      if (nouvelleProfondeur === null || profCible === profOrig) {
+        setupRecalcule.profondeurZigZagPersonnalisee = undefined;
+      }
+      setSetupSMCDiagnostic(setupRecalcule);
+      setSetupSMCSimule(null);
+      setSurbrillanceSMCActive(true);
+    },
+    []
+  );
 
   // 🔍 Liste de tous les signaux détectés par la Sandbox Doji Shved Plage
   const signauxSandboxListe = useMemo<SignalSandboxPlage[]>(() => {
@@ -712,12 +789,16 @@ export const BacktestChart = React.forwardRef<
     positionSelectionneeId,
     dragAction,
     resultatsScriptsActifs,
+    setupsSMCListe,
+    profondeurParSetupId,
     setupSMCDiagnostic,
     setupSMCSimule,
     surbrillanceSMCActive,
     setupSandboxDiagnostic,
     zoneSandboxSelectionneeId,
   });
+
+  const rafOverlayRef = useRef<number | null>(null);
 
   useEffect(() => {
     stateRef.current = {
@@ -730,13 +811,16 @@ export const BacktestChart = React.forwardRef<
       positionSelectionneeId,
       dragAction,
       resultatsScriptsActifs,
+      setupsSMCListe,
+      profondeurParSetupId,
       setupSMCDiagnostic,
       setupSMCSimule,
       surbrillanceSMCActive,
       setupSandboxDiagnostic,
       zoneSandboxSelectionneeId,
     };
-    redessinerOverlay();
+    // Coalesce le redessin dans 1 seul requestAnimationFrame par frame (évite 3 tracés par tic)
+    planifierRedessinOverlay();
   }, [
     activeTool,
     indexCourant,
@@ -747,6 +831,8 @@ export const BacktestChart = React.forwardRef<
     positionSelectionneeId,
     dragAction,
     resultatsScriptsActifs,
+    setupsSMCListe,
+    profondeurParSetupId,
     setupSMCDiagnostic,
     setupSMCSimule,
     surbrillanceSMCActive,
@@ -771,6 +857,8 @@ export const BacktestChart = React.forwardRef<
       positionsCanvas: currentPositions,
       positionSelectionneeId: selectedId,
       resultatsScriptsActifs: currentScriptsResults,
+      setupsSMCListe: currentSetupsSMC,
+      profondeurParSetupId: currentProfondeursPerso,
       setupSMCDiagnostic: currentSMCSetup,
       setupSMCSimule: currentSimulatedSetup,
       surbrillanceSMCActive: currentSurbrillance,
@@ -781,13 +869,54 @@ export const BacktestChart = React.forwardRef<
     if (!chart || !series) return;
 
     // 0️⃣ Dessin dynamique et unifié de TOUS les indicateurs modulaires en scripts
-    const bougiesVisibles = currentData.slice(0, currentIndex + 1);
+    // 🚀 Fenêtre locale de 400 bougies pour éviter de cloner 30 000 bougies M15 à chaque rafraîchissement du canvas
+    const debutFenetreRendu = Math.max(0, currentIndex - 400 + 1);
+    const bougiesVisibles = currentData.slice(debutFenetreRendu, currentIndex + 1);
     if (currentScriptsResults && currentScriptsResults.length > 0) {
       for (const item of currentScriptsResults) {
         try {
+          let resultatADessiner = item.resultat;
+          // Si c'est l'orchestrateur SMC et que des profondeurs ZigZag ont été modifiées par setup en temps réel
+          if (
+            resultatADessiner?.typeSpecial === 'orchestrateur-smc' &&
+            currentProfondeursPerso &&
+            Object.keys(currentProfondeursPerso).length > 0
+          ) {
+            const primitivesOrig = resultatADessiner.primitives || {};
+            const lignesMaj = (primitivesOrig.lignes || []).map((l) => {
+              const setupMod = currentSetupsSMC.find(
+                (s) =>
+                  currentProfondeursPerso[s.id] !== undefined &&
+                  l.id === `orchestre-tp-${s.indexDoji}` &&
+                  s.prixTP !== undefined
+              );
+              if (setupMod && setupMod.prixTP !== undefined) {
+                return {
+                  ...l,
+                  prix: setupMod.prixTP,
+                  couleur: '#F59E0B',
+                  label: `🧪 TP (${setupMod.ratioRR}R | Prof:${setupMod.profondeurZigZagPersonnalisee})`,
+                };
+              }
+              return l;
+            });
+
+            resultatADessiner = {
+              ...resultatADessiner,
+              donnees: {
+                ...(resultatADessiner.donnees as any),
+                setups: currentSetupsSMC,
+              },
+              primitives: {
+                ...primitivesOrig,
+                lignes: lignesMaj,
+              },
+            };
+          }
+
           dessinerResultatIndicateur(
             ctx,
-            item.resultat,
+            resultatADessiner,
             item.script,
             chart,
             series,
@@ -912,6 +1041,16 @@ export const BacktestChart = React.forwardRef<
       ctx.restore();
     }
   }, []);
+
+  // Coalesce les demandes de redessin du canvas overlay dans une seule frame (max 60 FPS)
+  // Exemple : planifierRedessinOverlay();
+  const planifierRedessinOverlay = useCallback(() => {
+    if (rafOverlayRef.current !== null) return;
+    rafOverlayRef.current = requestAnimationFrame(() => {
+      rafOverlayRef.current = null;
+      redessinerOverlay();
+    });
+  }, [redessinerOverlay]);
 
   // 🔍 Index du setup actuellement inspecté dans la liste globale
   const indexSetupActuel = useMemo(() => {
@@ -1332,7 +1471,7 @@ export const BacktestChart = React.forwardRef<
     const desabonnerSuppression = manager.on('drawing:removed', () => setIdDessinSelectionne(null));
 
     const gererScale = () => {
-      redessinerOverlay();
+      planifierRedessinOverlay();
       
       // Détecter si on se rapproche des premières bougies chargées (Logical Index < 30)
       const range = chart.timeScale().getVisibleLogicalRange();
@@ -1515,6 +1654,10 @@ export const BacktestChart = React.forwardRef<
     observateur.observe(chartContainerRef.current);
 
     return () => {
+      if (rafOverlayRef.current !== null) {
+        cancelAnimationFrame(rafOverlayRef.current);
+        rafOverlayRef.current = null;
+      }
       desabonnerSelection();
       desabonnerDeselection();
       desabonnerSuppression();
@@ -1561,19 +1704,38 @@ export const BacktestChart = React.forwardRef<
 
   const dernierActifRef = useRef<string>('');
   const prevDonneesLengthRef = useRef<number>(0);
+  const prevDonneesRef = useRef<typeof donneesCompletes | null>(null);
+  const prevIndexCourantRef = useRef<number>(-1);
 
-  // Replay sync
+  // Replay sync (optimisé O(1) avec series.update lors de l'avancement bougie par bougie en M15/M1)
   useEffect(() => {
     if (!seriesRef.current || donneesCompletes.length === 0) return;
 
     const timeScale = chartRef.current?.timeScale();
     const rangeVisuellePrecedente = timeScale ? timeScale.getVisibleLogicalRange() : null;
 
-    // Sécurité finale : garantir que les bougies envoyées à Lightweight Charts sont strictement
-    // triées par ordre croissant et sans doublons de timestamp (évite le crash "Assertion failed")
-    const donneesTranchees = nettoyerEtTrierBougies(donneesCompletes.slice(0, indexCourant + 1));
-    const donneesVisibles = donneesTranchees.map((b) => ({ ...b, time: b.time as Time }));
-    seriesRef.current.setData(donneesVisibles);
+    const memeReferenceDonnees = prevDonneesRef.current === donneesCompletes;
+    const estAvancementSimpleUneBougie =
+      memeReferenceDonnees &&
+      indexCourant === prevIndexCourantRef.current + 1 &&
+      indexCourant >= 0 &&
+      indexCourant < donneesCompletes.length;
+
+    if (estAvancementSimpleUneBougie) {
+      // 🚀 Mise à jour incrémentale O(1) (~0.05 ms) au lieu de retrier et réinjecter 30 000 bougies M15 à chaque tic !
+      const nouvelleBougie = donneesCompletes[indexCourant];
+      if (nouvelleBougie) {
+        seriesRef.current.update(nouvelleBougie as any);
+      }
+    } else {
+      // Changement de timeframe, chargement initial ou saut/découpe dans le replay :
+      // donneesCompletes est déjà trié et dédupliqué par le store (évite copie + tri redondant sur 75 000 bougies)
+      const donneesVisibles = donneesCompletes.slice(0, indexCourant + 1) as any;
+      seriesRef.current.setData(donneesVisibles);
+    }
+
+    prevDonneesRef.current = donneesCompletes;
+    prevIndexCourantRef.current = indexCourant;
 
     if (chartRef.current && timeScale) {
       const actifActuel = useBacktestStore.getState().actif;
@@ -1600,11 +1762,9 @@ export const BacktestChart = React.forwardRef<
 
     prevDonneesLengthRef.current = donneesCompletes.length;
 
-    // Rafraîchir l'overlay après le rendu de la série
-    requestAnimationFrame(() => {
-      redessinerOverlay();
-    });
-  }, [donneesCompletes, indexCourant, estEnLecture, redessinerOverlay]);
+    // Rafraîchir l'overlay dans la même frame coalescée après le rendu de la série
+    planifierRedessinOverlay();
+  }, [donneesCompletes, indexCourant, estEnLecture, planifierRedessinOverlay]);
 
   // Désactive temporairement le défilement et le zoom du graphique de Lightweight Charts
   // pendant qu'une poignée de position custom est en train d'être déplacée (dragAction actif).
@@ -2223,7 +2383,7 @@ export const BacktestChart = React.forwardRef<
     };
   }, [activeTool, detecterClicPositionCanvas, redessinerOverlay, onDrawingComplete]);
 
-  // Gestion du clic en mode curseur (null) pour sélectionner les positions canvas
+  // Gestion du clic en mode curseur (null) pour sélectionner les positions canvas ou un setup SMC
   useEffect(() => {
     if (activeTool !== null) return;
     const conteneur = chartContainerRef.current;
@@ -2235,7 +2395,33 @@ export const BacktestChart = React.forwardRef<
       const py = event.clientY - rect.top;
       const idClique = detecterClicPositionCanvas(px, py);
       setPositionSelectionneeId(idClique);
-      if (idClique) setIdDessinSelectionne(null);
+      if (idClique) {
+        setIdDessinSelectionne(null);
+        return;
+      }
+
+      // Clic direct sur un setup SMC sur le graphique en mode curseur normal
+      const chart = chartRef.current;
+      if (!chart) return;
+      const logical = chart.timeScale().coordinateToLogical(px);
+      if (logical === null) return;
+      const targetIndex = Math.round(logical);
+      const setupsDisponibles = stateRef.current.setupsSMCListe || [];
+      if (setupsDisponibles.length === 0) return;
+
+      const setupTrouve = setupsDisponibles.find((s) => {
+        const debutSeq = s.indexDoji - 1;
+        const finSeq = s.indexConfirmation ?? s.indexDoji + 3;
+        return targetIndex >= debutSeq - 0.5 && targetIndex <= finSeq + 1.5;
+      });
+
+      if (setupTrouve) {
+        setSetupSMCDiagnostic(setupTrouve);
+        setSetupSandboxDiagnostic(null);
+        setZoneSandboxSelectionneeId(null);
+        setSetupSMCSimule(null);
+        setSurbrillanceSMCActive(true);
+      }
     };
 
     conteneur.addEventListener('pointerdown', gererClicCurseur);
@@ -2323,6 +2509,35 @@ export const BacktestChart = React.forwardRef<
                 >
                   🔍 Diag ({setupsSMCListe.length})
                 </button>
+              )}
+              {/* 🔬 Boutons rapides Cockpit Fractal HTF ⇄ LTF directement sur la légende de l'Orchestrateur */}
+              {(script.id === 'script-orchestrateur-smc' || script.id.includes('orchestrateur')) && onChangeTimeframe && (
+                timeframe === '4h' || timeframe === '1h' || timeframe === '1d' ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => onChangeTimeframe('15m')}
+                      className="px-1.5 py-0.5 rounded bg-purple-950/90 hover:bg-purple-800 border border-purple-500/50 text-[10px] text-purple-200 font-bold transition-all shadow-xs"
+                      title="Plonger en M15 dans la Plage Protégée H4 pour voir les Order Blocks et le Second Setup LTF (sans filtre UOP)"
+                    >
+                      🔬 Plonger M15
+                    </button>
+                    <button
+                      onClick={() => onChangeTimeframe('30m')}
+                      className="px-1.5 py-0.5 rounded bg-indigo-950/90 hover:bg-indigo-800 border border-indigo-500/50 text-[10px] text-indigo-200 font-bold transition-all shadow-xs"
+                      title="Plonger en M30 dans la Plage Protégée H4 pour voir les Order Blocks et le Second Setup LTF"
+                    >
+                      🔬 M30
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onChangeTimeframe('4h')}
+                    className="px-1.5 py-0.5 rounded bg-amber-950/90 hover:bg-amber-800 border border-amber-500/50 text-[10px] text-amber-200 font-bold transition-all shadow-xs"
+                    title="Revenir sur la vue Maître H4 (avec les 10 vagues ZigZag et l'histogramme Volume Profile UOP)"
+                  >
+                    🏛️ Revenir en H4
+                  </button>
+                )
               )}
               {/* 🔍 Bouton Diag Sandbox dédié si c'est la Sandbox et qu'il y a des signaux */}
               {(script.id === 'script-sandbox-doji-shved-plage' || script.id.includes('sandbox')) && signauxSandboxListe.length > 0 && (
@@ -2521,101 +2736,222 @@ export const BacktestChart = React.forwardRef<
           </div>
         )}
 
-        {/* ── 🔍 Barre de Contrôle Flottante Diagnostic SMC (Sur le graphique, non-bloquante) ── */}
-        {setupSMCDiagnostic && surbrillanceSMCActive && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-cyan-500/40 text-white text-xs shadow-xl animate-in fade-in slide-in-from-top-2 pointer-events-auto select-none">
-            {/* Bouton Setup Précédent */}
-            {setupsSMCListe.length > 1 && (
-              <button
-                onClick={passerAuSetupPrecedent}
-                className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors text-[10px]"
-                title="Setup SMC précédent"
-              >
-                ◀
-              </button>
-            )}
+        {/* ── 🔍 Barre de Contrôle Flottante Diagnostic SMC + Réglage Temps Réel de la « Profondeur » ── */}
+        {setupSMCDiagnostic && surbrillanceSMCActive && (() => {
+          const profOriginale =
+            setupSMCDiagnostic.profondeurZigZagOriginale ??
+            setupSMCDiagnostic.detailsScoreLiquidationZigZag?.zigzagDepthRetenu ??
+            4;
+          const profActuelle =
+            setupSMCDiagnostic.profondeurZigZagPersonnalisee ??
+            setupSMCDiagnostic.detailsScoreLiquidationZigZag?.zigzagDepthRetenu ??
+            profOriginale;
+          const estProfModifiee = profActuelle !== profOriginale;
 
-            <span className="flex h-2 w-2 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-            </span>
+          return (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 flex-wrap justify-center px-3 py-1.5 rounded-2xl bg-slate-900/95 backdrop-blur-md border border-cyan-500/40 text-white text-xs shadow-2xl animate-in fade-in slide-in-from-top-2 pointer-events-auto select-none max-w-[95vw]">
+              {/* Bouton Setup Précédent */}
+              {setupsSMCListe.length > 1 && (
+                <button
+                  onClick={passerAuSetupPrecedent}
+                  className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors text-[10px]"
+                  title="Setup SMC précédent"
+                >
+                  ◀
+                </button>
+              )}
 
-            <span className="font-bold text-cyan-300">
-              Setup #{setupSMCDiagnostic.indexDoji} ({setupSMCDiagnostic.type})
-              {setupsSMCListe.length > 1 && indexSetupActuel >= 0 && (
-                <span className="ml-1 text-[10px] text-slate-400 font-normal">
-                  [{indexSetupActuel + 1}/{setupsSMCListe.length}]
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+              </span>
+
+              <span className="font-bold text-cyan-300">
+                Setup #{setupSMCDiagnostic.indexDoji} ({setupSMCDiagnostic.type})
+                {setupsSMCListe.length > 1 && indexSetupActuel >= 0 && (
+                  <span className="ml-1 text-[10px] text-slate-400 font-normal">
+                    [{indexSetupActuel + 1}/{setupsSMCListe.length}]
+                  </span>
+                )}
+              </span>
+
+              {/* Bouton Setup Suivant */}
+              {setupsSMCListe.length > 1 && (
+                <button
+                  onClick={passerAuSetupSuivant}
+                  className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors text-[10px]"
+                  title="Setup SMC suivant"
+                >
+                  ▶
+                </button>
+              )}
+
+              <span className="text-slate-600">|</span>
+
+              {/* 🌊 Contrôle en Temps Réel de la variable « Profondeur » (zigzagDepth) pour ce setup */}
+              <div className="flex items-center gap-1 bg-slate-950/80 px-2 py-0.5 rounded-lg border border-purple-500/40">
+                <span className="text-[11px] font-bold text-purple-300" title="Variable Profondeur (zigzagDepth) des vagues utilisées pour ce setup">
+                  🌊 Profondeur :
+                </span>
+                <button
+                  onClick={() => modifierProfondeurSetupTempsReel(setupSMCDiagnostic, Math.max(1, profActuelle - 1))}
+                  disabled={profActuelle <= 1}
+                  className="w-4 h-4 flex items-center justify-center rounded bg-slate-800 hover:bg-purple-600 disabled:opacity-30 text-white font-bold text-[11px] transition-colors"
+                  title="Diminuer la Profondeur ZigZag"
+                >
+                  −
+                </button>
+
+                <div className="flex items-center gap-0.5 px-0.5">
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((val) => {
+                    const estSelectionnee = profActuelle === val;
+                    const estAuto = profOriginale === val;
+                    return (
+                      <button
+                        key={val}
+                        onClick={() => modifierProfondeurSetupTempsReel(setupSMCDiagnostic, val)}
+                        className={`relative w-5 h-5 rounded text-[10px] font-mono font-bold transition-all ${
+                          estSelectionnee
+                            ? estProfModifiee
+                              ? 'bg-amber-500 text-slate-950 shadow-sm scale-105'
+                              : 'bg-purple-600 text-white shadow-sm scale-105'
+                            : estAuto
+                              ? 'bg-purple-950/80 text-purple-300 border border-purple-500/50 hover:bg-purple-800'
+                              : 'bg-slate-800/70 text-slate-400 hover:bg-slate-700 hover:text-white'
+                        }`}
+                        title={
+                          estAuto
+                            ? `Profondeur ${val} (Valeur Automatique calculée par l'indicateur)`
+                            : `Tester la Profondeur ${val} en temps réel sur ce setup`
+                        }
+                      >
+                        {val}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => modifierProfondeurSetupTempsReel(setupSMCDiagnostic, Math.min(15, profActuelle + 1))}
+                  className="w-4 h-4 flex items-center justify-center rounded bg-slate-800 hover:bg-purple-600 text-white font-bold text-[11px] transition-colors"
+                  title="Augmenter la Profondeur ZigZag"
+                >
+                  +
+                </button>
+
+                { profActuelle > 8 && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-mono font-bold text-[10px]">
+                    {profActuelle}
+                  </span>
+                )}
+
+                {estProfModifiee && (
+                  <button
+                    onClick={() => modifierProfondeurSetupTempsReel(setupSMCDiagnostic, null)}
+                    className="ml-1 px-1.5 py-0.5 rounded bg-purple-950 hover:bg-purple-800 border border-purple-400/50 text-[9.5px] text-purple-200 font-semibold transition-colors"
+                    title={`Revenir à la Profondeur automatique calculée par l'indicateur (${profOriginale})`}
+                  >
+                    ↺ Auto ({profOriginale})
+                  </button>
+                )}
+              </div>
+
+              <span className="text-slate-600">|</span>
+
+              {setupSMCDiagnostic.prixTP !== undefined && (
+                <span className={`text-[11px] font-bold ${estProfModifiee ? 'text-amber-300' : 'text-emerald-300'}`}>
+                  🎯 TP: {setupSMCDiagnostic.prixTP.toFixed(5)} ({setupSMCDiagnostic.ratioRR}R)
                 </span>
               )}
-            </span>
 
-            {/* Bouton Setup Suivant */}
-            {setupsSMCListe.length > 1 && (
-              <button
-                onClick={passerAuSetupSuivant}
-                className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors text-[10px]"
-                title="Setup SMC suivant"
+              {/* Issue du trade en direct avec cette profondeur */}
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                  setupSMCDiagnostic.resultatTrade === 'TP_TOUCHE'
+                    ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-300'
+                    : setupSMCDiagnostic.resultatTrade === 'SL_TOUCHE'
+                      ? 'bg-rose-950/90 border-rose-500/50 text-rose-300'
+                      : 'bg-slate-800 border-slate-600 text-slate-300'
+                }`}
+                title="Issue du trade avec cette valeur de Profondeur"
               >
-                ▶
+                {setupSMCDiagnostic.resultatTrade === 'TP_TOUCHE'
+                  ? `✅ TP Touché (+${setupSMCDiagnostic.ratioRR}R)`
+                  : setupSMCDiagnostic.resultatTrade === 'SL_TOUCHE'
+                    ? '❌ SL Touché'
+                    : '⏳ En cours'}
+              </span>
+
+              <button
+                onClick={() => setVoletSMCVisible(!voletSMCVisible)}
+                className={`ml-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
+                  voletSMCVisible
+                    ? 'bg-cyan-800 border-cyan-400 text-white'
+                    : 'bg-cyan-950/80 hover:bg-cyan-800 border-cyan-600/40 text-cyan-200'
+                }`}
+                title="Ouvrir le comparateur complet des Profondeurs (1 à 8) et paramètres TP"
+              >
+                {voletSMCVisible ? '✕ Volet' : '📊 Comparer 1..8'}
               </button>
-            )}
 
-            <span className="text-slate-400">|</span>
+              {/* 🔬 Boutons de Bascule Rapide Cockpit Fractal HTF (H4) ⇄ LTF (M15 / M30) */}
+              {onChangeTimeframe && (
+                timeframe === '4h' || timeframe === '1h' || timeframe === '1d' ? (
+                  <div className="flex items-center gap-1 ml-1">
+                    <button
+                      onClick={() => onChangeTimeframe('15m')}
+                      className="px-2 py-0.5 rounded bg-purple-900/90 hover:bg-purple-700 border border-purple-400/60 text-[10px] text-purple-100 font-bold transition-colors shadow-sm"
+                      title="Plonger en M15 à l'intérieur de la plage protégée H4 pour voir les Order Blocks et le second setup LTF"
+                    >
+                      🔬 Plonger en M15
+                    </button>
+                    <button
+                      onClick={() => onChangeTimeframe('30m')}
+                      className="px-1.5 py-0.5 rounded bg-indigo-950/90 hover:bg-indigo-800 border border-indigo-400/50 text-[10px] text-indigo-200 font-bold transition-colors"
+                      title="Plonger en M30 à l'intérieur de la plage protégée H4"
+                    >
+                      🔬 M30
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onChangeTimeframe('4h')}
+                    className="ml-1 px-2 py-0.5 rounded bg-amber-900/90 hover:bg-amber-700 border border-amber-400/60 text-[10px] text-amber-100 font-bold transition-colors shadow-sm"
+                    title="Revenir sur la vue Maître H4 (avec les 10 vagues ZigZag et l'histogramme UOP)"
+                  >
+                    🏛️ Revenir en H4
+                  </button>
+                )
+              )}
 
-            <span className="text-[11px] text-emerald-400 font-medium">
-              S/R: {setupSMCDiagnostic.scoreShved} pts
-            </span>
-
-            <span className="text-slate-400">|</span>
-
-            <span className="text-[11px] text-amber-300 font-medium">
-              ⚡ Liq: {setupSMCDiagnostic.carburantInitial ?? setupSMCDiagnostic.detailsCarburant?.carburantTotal ?? 0} pts
-            </span>
-
-            {setupSMCDiagnostic.prixTP !== undefined && (
-              <>
-                <span className="text-slate-400">|</span>
-                <span className="text-[11px] text-emerald-300 font-bold">
-                  🎯 TP: {setupSMCDiagnostic.prixTP} ({setupSMCDiagnostic.ratioRR}R)
-                </span>
-              </>
-            )}
-
-            <button
-              onClick={() => setVoletSMCVisible(!voletSMCVisible)}
-              className={`ml-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
-                voletSMCVisible
-                  ? 'bg-cyan-800 border-cyan-400 text-white'
-                  : 'bg-cyan-950/80 hover:bg-cyan-800 border-cyan-600/40 text-cyan-200'
-              }`}
-              title="Afficher/masquer le volet textuel d'expérimentation"
-            >
-              {voletSMCVisible ? '✕ Volet' : '⚙️ Paramètres TP'}
-            </button>
-
-            <button
-              onClick={() => {
-                setSetupSMCDiagnostic(null);
-                setSetupSMCSimule(null);
-                setSurbrillanceSMCActive(false);
-                setVoletSMCVisible(false);
-                requestAnimationFrame(() => redessinerOverlay());
-              }}
-              className="ml-1 p-0.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              title="Fermer la vue diagnostic détaillée"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-              </svg>
-            </button>
-          </div>
-        )}
+              <button
+                onClick={() => {
+                  setSetupSMCDiagnostic(null);
+                  setSetupSMCSimule(null);
+                  setSurbrillanceSMCActive(false);
+                  setVoletSMCVisible(false);
+                  requestAnimationFrame(() => redessinerOverlay());
+                }}
+                className="ml-1 p-0.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Fermer la vue diagnostic détaillée"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+          );
+        })()}
 
         {/* ── 🔍 Volet Latéral Rétractable Diagnostic & Simulation TP (Optionnel, masqué par défaut) ── */}
         {setupSMCDiagnostic && surbrillanceSMCActive && voletSMCVisible && (
           <DiagnosticVoletLateralSMC
             setup={setupSMCDiagnostic}
             setupsTotaux={setupsSMCListe}
+            bougies={donneesCompletes.slice(Math.max(0, indexCourant - 350 + 1), indexCourant + 1)}
+            onChangeProfondeur={(nouvelleProf) =>
+              modifierProfondeurSetupTempsReel(setupSMCDiagnostic, nouvelleProf)
+            }
             onSelectSetup={(s) => {
               setSetupSMCDiagnostic(s);
               setSetupSMCSimule(null);

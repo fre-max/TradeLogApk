@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useBacktestStore, type PositionSimulee, type ContexteRestaurationReplay } from '@/store/backtestStore';
+import { calculerTimelineVisuelleBotSMC } from '@/lib/bot/simulateurOrchestrateurSMC';
+import { convertirTempsEnMs } from '@/lib/indicators/favoris/sandboxDojiShvedPlage';
 import { parserCsvPrix, agregerBougies } from '@/lib/chartDataHelper';
 import type { Bougie } from '@/lib/chartDataHelper';
 import { BacktestChart, type BacktestChartHandle } from './BacktestChart';
@@ -514,11 +516,25 @@ export function BacktestWorkspace() {
     toggleZigZag,
     afficherLuxAlgoSMC,
     toggleLuxAlgoSMC,
+    testeurVisuelBot,
+    demarrerTesteurVisuelBot,
+    mettreAJourTesteurVisuelBot,
+    arreterTesteurVisuelBot,
+    couperReplayAIndex,
   } = useBacktestStore();
 
   // Le timeframe local est initialisé depuis le store persisté (timeframeSauvegarde)
   // On utilise un useState local pour la réactivité UI, mais on le synchronise au store
   const [timeframe, setTimeframeLocal] = useState(timeframeSauvegarde || 'H1');
+  const [journalTesteurVisuelOuvert, setJournalTesteurVisuelOuvert] = useState(false);
+  const dernierEvenementNotifieRef = useRef<string>('');
+
+  // Synchronise le timeframe local lorsque timeframeSauvegarde change (ex: lancement depuis le Studio Bot)
+  useEffect(() => {
+    if (timeframeSauvegarde && timeframeSauvegarde !== timeframe) {
+      setTimeframeLocal(timeframeSauvegarde);
+    }
+  }, [timeframeSauvegarde]); // eslint-disable-line react-hooks/exhaustive-deps
   const [modalIndicateursOuvert, setModalIndicateursOuvert] = useState(false);
   const [scriptIdPourEdition, setScriptIdPourEdition] = useState<string | null>(null);
   const [ongletInitialIndicateurs, setOngletInitialIndicateurs] = useState<'indicateurs' | 'configuration' | 'editeur' | 'telemetrie'>('indicateurs');
@@ -599,26 +615,258 @@ export function BacktestWorkspace() {
     console.log(`⏱️ [Re-Aggregation] Données ré-agrégées en ${timeframe} — ${bougiesAgregees.length} bougies générées`);
   }, [timeframe, donneesM1Chargees, mettreAJourDonneesMtf]);
 
-  // ─── Boucle de lecture du Replay avec support Bot Automatique ───────────────
+  // ─── 🎬 MOTEUR DU TESTEUR DE STRATÉGIE VISUEL DU BOT FRACTAL (STYLE MT5) ──────
+  // Clé stable : en Mode Fractal, la chronologie du bot ne dépend PAS de l'UT affichée (timeframe),
+  // ce qui rend le basculement H4 ⇄ M15 ⇄ M30 ⇄ M5 instantané (0 recalcul annuel du bot) !
+  const cleConfigBotVisuel = testeurVisuelBot?.actif
+    ? JSON.stringify({
+        modeFractal: testeurVisuelBot.modeFractal,
+        tfHTF: testeurVisuelBot.timeframeHTF,
+        tfLTF: testeurVisuelBot.timeframeLTF,
+        filtreOB: testeurVisuelBot.filtreZoneOB,
+        cap: testeurVisuelBot.capitalInitial,
+        risque: testeurVisuelBot.risquePourcent,
+        params: testeurVisuelBot.parametresSMC,
+        tfMono: testeurVisuelBot.modeFractal ? '' : timeframe,
+      })
+    : '';
+
+  const timelineBotVisuel = useMemo(() => {
+    if (!testeurVisuelBot?.actif) return null;
+    const sourceM1 = donneesM1Chargees.length > 30 ? donneesM1Chargees : donneesCompletes;
+    if (sourceM1.length < 20) return null;
+
+    const resultatTimeline = calculerTimelineVisuelleBotSMC(sourceM1, {
+      capitalInitial: testeurVisuelBot.capitalInitial,
+      risquePourcent: testeurVisuelBot.risquePourcent,
+      paire: paireCloud,
+      timeframe: testeurVisuelBot.modeFractal ? testeurVisuelBot.timeframeLTF : timeframe,
+      donneesM1: donneesM1Chargees.length > 30 ? donneesM1Chargees : undefined,
+      modeFractal: {
+        actif: testeurVisuelBot.modeFractal,
+        timeframeHTF: testeurVisuelBot.timeframeHTF,
+        timeframeLTF: testeurVisuelBot.timeframeLTF,
+        filtreZoneOB: testeurVisuelBot.filtreZoneOB,
+      },
+      parametresSMC: testeurVisuelBot.parametresSMC,
+    });
+
+    // Pré-calcul unique des timestamps en ms (évite .map() à chaque tic pendant le défilement)
+    const tradesAvecMs = resultatTimeline.rapport.trades.map((tr) => ({
+      ...tr,
+      tEntreeMs: convertirTempsEnMs(tr.dateEntree),
+      tSortieMs: convertirTempsEnMs(tr.dateSortie),
+    }));
+
+    return {
+      ...resultatTimeline,
+      tradesAvecMs,
+    };
+  }, [cleConfigBotVisuel, donneesM1Chargees, paireCloud]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // État en temps réel du Testeur Visuel à la bougie courante (1 seule boucle linéaire < 0.05 ms)
+  const etatLiveTesteurVisuel = useMemo(() => {
+    if (!testeurVisuelBot?.actif || !timelineBotVisuel || donneesCompletes.length === 0) return null;
+    const bougieCourante = donneesCompletes[indexCourant];
+    if (!bougieCourante) return null;
+    const tCourantMs = convertirTempsEnMs(bougieCourante.time);
+
+    const tradesAvecMs = timelineBotVisuel.tradesAvecMs;
+    const tradesTermines = [];
+    const tradesOuvertsJusquIci = [];
+    let tradeEnCours: (typeof tradesAvecMs)[number] | null = null;
+    let prochainTradeLTF: (typeof tradesAvecMs)[number] | null = null;
+    let gagnants = 0;
+    let perdants = 0;
+    let pnlRealise = 0;
+
+    for (let i = 0; i < tradesAvecMs.length; i++) {
+      const tr = tradesAvecMs[i];
+      if (tr.tEntreeMs <= tCourantMs) {
+        tradesOuvertsJusquIci.push(tr);
+        if (tr.tSortieMs <= tCourantMs && tr.tSortieMs > tr.tEntreeMs) {
+          tradesTermines.push(tr);
+          pnlRealise += tr.pnlMontant;
+          if (tr.resultat === 'win') gagnants++;
+          else if (tr.resultat === 'loss') perdants++;
+        } else if (tr.tSortieMs > tCourantMs) {
+          tradeEnCours = tr;
+        }
+      } else if (!prochainTradeLTF) {
+        prochainTradeLTF = tr;
+      }
+    }
+
+    const totalClotures = gagnants + perdants;
+    const winrateLive = totalClotures > 0 ? Number(((gagnants / totalClotures) * 100).toFixed(1)) : 0;
+    const capitalLive = Number((testeurVisuelBot.capitalInitial + pnlRealise).toFixed(2));
+    const pnlPctLive = Number(((pnlRealise / testeurVisuelBot.capitalInitial) * 100).toFixed(2));
+
+    let setupHTFActif = null;
+    let prochainSetupHTF = null;
+    const setupsHTF = timelineBotVisuel.setupsMaitresHTF;
+    for (let i = 0; i < setupsHTF.length; i++) {
+      const s = setupsHTF[i];
+      if (s.tempsConfirmationMs <= tCourantMs && s.tempsFinVieMs > tCourantMs) {
+        setupHTFActif = s;
+      } else if (s.tempsConfirmationMs > tCourantMs && !prochainSetupHTF) {
+        prochainSetupHTF = s;
+      }
+    }
+
+    return {
+      tCourantMs,
+      tradesTermines,
+      tradesOuvertsJusquIci,
+      tradeEnCours,
+      gagnants,
+      perdants,
+      winrateLive,
+      pnlRealise: Number(pnlRealise.toFixed(2)),
+      capitalLive,
+      pnlPctLive,
+      setupHTFActif,
+      prochainSetupHTF,
+      prochainTradeLTF,
+      tousTrades: tradesAvecMs,
+    };
+  }, [testeurVisuelBot, timelineBotVisuel, donneesCompletes, indexCourant]);
+
+  // Synchronisation automatique de la position active sur le graphique et pauses automatiques lors du défilement
+  useEffect(() => {
+    if (!testeurVisuelBot?.actif || !etatLiveTesteurVisuel || donneesCompletes.length === 0) return;
+
+    const { tCourantMs, tradeEnCours, setupHTFActif } = etatLiveTesteurVisuel;
+
+    // 1. Synchroniser l'ouverture de position du bot sur le graphique Replay
+    if (tradeEnCours) {
+      const dejaOuverteMemeTrade =
+        positionActive &&
+        !positionActive.estCloturee &&
+        Math.abs(positionActive.prixEntree - tradeEnCours.prixEntree) < 0.00001 &&
+        Math.abs(positionActive.stopLoss - tradeEnCours.stopLoss) < 0.00001;
+
+      if (!dejaOuverteMemeTrade) {
+        ouvrirPosition(
+          tradeEnCours.direction,
+          tradeEnCours.prixEntree,
+          tradeEnCours.stopLoss,
+          tradeEnCours.takeProfit
+        );
+
+        const cleTrade = `trade_${tradeEnCours.id}`;
+        if (dernierEvenementNotifieRef.current !== cleTrade) {
+          dernierEvenementNotifieRef.current = cleTrade;
+          addToast(
+            `🤖 [Bot Fractal] Position ${tradeEnCours.direction.toUpperCase()} ouverte @ ${tradeEnCours.prixEntree.toFixed(4)} | Petit SL: ${tradeEnCours.stopLoss.toFixed(4)} ➔ Grand TP: ${tradeEnCours.takeProfit.toFixed(4)} (${tradeEnCours.ratioRR}R)`,
+            'success'
+          );
+          if (testeurVisuelBot.pauseAutoSurTradeLTF && estEnLecture) {
+            setEstEnLecture(false);
+          }
+        }
+      }
+    }
+
+    // 2. Pause automatique optionnelle lorsqu'un nouveau Setup Maître H4 vient d'être confirmé
+    if (setupHTFActif) {
+      const dureeBougieCouranteMs =
+        donneesCompletes.length >= 2
+          ? Math.abs(
+              convertirTempsEnMs(donneesCompletes[1].time) -
+                convertirTempsEnMs(donneesCompletes[0].time)
+            )
+          : 900000;
+
+      if (Math.abs(tCourantMs - setupHTFActif.tempsConfirmationMs) <= dureeBougieCouranteMs * 1.5) {
+        const cleSetup = `htf_${setupHTFActif.id}`;
+        if (dernierEvenementNotifieRef.current !== cleSetup) {
+          dernierEvenementNotifieRef.current = cleSetup;
+          addToast(
+            `🏛️ Nouveau Setup Maître ${testeurVisuelBot.timeframeHTF.toUpperCase()} (${setupHTFActif.type}) confirmé ! Plage [${setupHTFActif.prixSL_HTF.toFixed(4)} ➔ ${setupHTFActif.bornePlageHTF.toFixed(4)}] | Grand TP: ${setupHTFActif.prixTP_HTF.toFixed(4)}`,
+            'info'
+          );
+          if (testeurVisuelBot.pauseAutoSurSetupHTF && estEnLecture) {
+            setEstEnLecture(false);
+          }
+        }
+      }
+    }
+  }, [
+    testeurVisuelBot,
+    etatLiveTesteurVisuel,
+    donneesCompletes,
+    positionActive,
+    estEnLecture,
+    ouvrirPosition,
+    setEstEnLecture,
+    addToast,
+  ]);
+
+  // Téléportation en 1 clic par dichotomie O(log N) vers un timestamp cible (Prochain Setup H4 ou Prochain Trade LTF)
+  const sauterVersTimestampReplay = useCallback(
+    (tempsCibleMs: number, reculBougiesAvant = 1, messageToast?: string) => {
+      if (donneesCompletes.length === 0) return;
+      let gauche = 0;
+      let droite = donneesCompletes.length - 1;
+      let idxTrouve = donneesCompletes.length - 1;
+      while (gauche <= droite) {
+        const milieu = (gauche + droite) >>> 1;
+        if (convertirTempsEnMs(donneesCompletes[milieu].time) >= tempsCibleMs) {
+          idxTrouve = milieu;
+          droite = milieu - 1;
+        } else {
+          gauche = milieu + 1;
+        }
+      }
+      const idxPositionne = Math.max(15, idxTrouve - reculBougiesAvant);
+      setEstEnLecture(false);
+      couperReplayAIndex(idxPositionne);
+      if (chartRef.current) {
+        setTimeout(() => chartRef.current?.cadrerSurIndex(idxPositionne, 90), 60);
+      }
+      if (messageToast) {
+        addToast(messageToast, 'info');
+      }
+    },
+    [donneesCompletes, couperReplayAIndex, setEstEnLecture, addToast]
+  );
+
+  // ─── Boucle de lecture du Replay Anti-Freeze (setTimeout auto-cadencé) ──────
+  // Contrairement à setInterval qui empile les exécutions quand une frame dépasse le délai,
+  // setTimeout n'ordonnance la bougie suivante qu'une fois la frame courante terminée.
   useEffect(() => {
     if (!estEnLecture) return;
 
-    const intervalle = setInterval(() => {
-      // 1. Si un bot tourne et que la position précédente est clôturée par le SL/TP, on l'archive pour enchaîner
+    let annule = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const executerUnPas = () => {
+      if (annule) return;
+
+      // 1. Si un bot tourne (script ou Testeur Visuel MT5) et que la position est clôturée, on l'archive pour enchaîner
       const stateStore = useBacktestStore.getState();
-      if (botReplayActif && stateStore.positionActive && stateStore.positionActive.estCloturee) {
+      if (
+        (botReplayActif || stateStore.testeurVisuelBot?.actif) &&
+        stateStore.positionActive &&
+        stateStore.positionActive.estCloturee
+      ) {
         archiverPositionActive();
       }
 
-      // 2. Faire avancer le graphique d'une bougie
-      const continuer = avancerBougie();
+      // 2. Faire avancer le graphique (2 bougies d'un coup en mode Turbo ×50 pour limiter les re-rendus)
+      const nbPas = vitesseLecture <= 25 ? 2 : 1;
+      let continuer = true;
+      for (let p = 0; p < nbPas; p++) {
+        continuer = avancerBougie();
+        if (!continuer) break;
+      }
       if (!continuer) {
-        clearInterval(intervalle);
         addToast('Replay terminé — fin des données disponibles.', 'info');
         return;
       }
 
-      // 3. Si un bot automatique est activé en Replay Visuel
+      // 3. Si un bot automatique scriptable est activé en Replay Visuel
       if (botReplayActif) {
         const stateApres = useBacktestStore.getState();
         const indexActuel = stateApres.indexCourant;
@@ -687,9 +935,19 @@ export function BacktestWorkspace() {
           }
         }
       }
-    }, vitesseLecture);
 
-    return () => clearInterval(intervalle);
+      // Laisse au minimum 32ms (~30 FPS stables) au thread UI pour éviter toute saturation du navigateur
+      if (!annule) {
+        timerId = setTimeout(executerUnPas, Math.max(32, vitesseLecture));
+      }
+    };
+
+    timerId = setTimeout(executerUnPas, Math.max(32, vitesseLecture));
+
+    return () => {
+      annule = true;
+      if (timerId !== null) clearTimeout(timerId);
+    };
   }, [estEnLecture, vitesseLecture, avancerBougie, botReplayActif, archiverPositionActive, ouvrirPosition, addToast]);
 
   // ─── Automatisation du Journaling en 2 Étapes ───────────────────────────────
@@ -1602,13 +1860,15 @@ export function BacktestWorkspace() {
           <select
             value={vitesseLecture}
             onChange={(e) => setVitesseLecture(Number(e.target.value))}
-            className={`border-0 rounded px-2 py-1 text-[12px] outline-none cursor-pointer w-20 ${C.select}`}
+            className={`border-0 rounded px-2 py-1 text-[12px] outline-none cursor-pointer w-24 ${C.select}`}
           >
             <option value="2000">×0.5</option>
             <option value="1000">×1</option>
             <option value="500">×2</option>
             <option value="200">×5</option>
             <option value="100">×10</option>
+            <option value="40">×25 (Rapide)</option>
+            <option value="18">×50 (Turbo MT5)</option>
           </select>
         </div>
 
@@ -1798,6 +2058,50 @@ export function BacktestWorkspace() {
               {nbIndicateursActifs}
             </span>
           )}
+        </button>
+
+        {/* ── 🎬 Bouton Testeur Visuel Bot Fractal (Style Strategy Tester MT5) ── */}
+        <button
+          onClick={() => {
+            if (testeurVisuelBot?.actif) {
+              arreterTesteurVisuelBot();
+              addToast('Testeur Visuel du Bot arrêté.', 'info');
+            } else {
+              demarrerTesteurVisuelBot({
+                actif: true,
+                modeFractal: true,
+                timeframeHTF: '4h',
+                timeframeLTF: timeframe === '4h' || timeframe === '1h' || timeframe === '1d' ? '15m' : timeframe,
+                filtreZoneOB: 'TOUTE_LA_PLAGE',
+                capitalInitial: 10000,
+                risquePourcent: 1.0,
+                pauseAutoSurSetupHTF: false,
+                pauseAutoSurTradeLTF: false,
+                parametresSMC: {
+                  palierTPVise: 'TP1',
+                  typeChevauchementUOP: 'CORPS_ET_MECHES',
+                  scoreMinimumShved: 10,
+                  exigerAutorouteUOP: false,
+                  activerFiltrePlageTP: false,
+                },
+              });
+              if (indexCourant >= donneesCompletes.length - 5 && donneesCompletes.length > 100) {
+                couperReplayAIndex(80);
+              }
+              addToast('🎬 Testeur Visuel Bot Fractal (H4 ➔ M15) activé ! Appuyez sur ▶ Play ou ⏭️ Prochain Setup.', 'success');
+            }
+          }}
+          className={`flex-shrink-0 px-2.5 py-1 text-[12px] font-semibold rounded transition-all flex items-center gap-1.5 border ${
+            testeurVisuelBot?.actif
+              ? 'bg-purple-950/90 border-purple-400 text-purple-200 shadow-sm'
+              : C.btnBase
+          }`}
+          title="Activer/Désactiver le Testeur de Stratégie Visuel du Bot Fractal (Style MT5)"
+        >
+          <span>🎬</span>
+          <span className={testeurVisuelBot?.actif ? 'text-purple-200 font-bold' : 'text-slate-400'}>
+            {testeurVisuelBot?.actif ? 'Bot Visuel MT5 (ON)' : 'Bot Visuel MT5'}
+          </span>
         </button>
 
         {/* ── Bouton Modal Gestionnaire de Bots Automatisés ── */}
@@ -2600,6 +2904,294 @@ export function BacktestWorkspace() {
               ⚠️ {erreur}
             </div>
           )}
+
+          {/* ── 🎬 BANDEAU COCKPIT TESTEUR DE STRATÉGIE VISUEL (STYLE STRATEGY TESTER MT5) ── */}
+          {testeurVisuelBot?.actif && etatLiveTesteurVisuel && (
+            <div className="border-b border-purple-500/40 bg-[#131722] text-slate-100 px-3 py-2 flex flex-col gap-2 z-30 shadow-lg select-none">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {/* 1. Titre Mode + Sélecteur Fractal HTF ➔ LTF */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-md bg-purple-600 text-white text-[11px] font-bold flex items-center gap-1 shadow-xs">
+                    <span>🎬</span>
+                    <span>
+                      Testeur Visuel MT5{' '}
+                      {testeurVisuelBot.modeFractal
+                        ? `(${testeurVisuelBot.timeframeHTF.toUpperCase()} ➔ ${testeurVisuelBot.timeframeLTF.toUpperCase()})`
+                        : `(Mono-TF ${timeframe.toUpperCase()})`}
+                    </span>
+                  </span>
+
+                  {/* Boutons de Bascule de Timeframe Instantanée pendant le Backtest */}
+                  <div className="flex items-center gap-1 bg-slate-900/90 px-1.5 py-0.5 rounded-lg border border-slate-700">
+                    <span className="text-[10px] text-slate-400 font-semibold mr-0.5">Vue UT :</span>
+                    {[
+                      { tf: '4h', label: '🏛️ H4 (Maître)' },
+                      { tf: '1h', label: 'H1' },
+                      { tf: '30m', label: '🔬 M30' },
+                      { tf: '15m', label: '🔬 M15' },
+                      { tf: '5m', label: '🔬 M5' },
+                    ].map((item) => (
+                      <button
+                        key={item.tf}
+                        onClick={() => setTimeframe(item.tf)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                          timeframe === item.tf
+                            ? item.tf === '4h'
+                              ? 'bg-amber-500 text-slate-950 shadow-xs'
+                              : 'bg-purple-600 text-white shadow-xs'
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                        title={`Basculer le graphique en ${item.label} au même instant du Replay`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Filtre Order Block en direct */}
+                  {testeurVisuelBot.modeFractal && (
+                    <select
+                      value={testeurVisuelBot.filtreZoneOB}
+                      onChange={(e) =>
+                        mettreAJourTesteurVisuelBot({ filtreZoneOB: e.target.value as any })
+                      }
+                      className="bg-slate-900 border border-slate-700 rounded-md px-2 py-0.5 text-[10px] text-emerald-300 font-semibold outline-none cursor-pointer"
+                      title="Filtrer les entrées LTF selon les Order Blocks Classiques SMC protégés"
+                    >
+                      <option value="TOUTE_LA_PLAGE">📦 Toute la Plage H4</option>
+                      <option value="TOUT_OB_PROTEGE">🟦 Contact Order Block Protégé</option>
+                      <option value="DERNIER_OB_UNIQUEMENT">🛡️ Dernier OB Uniquement</option>
+                    </select>
+                  )}
+                </div>
+
+                {/* 2. Contrôles de Lecture & Sauts Intelligents (Prochain Setup H4 / Prochain Trade LTF) */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    onClick={() => setEstEnLecture(!estEnLecture)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs ${
+                      estEnLecture
+                        ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                  >
+                    <span>{estEnLecture ? '⏸' : '▶'}</span>
+                    <span>{estEnLecture ? 'Pause' : 'Play'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setEstEnLecture(false);
+                      avancerBougie();
+                    }}
+                    className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] font-bold text-slate-200 cursor-pointer"
+                    title="Avancer d'une bougie (→)"
+                  >
+                    ⏩ +1
+                  </button>
+
+                  {etatLiveTesteurVisuel.prochainSetupHTF && (
+                    <button
+                      onClick={() =>
+                        sauterVersTimestampReplay(
+                          etatLiveTesteurVisuel.prochainSetupHTF!.tempsConfirmationMs,
+                          0,
+                          `🏛️ Positionné sur la confirmation du Setup Maître ${testeurVisuelBot.timeframeHTF.toUpperCase()} (${etatLiveTesteurVisuel.prochainSetupHTF!.type}) !`
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-md bg-amber-950/90 hover:bg-amber-800 border border-amber-500/50 text-[10px] font-bold text-amber-200 transition-colors cursor-pointer"
+                      title="Sauter directement à la confirmation du prochain Setup Maître H4"
+                    >
+                      🏛️ ⏭️ Prochain Setup H4
+                    </button>
+                  )}
+
+                  {etatLiveTesteurVisuel.prochainTradeLTF && (
+                    <button
+                      onClick={() =>
+                        sauterVersTimestampReplay(
+                          etatLiveTesteurVisuel.prochainTradeLTF!.tEntreeMs,
+                          2,
+                          `🎯 Positionné 2 bougies avant la prochaine entrée LTF (${etatLiveTesteurVisuel.prochainTradeLTF!.direction.toUpperCase()} @ ${etatLiveTesteurVisuel.prochainTradeLTF!.prixEntree.toFixed(4)}) !`
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-md bg-cyan-950/90 hover:bg-cyan-800 border border-cyan-500/50 text-[10px] font-bold text-cyan-200 transition-colors cursor-pointer"
+                      title="Sauter 2 bougies avant la prochaine prise de position LTF du bot pour la voir se déclencher en direct"
+                    >
+                      🎯 ⏭️ Prochain Trade LTF
+                    </button>
+                  )}
+
+                  {/* Options de Pause Automatique */}
+                  <label className="flex items-center gap-1 text-[10px] text-slate-300 bg-slate-900 px-2 py-1 rounded-md border border-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={testeurVisuelBot.pauseAutoSurSetupHTF}
+                      onChange={(e) =>
+                        mettreAJourTesteurVisuelBot({ pauseAutoSurSetupHTF: e.target.checked })
+                      }
+                      className="w-3 h-3 accent-amber-500 rounded"
+                    />
+                    <span>Pause/Setup H4</span>
+                  </label>
+
+                  <label className="flex items-center gap-1 text-[10px] text-slate-300 bg-slate-900 px-2 py-1 rounded-md border border-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={testeurVisuelBot.pauseAutoSurTradeLTF}
+                      onChange={(e) =>
+                        mettreAJourTesteurVisuelBot({ pauseAutoSurTradeLTF: e.target.checked })
+                      }
+                      className="w-3 h-3 accent-cyan-500 rounded"
+                    />
+                    <span>Pause/Trade LTF</span>
+                  </label>
+
+                  <button
+                    onClick={() => setJournalTesteurVisuelOuvert(!journalTesteurVisuelOuvert)}
+                    className={`px-2 py-1 rounded-md border text-[10px] font-bold transition-colors cursor-pointer ${
+                      journalTesteurVisuelOuvert
+                        ? 'bg-purple-800 border-purple-400 text-white'
+                        : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300'
+                    }`}
+                  >
+                    📜 Trades ({etatLiveTesteurVisuel.tradesOuvertsJusquIci.length}/
+                    {etatLiveTesteurVisuel.tousTrades.length})
+                  </button>
+
+                  <button
+                    onClick={() => arreterTesteurVisuelBot()}
+                    className="px-2 py-1 rounded-md bg-rose-950/80 hover:bg-rose-800 border border-rose-500/40 text-[10px] font-bold text-rose-200 cursor-pointer"
+                    title="Fermer le bandeau du Testeur Visuel"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* 3. Barre de Télémétrie Live : Capital, P&L, Win Rate & État du Setup Maître H4 */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800 text-[11px]">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="font-mono">
+                    💰 Capital Live :{' '}
+                    <strong className="text-white">${etatLiveTesteurVisuel.capitalLive.toFixed(2)}</strong>{' '}
+                    <span
+                      className={
+                        etatLiveTesteurVisuel.pnlRealise >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'
+                      }
+                    >
+                      ({etatLiveTesteurVisuel.pnlRealise >= 0 ? '+' : ''}
+                      {etatLiveTesteurVisuel.pnlPctLive}%)
+                    </span>
+                  </span>
+
+                  <span className="text-slate-600">|</span>
+
+                  <span>
+                    🏆 Win Rate Live :{' '}
+                    <strong className="text-cyan-300">{etatLiveTesteurVisuel.winrateLive}%</strong>{' '}
+                    <span className="text-[10px] text-slate-400">
+                      ({etatLiveTesteurVisuel.gagnants}W / {etatLiveTesteurVisuel.perdants}L)
+                    </span>
+                  </span>
+
+                  <span className="text-slate-600">|</span>
+
+                  {etatLiveTesteurVisuel.tradeEnCours ? (
+                    <span className="px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold">
+                      ⚡ Position LTF Active : {etatLiveTesteurVisuel.tradeEnCours.direction.toUpperCase()} @{' '}
+                      {etatLiveTesteurVisuel.tradeEnCours.prixEntree.toFixed(4)} | SL:{' '}
+                      {etatLiveTesteurVisuel.tradeEnCours.stopLoss.toFixed(4)} ➔ TP H4:{' '}
+                      {etatLiveTesteurVisuel.tradeEnCours.takeProfit.toFixed(4)} (
+                      {etatLiveTesteurVisuel.tradeEnCours.ratioRR}R)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400">Aucune position LTF ouverte à cette bougie</span>
+                  )}
+                </div>
+
+                {/* État en direct du Setup Maître H4 */}
+                <div>
+                  {etatLiveTesteurVisuel.setupHTFActif ? (
+                    <span className="px-2 py-0.5 rounded bg-purple-950/90 border border-purple-500/50 text-purple-200 text-[10px] font-semibold">
+                      🏛️ Setup {testeurVisuelBot.timeframeHTF.toUpperCase()}{' '}
+                      <strong>{etatLiveTesteurVisuel.setupHTFActif.type}</strong> Actif | Plage Protégée : [
+                      {Math.min(
+                        etatLiveTesteurVisuel.setupHTFActif.prixSL_HTF,
+                        etatLiveTesteurVisuel.setupHTFActif.bornePlageHTF
+                      ).toFixed(4)}{' '}
+                      ➔{' '}
+                      {Math.max(
+                        etatLiveTesteurVisuel.setupHTFActif.prixSL_HTF,
+                        etatLiveTesteurVisuel.setupHTFActif.bornePlageHTF
+                      ).toFixed(4)}
+                      ] | 🎯 Grand TP : {etatLiveTesteurVisuel.setupHTFActif.prixTP_HTF.toFixed(4)} (Prof:
+                      {etatLiveTesteurVisuel.setupHTFActif.profondeurZigZag})
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 italic">
+                      ⏳ En attente d'un Setup Maître {testeurVisuelBot.timeframeHTF.toUpperCase()} confirmé...
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* 4. Tiroir dépliable : Journal Live des Trades du Testeur Visuel (cliquable pour se téléporter) */}
+              {journalTesteurVisuelOuvert && (
+                <div className="max-h-36 overflow-y-auto border-t border-slate-800 pt-1.5 mt-0.5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                  {etatLiveTesteurVisuel.tousTrades.length === 0 ? (
+                    <div className="text-[11px] text-slate-400 py-2 col-span-full text-center">
+                      Aucun trade détecté sur cette période avec les filtres actuels.
+                    </div>
+                  ) : (
+                    etatLiveTesteurVisuel.tousTrades.map((tr, idx) => {
+                      const estFutur = tr.tEntreeMs > etatLiveTesteurVisuel.tCourantMs;
+                      const estEnCours =
+                        tr.tEntreeMs <= etatLiveTesteurVisuel.tCourantMs &&
+                        tr.tSortieMs > etatLiveTesteurVisuel.tCourantMs;
+                      return (
+                        <button
+                          key={tr.id}
+                          onClick={() =>
+                            sauterVersTimestampReplay(
+                              tr.tEntreeMs,
+                              2,
+                              `🎯 Téléporté sur le Trade #${idx + 1} (${tr.direction.toUpperCase()} @ ${tr.prixEntree.toFixed(4)})`
+                            )
+                          }
+                          className={`flex items-center justify-between px-2.5 py-1 rounded border text-left text-[10px] transition-all cursor-pointer ${
+                            estEnCours
+                              ? 'bg-cyan-950/90 border-cyan-400 text-cyan-100'
+                              : estFutur
+                                ? 'bg-slate-900/50 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                : tr.resultat === 'win'
+                                  ? 'bg-emerald-950/40 border-emerald-600/40 text-emerald-200 hover:bg-emerald-900/50'
+                                  : 'bg-rose-950/40 border-rose-600/40 text-rose-200 hover:bg-rose-900/50'
+                          }`}
+                          title="Cliquer pour positionner le graphique 2 bougies avant ce trade"
+                        >
+                          <span className="font-bold">
+                            #{idx + 1} {tr.direction === 'long' ? '▲ BUY' : '▼ SELL'} @{' '}
+                            {tr.prixEntree.toFixed(4)} ({tr.ratioRR}R)
+                          </span>
+                          <span className="font-mono font-semibold">
+                            {estEnCours
+                              ? '⚡ EN COURS'
+                              : estFutur
+                                ? '⏭️ Futur'
+                                : tr.resultat === 'win'
+                                  ? `✅ +$${tr.pnlMontant}`
+                                  : `❌ -$${Math.abs(tr.pnlMontant)}`}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <BacktestChart
             ref={chartRef}
             activeTool={outilActif}
@@ -2608,6 +3200,7 @@ export function BacktestWorkspace() {
             height={hauteurGraphique}
             theme={theme}
             timeframe={timeframe}
+            onChangeTimeframe={(nouveauTf) => setTimeframe(nouveauTf)}
             onOpenIndicatorModal={(scriptId, onglet) => {
               setScriptIdPourEdition(scriptId || null);
               setOngletInitialIndicateurs(onglet || (scriptId ? 'configuration' : 'indicateurs'));

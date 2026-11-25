@@ -40,13 +40,19 @@ export function dessinerResultatIndicateur(
     dessinerUnmitigatedOverlapProfile(ctx, resultat.donnees as any, chart, series, bougies, script.parametres);
   } else if (resultat.typeSpecial === 'orchestrateur-smc' && resultat.donnees) {
     // 📊 Affiche l'histogramme Volume Profile des chevauchements ayant déterminé le TP sur les setups confirmés
+    // + 📐 Affiche l'objet Position Long/Short style TradingView pour chaque position prise en LTF !
     const afficherProfil = script?.parametres?.afficherProfilVolumeUOP !== false;
-    if (afficherProfil) {
-      const setups: SetupOrchestreSMC[] = (resultat.donnees as any).setups || [];
-      const masquerTermines = script?.parametres?.masquerSetupsTermines !== false;
-      for (const setup of setups) {
-        if (setup.statut !== 'CONFIRME') continue;
-        if (masquerTermines && setup.estTermine) continue;
+    const setups: SetupOrchestreSMC[] = (resultat.donnees as any).setups || [];
+    const masquerTermines = script?.parametres?.masquerSetupsTermines !== false;
+    for (const setup of setups) {
+      if (setup.statut !== 'CONFIRME' && !setup.estSecondSetupFractalLTF) continue;
+      if (setup.estSecondSetupFractalLTF) {
+        dessinerObjetPositionTradingViewLTF(ctx, setup, chart, series, bougies);
+        continue;
+      }
+      if (afficherProfil) {
+        // Ne jamais masquer un setup dont l'utilisateur est en train de modifier la Profondeur en temps réel !
+        if (masquerTermines && setup.estTermine && setup.profondeurZigZagPersonnalisee === undefined) continue;
         dessinerHistogrammeProfilSetupSMC(ctx, setup, chart, series, bougies, false);
       }
     }
@@ -77,25 +83,16 @@ export function dessinerHistogrammeProfilSetupSMC(
   modeDiagnosticComplet = false
 ): void {
   if (!setup || !chart || !series) return;
-  const paliers = setup.paliersSuperpositionUOP;
-  const step = setup.stepUOP;
-  if (!paliers || paliers.length === 0 || !step || step <= 0) return;
 
   const timeScale = chart.timeScale();
   const estAchat = setup.type === 'ACHAT';
   const seuilBleu = setup.seuilBleuFonceUOP ?? 3;
   const infoZZ = setup.detailsScoreLiquidationZigZag;
 
-  // Position X d'ancrage : à la 3ème bougie de confirmation (ou au Doji par repli)
-  const xAncrage =
-    (setup.tempsConfirmation ? obtenirXPourTemps(timeScale, setup.tempsConfirmation, bougies) : null) ??
-    obtenirXPourTemps(timeScale, setup.tempsDoji, bougies);
-  if (xAncrage === null) return;
-
   ctx.save();
 
-  // 0️⃣ Tracé de la SECTION EXACTE de ZigZag propre au setup (uniquement les N vagues du TP, sans surcharger tout le graphique)
-  if (!modeDiagnosticComplet && infoZZ?.pivotsZigZag && infoZZ.pivotsZigZag.length >= 2) {
+  // 0️⃣ Tracé de la SECTION EXACTE de ZigZag propre au setup (toujours affiché en premier, même si le profil est court)
+  if (infoZZ?.pivotsZigZag && infoZZ.pivotsZigZag.length >= 2) {
     const coordsPivots: { x: number; y: number; prix: number; type: 'HIGH' | 'LOW' }[] = [];
     for (const piv of infoZZ.pivotsZigZag) {
       const xPiv = obtenirXPourTemps(timeScale, piv.temps, bougies);
@@ -106,9 +103,14 @@ export function dessinerHistogrammeProfilSetupSMC(
     }
 
     if (coordsPivots.length >= 2) {
+      const estProfPersonnalisee =
+        setup.profondeurZigZagPersonnalisee !== undefined &&
+        setup.profondeurZigZagOriginale !== undefined &&
+        setup.profondeurZigZagPersonnalisee !== setup.profondeurZigZagOriginale;
+
       ctx.beginPath();
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)'; // Violet lumineux pour la section ZigZag du setup
-      ctx.lineWidth = 1.8;
+      ctx.strokeStyle = estProfPersonnalisee ? '#F59E0B' : 'rgba(168, 85, 247, 0.92)'; // Or vif si profondeur modifiée, Violet lumineux sinon
+      ctx.lineWidth = estProfPersonnalisee ? 2.4 : 2.0;
       ctx.setLineDash([5, 3]);
       ctx.moveTo(coordsPivots[0].x, coordsPivots[0].y);
       for (let i = 1; i < coordsPivots.length; i++) {
@@ -121,7 +123,7 @@ export function dessinerHistogrammeProfilSetupSMC(
       for (let i = 0; i < coordsPivots.length; i++) {
         const pt = coordsPivots[i];
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 3.8, 0, Math.PI * 2);
         ctx.fillStyle = pt.type === 'HIGH' ? '#C084FC' : '#38BDF8';
         ctx.fill();
         ctx.strokeStyle = '#0F172A';
@@ -135,18 +137,54 @@ export function dessinerHistogrammeProfilSetupSMC(
           // Lecture de DROITE vers la GAUCHE : V1 est la vague la plus récente (à droite)
           const numeroVagueDroiteGauche = coordsPivots.length - i;
           const txtV = `V${numeroVagueDroiteGauche}`;
-          ctx.font = 'bold 8px sans-serif';
+          ctx.font = 'bold 8.5px sans-serif';
           const wV = ctx.measureText(txtV).width;
-          ctx.fillStyle = 'rgba(30, 27, 75, 0.88)';
+          ctx.fillStyle = estProfPersonnalisee ? 'rgba(69, 26, 3, 0.92)' : 'rgba(30, 27, 75, 0.90)';
           ctx.fillRect(mx - wV / 2 - 3, my - 7, wV + 6, 12);
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.7)';
-          ctx.lineWidth = 0.8;
+          ctx.strokeStyle = estProfPersonnalisee ? '#F59E0B' : 'rgba(168, 85, 247, 0.8)';
+          ctx.lineWidth = 0.9;
           ctx.strokeRect(mx - wV / 2 - 3, my - 7, wV + 6, 12);
-          ctx.fillStyle = '#E9D5FF';
+          ctx.fillStyle = estProfPersonnalisee ? '#FDE68A' : '#E9D5FF';
           ctx.fillText(txtV, mx - wV / 2, my + 2);
         }
       }
+
+      // Badge explicite affichant la valeur de la variable « Profondeur » sur la section ZigZag du setup
+      const dernierPivot = coordsPivots[coordsPivots.length - 1];
+      const avantDernierPivot = coordsPivots[coordsPivots.length - 2];
+      const xBadgeProf = (dernierPivot.x + avantDernierPivot.x) / 2;
+      const yBadgeProf = Math.min(dernierPivot.y, avantDernierPivot.y) - 18;
+
+      const txtProf = estProfPersonnalisee
+        ? `🧪 Profondeur : ${infoZZ.zigzagDepthRetenu} (Auto: ${setup.profondeurZigZagOriginale})`
+        : `🌊 Profondeur : ${infoZZ.zigzagDepthRetenu} (${infoZZ.nbVaguesSuperposeesRetenu}v · V${infoZZ.vitesseRetenue})`;
+
+      ctx.font = 'bold 8.5px sans-serif';
+      const wProf = ctx.measureText(txtProf).width;
+      ctx.fillStyle = estProfPersonnalisee ? 'rgba(69, 26, 3, 0.94)' : 'rgba(30, 27, 75, 0.92)';
+      ctx.fillRect(xBadgeProf - wProf / 2 - 5, yBadgeProf, wProf + 10, 14);
+      ctx.strokeStyle = estProfPersonnalisee ? '#F59E0B' : '#A855F7';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(xBadgeProf - wProf / 2 - 5, yBadgeProf, wProf + 10, 14);
+      ctx.fillStyle = estProfPersonnalisee ? '#FDE68A' : '#E9D5FF';
+      ctx.fillText(txtProf, xBadgeProf - wProf / 2, yBadgeProf + 10);
     }
+  }
+
+  const paliers = setup.paliersSuperpositionUOP;
+  const step = setup.stepUOP;
+  if (!paliers || paliers.length === 0 || !step || step <= 0) {
+    ctx.restore();
+    return;
+  }
+
+  // Position X d'ancrage : à la 3ème bougie de confirmation (ou au Doji par repli)
+  const xAncrage =
+    (setup.tempsConfirmation ? obtenirXPourTemps(timeScale, setup.tempsConfirmation, bougies) : null) ??
+    obtenirXPourTemps(timeScale, setup.tempsDoji, bougies);
+  if (xAncrage === null) {
+    ctx.restore();
+    return;
   }
 
   // 1️⃣ En mode Diagnostic : afficher aussi les barres de chevauchement individuelles sur les N vagues utilisées
@@ -181,17 +219,8 @@ export function dessinerHistogrammeProfilSetupSMC(
     }
   }
 
-  // 2️⃣ Filtrage des paliers autour de la zone du setup (de SL jusqu'au-delà du TP pour voir la rupture)
-  const distanceRef = Math.max(setup.distanceTP ?? setup.distanceSL * 2, setup.distanceSL * 2);
-  const margeAuDelaTP = distanceRef * 0.45;
-  const borneMinPrix = estAchat
-    ? Math.min(setup.prixSL, setup.prixEntree) - step * 2
-    : (setup.prixTP ?? setup.prixEntree - distanceRef) - margeAuDelaTP;
-  const borneMaxPrix = estAchat
-    ? (setup.prixTP ?? setup.prixEntree + distanceRef) + margeAuDelaTP
-    : Math.max(setup.prixSL, setup.prixEntree) + step * 2;
-
-  const paliersZone = paliers.filter((p) => p.prix >= borneMinPrix && p.prix <= borneMaxPrix);
+  // 2️⃣ Affichage complet de l'histogramme superposé des 10 vagues (sans couper à une sous-plage)
+  const paliersZone = paliers;
   if (paliersZone.length === 0) {
     ctx.restore();
     return;
@@ -223,8 +252,8 @@ export function dessinerHistogrammeProfilSetupSMC(
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // En-tête compact du Volume Profile UOP
-    const titreProfil = `📊 PROFIL UOP (${infoZZ ? `V${infoZZ.vitesseRetenue} · ${infoZZ.nbVaguesSuperposeesRetenu}v · D${infoZZ.zigzagDepthRetenu}` : '3b'})`;
+    // En-tête compact du Volume Profile UOP avec affichage explicite de la variable « Profondeur »
+    const titreProfil = `📊 PROFIL UOP · Profondeur: ${infoZZ ? infoZZ.zigzagDepthRetenu : 4} (${infoZZ ? `${infoZZ.nbVaguesSuperposeesRetenu}v · V${infoZZ.vitesseRetenue}` : '3b'})`;
     ctx.font = 'bold 8.5px sans-serif';
     const wTitre = ctx.measureText(titreProfil).width;
     ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
@@ -288,13 +317,12 @@ export function dessinerHistogrammeProfilSetupSMC(
     ctx.fillRect(xDepartProfil, yBarre, wBarre, hBarre);
     ctx.strokeRect(xDepartProfil, yBarre, wBarre, hBarre);
 
-    // Affichage du nombre de bougies sur les barres significatives (si hauteur suffisante)
+    // Affichage du nombre de bougies et de la vague source (V1..V10) sur les barres significatives
     if (hBarre >= 7 && (modeDiagnosticComplet || (estFortOverlap && estSurTrajetTP) || estZoneRuptureApresTP)) {
       ctx.font = 'bold 8px sans-serif';
       ctx.fillStyle = estZoneRuptureApresTP ? '#FDA4AF' : estFortOverlap ? '#E0F2FE' : '#FDE68A';
-      const txtBougies = modeDiagnosticComplet
-        ? `${palier.sommeBougies}b (${palier.nbVagues}v)`
-        : `${palier.sommeBougies}b`;
+      const numVagueSource = palier.vaguesIndices && palier.vaguesIndices.length > 0 ? palier.vaguesIndices[0] : 1;
+      const txtBougies = `${palier.sommeBougies}b (V${numVagueSource})`;
       ctx.fillText(txtBougies, xDepartProfil + wBarre + 4, yBarre + hBarre / 2 + 3);
     }
   }
@@ -503,17 +531,21 @@ function obtenirXPourTemps(
     return timeScale.timeToCoordinate(derniere.time as Time);
   }
 
-  // 4️⃣ Interpolation intelligente : trouve la bougie HTF contenant cette date LTF (la plus proche <= tSec)
+  // 4️⃣ Interpolation par dichotomie O(log N) : trouve la bougie contenant cette date (la plus proche <= tSec)
+  let gauche = 0;
+  let droite = bougies.length - 1;
   let indexProche = -1;
-  for (let i = 0; i < bougies.length; i++) {
-    const timeVal = bougies[i].time;
+  while (gauche <= droite) {
+    const milieu = (gauche + droite) >>> 1;
+    const timeVal = bougies[milieu].time;
     const tB: number = typeof timeVal === 'number'
       ? timeVal
       : Math.floor(Date.parse(timeVal as string) / 1000);
     if (tB <= tSec) {
-      indexProche = i;
+      indexProche = milieu;
+      gauche = milieu + 1;
     } else {
-      break;
+      droite = milieu - 1;
     }
   }
 
@@ -522,6 +554,216 @@ function obtenirXPourTemps(
   }
 
   return null;
+}
+
+/**
+ * 📐 Dessine une position LTF sous la forme exacte de l'outil « Position Longue / Courte » de TradingView :
+ *  - 🟩 Grande boîte verte translucide entre le prix d'entrée LTF et le Grand TP HTF
+ *  - 🟥 Boîte rouge translucide entre le prix d'entrée LTF et le Petit SL LTF
+ *  - ⚪ Ligne centrale d'entrée avec diagonale pointillée de progression du trade
+ *  - 🏷️ Cartouches TradingView lisibles (Ratio R/R, Prix d'Entrée, Cible Grand TP, Petit SL et Statut du trade)
+ *
+ * Exemple :
+ * dessinerObjetPositionTradingViewLTF(ctx, setupFractalLTF, chart, series, bougies);
+ */
+export function dessinerObjetPositionTradingViewLTF(
+  ctx: CanvasRenderingContext2D,
+  setup: SetupOrchestreSMC,
+  chart: IChartApi,
+  series: ISeriesApi<'Candlestick'>,
+  bougies: Bougie[]
+): void {
+  if (!setup || setup.prixTP === undefined || !chart || !series) return;
+
+  const timeScale = chart.timeScale();
+  const estAchat = setup.type === 'ACHAT';
+  const tempsEntree = setup.tempsConfirmation ?? setup.tempsDoji;
+  const xDoji = obtenirXPourTemps(timeScale, setup.tempsDoji, bougies);
+  const xEntree = obtenirXPourTemps(timeScale, tempsEntree, bougies);
+
+  const derniereBougie = bougies.length > 0 ? bougies[bougies.length - 1] : null;
+  const xDerniere = derniereBougie ? obtenirXPourTemps(timeScale, derniereBougie.time, bougies) : null;
+  const xSortie = setup.tempsSortieTrade
+    ? obtenirXPourTemps(timeScale, setup.tempsSortieTrade, bougies)
+    : xDerniere;
+
+  const yEntree = series.priceToCoordinate(setup.prixEntree);
+  const ySL = series.priceToCoordinate(setup.prixSL);
+  const yTP = series.priceToCoordinate(setup.prixTP);
+
+  if (xEntree === null || yEntree === null || ySL === null || yTP === null) return;
+
+  // Largeur minimale façon TradingView (au moins 110px pour que la boîte et ses étiquettes soient toujours bien visibles)
+  const x1 = xEntree;
+  const xFinBrut = xSortie !== null ? Math.max(x1 + 24, xSortie) : x1 + 120;
+  const x2 = setup.estTermine ? Math.max(x1 + 45, xFinBrut) : Math.max(x1 + 110, xFinBrut);
+  const largeur = x2 - x1;
+
+  ctx.save();
+
+  // 0️⃣ Petit cadre pointillé reliant le Doji LTF aux 3 bougies de confirmation avant l'ouverture de la position
+  if (xDoji !== null && xDoji < x1 && setup.borneRangeConfirmation !== undefined) {
+    const yBorneRange = series.priceToCoordinate(setup.borneRangeConfirmation);
+    if (yBorneRange !== null) {
+      const yRangeTop = Math.min(ySL, yBorneRange);
+      const hRange = Math.max(4, Math.abs(yBorneRange - ySL));
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.08)';
+      ctx.fillRect(xDoji, yRangeTop, x1 - xDoji, hRange);
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(xDoji, yRangeTop, x1 - xDoji, hRange);
+      ctx.setLineDash([]);
+    }
+  }
+
+  // 1️⃣ 🟩 ZONE DE GAIN (TAKE PROFIT) — Style TradingView (#089981)
+  const yTPTop = Math.min(yEntree, yTP);
+  const hTP = Math.max(3, Math.abs(yTP - yEntree));
+  ctx.fillStyle =
+    setup.resultatTrade === 'TP_TOUCHE'
+      ? 'rgba(8, 153, 129, 0.32)'
+      : 'rgba(8, 153, 129, 0.22)';
+  ctx.fillRect(x1, yTPTop, largeur, hTP);
+
+  // Bordures latérales de la zone TP
+  ctx.strokeStyle = 'rgba(8, 153, 129, 0.65)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x1, yTPTop, largeur, hTP);
+
+  // Ligne de niveau TP bien marquée
+  ctx.beginPath();
+  ctx.strokeStyle = '#089981';
+  ctx.lineWidth = 2;
+  ctx.moveTo(x1, yTP);
+  ctx.lineTo(x2, yTP);
+  ctx.stroke();
+
+  // 2️⃣ 🟥 ZONE DE RISQUE (STOP LOSS) — Style TradingView (#F23645)
+  const ySLTop = Math.min(yEntree, ySL);
+  const hSL = Math.max(3, Math.abs(ySL - yEntree));
+  ctx.fillStyle =
+    setup.resultatTrade === 'SL_TOUCHE'
+      ? 'rgba(242, 54, 69, 0.38)'
+      : 'rgba(242, 54, 69, 0.28)';
+  ctx.fillRect(x1, ySLTop, largeur, hSL);
+
+  // Bordures latérales de la zone SL
+  ctx.strokeStyle = 'rgba(242, 54, 69, 0.70)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x1, ySLTop, largeur, hSL);
+
+  // Ligne de niveau SL bien marquée
+  ctx.beginPath();
+  ctx.strokeStyle = '#F23645';
+  ctx.lineWidth = 2;
+  ctx.moveTo(x1, ySL);
+  ctx.lineTo(x2, ySL);
+  ctx.stroke();
+
+  // 3️⃣ ⚪ LIGNE CENTRALE D'ENTRÉE & DIAGONALE DE PROGRESSION TRADINGVIEW
+  ctx.beginPath();
+  ctx.strokeStyle = '#CBD5E1';
+  ctx.lineWidth = 1.6;
+  ctx.moveTo(x1, yEntree);
+  ctx.lineTo(x2, yEntree);
+  ctx.stroke();
+
+  // Diagonale pointillée interne reliant l'entrée à la sortie (ou au prix courant) comme sur TradingView
+  const yFinProgression =
+    setup.resultatTrade === 'TP_TOUCHE'
+      ? yTP
+      : setup.resultatTrade === 'SL_TOUCHE'
+        ? ySL
+        : derniereBougie
+          ? series.priceToCoordinate(derniereBougie.close) ?? yEntree
+          : yEntree;
+
+  ctx.beginPath();
+  ctx.strokeStyle =
+    setup.resultatTrade === 'TP_TOUCHE'
+      ? 'rgba(16, 185, 129, 0.85)'
+      : setup.resultatTrade === 'SL_TOUCHE'
+        ? 'rgba(244, 63, 94, 0.85)'
+        : 'rgba(148, 163, 184, 0.65)';
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([4, 4]);
+  ctx.moveTo(x1, yEntree);
+  ctx.lineTo(xFinBrut, yFinProgression);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Point d'ancrage à l'ouverture de la position
+  ctx.beginPath();
+  ctx.arc(x1, yEntree, 4, 0, Math.PI * 2);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fill();
+  ctx.strokeStyle = '#0F172A';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // 4️⃣ 🏷️ CARTOUCHES D'INFORMATION STYLE TRADINGVIEW (Cible / Ratio R:R / Stop)
+  const tfMaitreLabel = setup.timeframeMaitreHTF || '4H';
+  const statutBadge =
+    setup.statut === 'EN_COURS'
+      ? `⏳ Conf. ${setup.bougiesObservees}/3`
+      : setup.resultatTrade === 'TP_TOUCHE'
+        ? `✅ TP TOUCHÉ (+${setup.ratioRR}R)`
+        : setup.resultatTrade === 'SL_TOUCHE'
+          ? '❌ SL TOUCHÉ (-1R)'
+          : '⚡ POSITION ACTIVE';
+
+  // A. Cartouche Central sur la ligne d'Entrée (Ratio R/R + Statut)
+  const texteCentre = `${estAchat ? '▲ LONG' : '▼ SHORT'} LTF @ ${setup.prixEntree.toFixed(4)} | R/R: ${setup.ratioRR} | ${statutBadge}`;
+  ctx.font = 'bold 9.5px Inter, system-ui, sans-serif';
+  const wCentre = ctx.measureText(texteCentre).width;
+  const xBadgeCentre = x1 + Math.max(4, Math.min(12, (largeur - wCentre) / 2));
+  const yBadgeCentre = yEntree - 8;
+
+  ctx.fillStyle =
+    setup.resultatTrade === 'TP_TOUCHE'
+      ? 'rgba(6, 78, 59, 0.94)'
+      : setup.resultatTrade === 'SL_TOUCHE'
+        ? 'rgba(136, 19, 55, 0.94)'
+        : 'rgba(15, 23, 42, 0.94)';
+  ctx.fillRect(xBadgeCentre, yBadgeCentre, wCentre + 12, 16);
+  ctx.strokeStyle =
+    setup.resultatTrade === 'TP_TOUCHE'
+      ? '#10B981'
+      : setup.resultatTrade === 'SL_TOUCHE'
+        ? '#F43F5E'
+        : '#38BDF8';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(xBadgeCentre, yBadgeCentre, wCentre + 12, 16);
+  ctx.fillStyle = '#F8FAFC';
+  ctx.fillText(texteCentre, xBadgeCentre + 6, yBadgeCentre + 11.5);
+
+  // B. Cartouche Cible (sur la bordure du Grand TP)
+  const texteCible = `🎯 Cible ${tfMaitreLabel}: ${setup.prixTP.toFixed(4)} (+${setup.ratioRR}R)`;
+  ctx.font = 'bold 9px Inter, system-ui, sans-serif';
+  const wCible = ctx.measureText(texteCible).width;
+  const yBadgeCible = estAchat ? yTP - 16 : yTP + 2;
+  ctx.fillStyle = 'rgba(6, 78, 59, 0.92)';
+  ctx.fillRect(x1 + 4, yBadgeCible, wCible + 10, 14);
+  ctx.strokeStyle = '#089981';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x1 + 4, yBadgeCible, wCible + 10, 14);
+  ctx.fillStyle = '#6EE7B7';
+  ctx.fillText(texteCible, x1 + 9, yBadgeCible + 10);
+
+  // C. Cartouche Stop (sur la bordure du Petit SL LTF)
+  const texteStop = `🛑 Stop LTF: ${setup.prixSL.toFixed(4)}`;
+  const wStop = ctx.measureText(texteStop).width;
+  const yBadgeStop = estAchat ? ySL + 2 : ySL - 16;
+  ctx.fillStyle = 'rgba(76, 5, 25, 0.92)';
+  ctx.fillRect(x1 + 4, yBadgeStop, wStop + 10, 14);
+  ctx.strokeStyle = '#F23645';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x1 + 4, yBadgeStop, wStop + 10, 14);
+  ctx.fillStyle = '#FDA4AF';
+  ctx.fillText(texteStop, x1 + 9, yBadgeStop + 10);
+
+  ctx.restore();
 }
 
 /**
@@ -535,6 +777,9 @@ function dessinerBoiteZone(
   xDerniere: number | null,
   bougies: Bougie[]
 ): void {
+  // Les boîtes de position TradingView LTF sont dessinées en haute fidélité par dessinerObjetPositionTradingViewLTF
+  if (boite.id && boite.id.startsWith('fractal-ltf-tv-')) return;
+
   const xDebut = obtenirXPourTemps(timeScale, boite.dateDebut, bougies);
   const xFin = boite.dateFin ? obtenirXPourTemps(timeScale, boite.dateFin, bougies) : xDerniere;
   const yHaut = series.priceToCoordinate(boite.prixHaut);
@@ -1072,10 +1317,16 @@ export function dessinerSurbrillanceDiagnosticSMC(
         ctx.stroke();
       }
 
-      // Étiquette sur le premier segment de vague ZigZag visible
+      // Étiquette sur le premier segment de vague ZigZag visible avec affichage de la variable « Profondeur »
       const milieuX = (coordsPivots[0].x + coordsPivots[1].x) / 2;
       const milieuY = (coordsPivots[0].y + coordsPivots[1].y) / 2;
-      const texteVague = `🌊 Vitesse ${infoScoreZZ.vitesseRetenue ?? 2} · ZigZag (Depth: ${infoScoreZZ.zigzagDepthRetenu}, ${infoScoreZZ.nbVaguesSuperposeesRetenu ?? 3}v)`;
+      const estProfPersonnalisee =
+        setup.profondeurZigZagPersonnalisee !== undefined &&
+        setup.profondeurZigZagOriginale !== undefined &&
+        setup.profondeurZigZagPersonnalisee !== setup.profondeurZigZagOriginale;
+      const texteVague = estProfPersonnalisee
+        ? `🧪 ZigZag · Profondeur testée : ${infoScoreZZ.zigzagDepthRetenu} (Auto: ${setup.profondeurZigZagOriginale}) · ${infoScoreZZ.nbVaguesSuperposeesRetenu ?? 3}v`
+        : `🌊 ZigZag · Profondeur : ${infoScoreZZ.zigzagDepthRetenu} (${infoScoreZZ.nbVaguesSuperposeesRetenu ?? 3} vagues · Vitesse ${infoScoreZZ.vitesseRetenue ?? 2})`;
       ctx.font = 'bold 9px sans-serif';
       const wVague = ctx.measureText(texteVague).width;
       ctx.fillStyle = 'rgba(30, 27, 75, 0.90)';

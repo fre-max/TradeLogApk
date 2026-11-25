@@ -192,8 +192,29 @@ export function calculerShvedSupplyDemand(
   // Historique maximal d'analyse demandé (défaut: 200 bougies récentes au lieu de 800)
   const maxHistoriqueDemande = Math.max(20, Number(options.maxLookbackBars ?? 200));
 
-  // Option B : Si une timeframe spécifique (ex: M15) est demandée et qu'on dispose des bougies M1
-  if (tfSource !== 'ACTUEL' && options.donneesM1 && options.donneesM1.length > 0) {
+  // Vérifie si la timeframe du graphique est déjà identique à tfSource (ex: '15m' === 'M15')
+  const normaliserCodeTf = (tf?: string): string => {
+    const c = (tf || '').trim().toLowerCase();
+    if (c === '1m' || c === 'm1') return '1m';
+    if (c === '5m' || c === 'm5') return '5m';
+    if (c === '15m' || c === 'm15') return '15m';
+    if (c === '30m' || c === 'm30') return '30m';
+    if (c === '1h' || c === 'h1') return '1h';
+    if (c === '4h' || c === 'h4') return '4h';
+    if (c === '1d' || c === 'd1') return '1d';
+    return c;
+  };
+  const memeTimeframeQueGraphique =
+    options.chartTimeframe &&
+    normaliserCodeTf(tfSource) === normaliserCodeTf(options.chartTimeframe);
+
+  // Option B : Si une timeframe spécifique (ex: M15) est demandée, différente du graphique, et qu'on dispose des bougies M1
+  if (
+    tfSource !== 'ACTUEL' &&
+    !memeTimeframeQueGraphique &&
+    options.donneesM1 &&
+    options.donneesM1.length > 0
+  ) {
     const derniereBougieChart = bougies[bougies.length - 1];
     const tempsMaxSec = typeof derniereBougieChart.time === 'number'
       ? derniereBougieChart.time
@@ -210,17 +231,41 @@ export function calculerShvedSupplyDemand(
     const margeReculSec = 4 * 3600;
     const tempsDebutCalculSec = Math.max(0, tempsMinChartSec - margeReculSec);
 
-    // Filtrage chronologique : ne conserve que la fenêtre récente demandée
-    const m1Filtrees: Bougie[] = [];
-    for (let k = 0; k < options.donneesM1.length; k++) {
-      const b = options.donneesM1[k];
-      const t = typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time as string) / 1000);
-      if (t >= tempsDebutCalculSec && t <= tempsMaxSec) {
-        m1Filtrees.push(b);
+    // 🚀 Recherche par dichotomie O(log N) dans donneesM1 au lieu de parcourir 370 000 bougies M1 linéairement !
+    const m1 = options.donneesM1;
+    const lireTempsSec = (b: Bougie): number =>
+      typeof b.time === 'number' ? b.time : Math.floor(Date.parse(b.time as string) / 1000);
+
+    // Trouver le premier index >= tempsDebutCalculSec
+    let g1 = 0;
+    let d1 = m1.length - 1;
+    let idxDebutM1 = m1.length;
+    while (g1 <= d1) {
+      const mid = (g1 + d1) >>> 1;
+      if (lireTempsSec(m1[mid]) >= tempsDebutCalculSec) {
+        idxDebutM1 = mid;
+        d1 = mid - 1;
+      } else {
+        g1 = mid + 1;
       }
     }
 
-    if (m1Filtrees.length >= 20) {
+    // Trouver le dernier index <= tempsMaxSec
+    let g2 = 0;
+    let d2 = m1.length - 1;
+    let idxFinM1 = -1;
+    while (g2 <= d2) {
+      const mid = (g2 + d2) >>> 1;
+      if (lireTempsSec(m1[mid]) <= tempsMaxSec) {
+        idxFinM1 = mid;
+        g2 = mid + 1;
+      } else {
+        d2 = mid - 1;
+      }
+    }
+
+    if (idxFinM1 >= idxDebutM1 && idxFinM1 - idxDebutM1 + 1 >= 20) {
+      const m1Filtrees = m1.slice(idxDebutM1, idxFinM1 + 1);
       const bougiesAgregees = agregerBougies(m1Filtrees, tfSource);
       if (bougiesAgregees.length >= 20) {
         bougiesCalcul = bougiesAgregees;

@@ -413,18 +413,19 @@ export function construireSuperpositionVagues(
     return mapSuperposition;
   }
 
-  // Bornes de la plage de prix déjà consommée par les vagues plus récentes (lues à droite)
-  let aPlageConsommee = false;
-  let consommeMin = Infinity;
-  let consommeMax = -Infinity;
+  // Liste exacte des plages de prix [min .. max] déjà consommées par chacune des vagues plus récentes (lues à droite)
+  const plagesConsommees: Array<{ min: number; max: number }> = [];
   const demiStep = step > 0 ? step * 0.25 : 0.000001;
 
-  // 1️⃣ Lecture de DROITE vers la GAUCHE : on commence par la vague la plus récente (fin du tableau)
+  // 1️⃣ Lecture de DROITE vers la GAUCHE : de la vague la plus récente (V1 à droite) jusqu'à la 10ème vague (V10 à gauche)
   for (let idx = vagues.length - 1; idx >= 0; idx--) {
     const vague = vagues[idx];
     if (!vague.paliers || vague.paliers.length === 0) continue;
 
-    // Détermination de la plage de prix complète couverte par cette vague
+    // Numéro de la vague de droite à gauche (1 = V1 la plus récente, ..., 10 = V10)
+    const numeroVagueDroiteGauche = vagues.length - idx;
+
+    // Détermination de la plage de prix complète couverte par l'histogramme de cette vague
     let vaguePrixMin = Math.min(vague.prixDebut, vague.prixFin);
     let vaguePrixMax = Math.max(vague.prixDebut, vague.prixFin);
     for (const p of vague.paliers) {
@@ -432,22 +433,21 @@ export function construireSuperpositionVagues(
       if (p.price > vaguePrixMax) vaguePrixMax = p.price;
     }
 
-    // 2️⃣ Parcours des paliers de cette vague : on ne garde QUE ceux hors de la plage déjà consommée
+    // 2️⃣ Superposition de l'histogramme de cette vague : on ajoute tous ses paliers situés hors des plages déjà consommées
     for (const palier of vague.paliers) {
       const prixArrondi = Number(palier.price.toFixed(5));
 
-      // Vérifie si ce niveau de prix appartient à une plage déjà consommée par une vague plus récente
-      const dejaDansPlageConsommee =
-        aPlageConsommee &&
-        prixArrondi >= consommeMin - demiStep &&
-        prixArrondi <= consommeMax + demiStep;
+      // Vérifie si ce niveau de prix appartient à une plage déjà consommée par une vague plus récente à droite
+      const dejaDansPlageConsommee = plagesConsommees.some(
+        (plage) => prixArrondi >= plage.min - demiStep && prixArrondi <= plage.max + demiStep
+      );
 
       if (dejaDansPlageConsommee || mapSuperposition.has(prixArrondi)) {
-        // 🛑 Plage déjà consommée par une vague plus récente : on n'additionne SURTOUT PAS !
+        // 🛑 Plage déjà consommée par une vague plus récente : on n'additionne pas !
         continue;
       }
 
-      // ✅ Niveau de prix encore vierge : on utilise exclusivement le taux de chevauchement de cette vague
+      // ✅ Niveau de prix non encore consommé : l'histogramme de cette vague vient se superposer ici
       const nbBougies = Number(palier.nbBougiesChevauchement.toFixed(2));
       const estBleu = nbBougies >= seuilBleuFonce;
 
@@ -462,15 +462,11 @@ export function construireSuperpositionVagues(
       });
     }
 
-    // 3️⃣ Mise à jour de la plage de prix consommée après le passage de cette vague
-    if (!aPlageConsommee) {
-      consommeMin = vaguePrixMin;
-      consommeMax = vaguePrixMax;
-      aPlageConsommee = true;
-    } else {
-      consommeMin = Math.min(consommeMin, vaguePrixMin);
-      consommeMax = Math.max(consommeMax, vaguePrixMax);
-    }
+    // 3️⃣ Enregistrement de la plage de prix consommée par cette vague
+    plagesConsommees.push({
+      min: vaguePrixMin,
+      max: vaguePrixMax,
+    });
   }
 
   return mapSuperposition;
@@ -975,7 +971,7 @@ export function calculerUnmitigatedOverlapProfile(
     zigzagBackstep = 3,
     inclureVagueCourante = true,
     nbVaguesSuperposees,
-    maxVagues = 4,
+    maxVagues = 10,
     lookbackBars = 500,
     priceStep,
     seuilBougiesBleuFonce = 3,
@@ -993,13 +989,13 @@ export function calculerUnmitigatedOverlapProfile(
     seuilMargeTrouPourcent = 5,
     maxTPAffiches = 3,
     afficherDebugTP = false,
-    typeChevauchementUOP = 'PONDERE',
+    typeChevauchementUOP = 'CORPS_ET_MECHES',
     poidsCorps = 1.0,
-    poidsMeche = 0.25,
+    poidsMeche = 1.0,
   } = options;
 
-  // Détermination du nombre effectif de vagues à superposer
-  const nombreVaguesCible = nbVaguesSuperposees ?? maxVagues ?? 4;
+  // Détermination du nombre effectif de vagues à superposer (10 dernières vagues par défaut)
+  const nombreVaguesCible = nbVaguesSuperposees ?? maxVagues ?? 10;
 
   const step = determinerStepPrix(bougies, priceStep);
 

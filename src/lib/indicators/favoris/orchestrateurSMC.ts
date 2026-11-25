@@ -1,4 +1,4 @@
-import type { Bougie } from '@/lib/chartDataHelper';
+import { agregerBougies, type Bougie } from '@/lib/chartDataHelper';
 import type { VisualPrimitives, VisualLabel, VisualLine, VisualBox, VisualPoint } from '@/types/indicatorScript';
 import {
   detecterDojisAvecPlage,
@@ -381,15 +381,20 @@ export interface ParametresOrchestrateurSMC {
   toleranceDepassement?: number;        // Tolérance de dépassement favorable (défaut: 2.0)
   maxReculRecherche?: number;           // Recul max pour la plage ciblée (défaut: 100)
 
-  // ─── ⏱️ Multi-Timeframe & Shved ───
+  // ─── ⏱️ Multi-Timeframe & Shved + Calque Fractal HTF ➔ LTF ───
   timeframeSource?: string;             // Unité de temps Shved (défaut: 'M15')
   donneesM1?: Bougie[];                 // Données M1 pour calcul MTF
   chartTimeframe?: string;              // Unité de temps du graphique
   scoreMinimumShved?: number;           // Seuil minimal de score Shved (0 à 100, défaut: 0)
+  activerCalqueFractalHTF?: boolean;    // 🔬 En Backtest Manuel, projette la Plage H4, les OB protégés et le Grand TP H4 quand on descend en M15/M30 (défaut: true)
+  timeframeMaitreFractal?: string;      // 🏛️ Timeframe Maître HTF du calque fractal (défaut: '4h')
 
   // ─── ⏳ Range de Confirmation (3 Bougies) ───
   nbBougiesConfirmation?: number;        // Nombre de bougies de confirmation du range (défaut: 3)
   afficherSetupsAnnules?: boolean;       // Afficher les signaux invalidés avec un badge discret (défaut: false)
+  bornerRangeConfirmationParAmplitudeDoji?: boolean; // Exiger que chaque bougie du range (3 bougies) reste entre SL et Close(B2) ± AmplitudeDuDoji (défaut: true)
+  typeVerificationBorneRange?: 'CLOTURE' | 'MECHE'; // Vérifier la clôture ('CLOTURE') ou la mèche ('MECHE') par rapport à Close(B2) ± AmplitudeDuDoji (défaut: 'CLOTURE')
+  multiplicateurAmplitudeBorneRange?: number; // Multiplicateur de l'amplitude du Doji pour la borne du range (défaut: 1.0)
 
   // ─── 🧹 Épuration Active : Masquage des Setups Passés (TP ou SL Touché) ───
   masquerSetupsTermines?: boolean;      // Masquer du graphique les setups dont le TP ou SL a déjà été touché (défaut: true)
@@ -446,6 +451,7 @@ export interface ParametresOrchestrateurSMC {
   afficherSegmentSR?: boolean;           // Segment discontinu du S/R Shved balayé (défaut: true)
   afficherPaliersUOP?: boolean;          // Micro-segments pointillés très fins pour chaque palier d'overlap UOP rencontré (défaut: true)
   afficherProfilVolumeUOP?: boolean;     // 📊 Affiche l'histogramme Volume Profile des chevauchements ayant déterminé le TP (défaut: true)
+  afficherOrderBlocksProteges?: boolean; // 🟦 Trace les rectangles des Order Blocks classiques SMC protégés à l'intérieur de la plage du setup (défaut: true)
   afficherSegmentSL?: boolean;           // Micro-segment court pour le Stop Loss (défaut: true)
   afficherSegmentTP?: boolean;           // Micro-segment court pour le Take Profit (défaut: true)
   dureeSegmentsCibles?: number;          // Nombre de bougies de longueur pour les segments SL/TP/Paliers (défaut: 3)
@@ -555,7 +561,8 @@ export interface SetupOrchestreSMC {
 
   // Validation du Range (les 3 bougies)
   bougiesObservees: number;     // Nombre de bougies écoulées après le Doji
-  bougieInvalidationIndex?: number; // Index de la bougie ayant invalidé le SL si annulé
+  bougieInvalidationIndex?: number; // Index de la bougie ayant invalidé le SL ou dépassé la borne du range si annulé
+  borneRangeConfirmation?: number;  // Borne du range de 3 bougies opposée au SL : Close(B2) + AmplitudeDuDoji (Achat) ou Close(B2) - AmplitudeDuDoji (Vente)
   indexConfirmation?: number;   // Index de la 3ème bougie de confirmation où le TP est verrouillé
   tempsConfirmation?: number | string; // Date de la 3ème bougie de confirmation
 
@@ -592,6 +599,19 @@ export interface SetupOrchestreSMC {
   cibleLiquiditeSR?: InfoCibleLiquiditeSR; // Support ou Résistance actif retenu comme Take Profit
   toutesCiblesSRAnalysees?: InfoCibleLiquiditeSR[]; // Tous les S/R actifs en face analysés avec leur taux de chevauchement
 
+  // 🧪 Surcharge Interactive en Temps Réel de la Profondeur ZigZag (par Setup)
+  profondeurZigZagOriginale?: number;      // Profondeur calculée automatiquement par l'indicateur selon le Doji
+  profondeurZigZagPersonnalisee?: number;  // Profondeur testée en temps réel par l'utilisateur sur ce setup
+
+  // 🟦 Order Blocks Classiques SMC Protégés à l'intérieur de la plage du setup [SL ➔ BorneRange]
+  orderBlocksProteges?: OrderBlockClassiqueSMC[];
+
+  // 🔬 Métadonnées du Second Setup Fractal LTF (M15/M30 à l'intérieur de la Plage Maîtresse H4)
+  estSecondSetupFractalLTF?: boolean;
+  timeframeMaitreHTF?: string;
+  prixSLMaitreHTF?: number;
+  bornePlageMaitreHTF?: number;
+
   // Cycle de vie post-confirmation
   estTermine: boolean;          // Vrai si le TP ou le SL a été touché par la suite
   resultatTrade: ResultatTradeSMC; // Issue du trade ('TP_TOUCHE', 'SL_TOUCHE' ou 'EN_COURS')
@@ -615,6 +635,176 @@ export interface ResultatOrchestrateurSMC {
     ratioMoyenRR: number;
     tauxReussiteTP: number;      // % de trades gagnants parmi les terminés
   };
+}
+
+// ─── 🟦 DÉTECTION DES ORDER BLOCKS CLASSIQUES SMC PROTÉGÉS DANS LA PLAGE ─────
+
+/**
+ * Représente un Order Block Classique SMC (dernière bougie opposée avant une impulsion franche)
+ * situé à l'intérieur de la plage de prix protégée d'un setup [SL ➔ BorneRange / TP].
+ * Tant que le TP du setup n'est pas atteint et que l'OB n'est pas cassé, il reste protégé.
+ * Le dernier OB (le plus proche du SL) est le rempart ultime ayant la plus forte probabilité de tenir.
+ */
+export interface OrderBlockClassiqueSMC {
+  id: string;
+  type: 'ACHAT' | 'VENTE';
+  prixBas: number;
+  prixHaut: number;
+  prixMedian: number;
+  indexBougieOB: number;
+  tempsDebut: number | string;
+  tempsFin: number | string;
+  ordreHierarchie: number; // 1 = OB le plus proche de l'entrée, N = Dernier OB le plus proche du SL
+  estDernierOB: boolean;   // Vrai s'il s'agit du dernier Order Block (le plus proche du SL)
+  estProtege: boolean;     // Vrai tant qu'aucune bougie n'a clôturé au-delà de l'OB et que le TP n'est pas touché
+}
+
+/**
+ * Détecte les Order Blocks Classiques SMC (dernière bougie rouge avant impulsion verte en Achat,
+ * dernière bougie verte avant impulsion rouge en Vente) à l'intérieur de la plage de prix d'un setup.
+ *
+ * Exemple :
+ * const obs = detecterOrderBlocksClassiquesDansPlage({
+ *   bougies, indexDebutScan: 10, indexFinScan: 35,
+ *   typeSetup: 'ACHAT', prixSL: 1.0800, prixHautPlage: 1.0860
+ * });
+ */
+export function detecterOrderBlocksClassiquesDansPlage(options: {
+  bougies: Bougie[];
+  indexDebutScan: number;
+  indexFinScan: number;
+  typeSetup: 'ACHAT' | 'VENTE';
+  prixSL: number;
+  prixBorneOpposed: number;
+}): OrderBlockClassiqueSMC[] {
+  const { bougies, indexDebutScan, indexFinScan, typeSetup, prixSL, prixBorneOpposed } = options;
+  if (!bougies || bougies.length < 3) return [];
+
+  const estAchat = typeSetup === 'ACHAT';
+  const minPlage = Math.min(prixSL, prixBorneOpposed);
+  const maxPlage = Math.max(prixSL, prixBorneOpposed);
+
+  const debut = Math.max(0, indexDebutScan);
+  const fin = Math.min(bougies.length - 2, indexFinScan);
+  const candidatsBruts: Omit<OrderBlockClassiqueSMC, 'ordreHierarchie' | 'estDernierOB'>[] = [];
+
+  for (let i = debut; i <= fin; i++) {
+    const bOB = bougies[i];
+    const bImp1 = bougies[i + 1];
+    const bImp2 = bougies[Math.min(bougies.length - 1, i + 2)];
+    if (!bOB || !bImp1) continue;
+
+    if (estAchat) {
+      // Bullish Order Block Classique SMC :
+      // Bougie baissière (rouge : close < open) suivie d'une impulsion haussière qui clôture au-dessus du High de la bougie rouge
+      const estBougieOpposee = bOB.close < bOB.open;
+      const impulsionCassure =
+        (bImp1.close > bOB.high && bImp1.close > bImp1.open) ||
+        (bImp2 && bImp2.close > bOB.high && bImp2.close > bOB.open);
+
+      if (!estBougieOpposee || !impulsionCassure) continue;
+
+      const prixBas = bOB.low;
+      const prixHaut = Math.max(bOB.open, bOB.high);
+      const prixMedian = Number(((prixBas + prixHaut) / 2).toFixed(5));
+
+      // L'Order Block doit se situer dans la plage protégée [prixSL .. maxPlage]
+      if (prixBas < minPlage - (maxPlage - minPlage) * 0.05 || prixMedian > maxPlage) continue;
+
+      // Vérifier que cet Order Block n'a pas été cassé par une clôture sous son prixBas jusqu'à indexFinScan
+      let estCasse = false;
+      for (let k = i + 2; k <= Math.min(bougies.length - 1, indexFinScan); k++) {
+        if (bougies[k].close < prixBas) {
+          estCasse = true;
+          break;
+        }
+      }
+      if (estCasse) continue;
+
+      candidatsBruts.push({
+        id: `ob-achat-${i}`,
+        type: 'ACHAT',
+        prixBas,
+        prixHaut,
+        prixMedian,
+        indexBougieOB: i,
+        tempsDebut: bOB.time,
+        tempsFin: bougies[Math.min(bougies.length - 1, indexFinScan)].time,
+        estProtege: true,
+      });
+    } else {
+      // Bearish Order Block Classique SMC :
+      // Bougie haussière (verte : close > open) suivie d'une impulsion baissière qui clôture sous le Low de la bougie verte
+      const estBougieOpposee = bOB.close > bOB.open;
+      const impulsionCassure =
+        (bImp1.close < bOB.low && bImp1.close < bImp1.open) ||
+        (bImp2 && bImp2.close < bOB.low && bImp2.close < bOB.open);
+
+      if (!estBougieOpposee || !impulsionCassure) continue;
+
+      const prixBas = Math.min(bOB.open, bOB.low);
+      const prixHaut = bOB.high;
+      const prixMedian = Number(((prixBas + prixHaut) / 2).toFixed(5));
+
+      // L'Order Block doit se situer dans la plage protégée [minPlage .. prixSL]
+      if (prixHaut > maxPlage + (maxPlage - minPlage) * 0.05 || prixMedian < minPlage) continue;
+
+      // Vérifier que cet Order Block n'a pas été cassé par une clôture au-dessus de son prixHaut jusqu'à indexFinScan
+      let estCasse = false;
+      for (let k = i + 2; k <= Math.min(bougies.length - 1, indexFinScan); k++) {
+        if (bougies[k].close > prixHaut) {
+          estCasse = true;
+          break;
+        }
+      }
+      if (estCasse) continue;
+
+      candidatsBruts.push({
+        id: `ob-vente-${i}`,
+        type: 'VENTE',
+        prixBas,
+        prixHaut,
+        prixMedian,
+        indexBougieOB: i,
+        tempsDebut: bOB.time,
+        tempsFin: bougies[Math.min(bougies.length - 1, indexFinScan)].time,
+        estProtege: true,
+      });
+    }
+  }
+
+  // Fallback : si aucun OB interne distinct n'est trouvé, la bougie B1 de liquidation du Doji elle-même constitue le Dernier Order Block !
+  if (candidatsBruts.length === 0 && indexFinScan >= 1) {
+    const idxDojiB1 = Math.max(0, Math.min(bougies.length - 1, indexFinScan - 3));
+    const b1 = bougies[idxDojiB1];
+    if (b1) {
+      candidatsBruts.push({
+        id: `ob-base-${idxDojiB1}`,
+        type: typeSetup,
+        prixBas: b1.low,
+        prixHaut: b1.high,
+        prixMedian: Number(((b1.low + b1.high) / 2).toFixed(5)),
+        indexBougieOB: idxDojiB1,
+        tempsDebut: b1.time,
+        tempsFin: bougies[Math.min(bougies.length - 1, indexFinScan)].time,
+        estProtege: true,
+      });
+    }
+  }
+
+  // Tri hiérarchique :
+  // - En Achat : du plus haut (1er OB rencontré) au plus bas (Dernier OB le plus proche du SL)
+  // - En Vente : du plus bas (1er OB rencontré) au plus haut (Dernier OB le plus proche du SL)
+  candidatsBruts.sort((a, b) => (estAchat ? b.prixBas - a.prixBas : a.prixHaut - b.prixHaut));
+
+  // Limiter aux 4 meilleurs Order Blocks non chevauchants pour éviter de surcharger le graphique
+  const retenus = candidatsBruts.slice(0, 4);
+
+  return retenus.map((ob, idx) => ({
+    ...ob,
+    ordreHierarchie: idx + 1,
+    estDernierOB: idx === retenus.length - 1,
+  }));
 }
 
 // ─── 🧲 CIBLE DE LIQUIDITÉ S/R ACTIF + TRAJET DE CHEVAUCHEMENT UOP ───────────
@@ -1099,8 +1289,8 @@ export function calculerScoreLiquidationZigZag(options: {
 }): DetailsScoreLiquidationZigZag {
   // 1️⃣ Sécurisation des valeurs d'entrée pour éviter toute division par zéro
   const atrSecurise = Math.max(0.00001, options.hauteurMoyenne);
-  const depthMin = Math.max(1, Math.round(options.zigzagDepthMin ?? 1));
-  const depthMax = Math.max(depthMin + 1, Math.round(options.zigzagDepthMax ?? 8));
+  const depthMin = Math.max(1, Math.min(8, Math.round(options.zigzagDepthMin ?? 1)));
+  const depthMax = Math.max(depthMin, Math.min(8, Math.round(options.zigzagDepthMax ?? 8)));
   const nbRetests =
     options.collinesRetests !== undefined
       ? options.collinesRetests.length
@@ -1111,94 +1301,49 @@ export function calculerScoreLiquidationZigZag(options: {
   const ratioTailleBougieATR = Number((Math.max(0, options.amplitudeBougieSweep) / atrSecurise).toFixed(2));
   const ratioEpaisseurZoneATR = Number((Math.max(0, options.epaisseurZoneSR) / atrSecurise).toFixed(2));
 
-  // 2️⃣ CRITÈRE 1 : Retests et Collines du S/R avant la cassure (sur 50 points max — Critère Roi 👑)
-  let pointsRetestsSR = 0;
-  if (options.collinesRetests !== undefined) {
-    const nbCollines = options.collinesRetests.length;
-    const aCollineMajeure = options.collinesRetests.some((c) => c.qualite === 'MAJEURE');
-    const aCollineSolide = options.collinesRetests.some((c) => c.qualite === 'SOLIDE');
-
-    if (nbCollines >= 3 || (nbCollines === 2 && aCollineMajeure)) {
-      pointsRetestsSR = 50;
-    } else if (nbCollines === 2) {
-      pointsRetestsSR = 30;
-    } else if (nbCollines === 1) {
-      pointsRetestsSR = aCollineMajeure ? 30 : aCollineSolide ? 20 : 15;
-    } else {
-      pointsRetestsSR = 0;
-    }
-  } else {
-    if (nbRetests >= 3) {
-      pointsRetestsSR = 50;
-    } else if (nbRetests === 2) {
-      pointsRetestsSR = 30;
-    } else if (nbRetests === 1) {
-      pointsRetestsSR = 15;
-    } else {
-      pointsRetestsSR = 0;
-    }
-  }
-
-  // 3️⃣ CRITÈRE 2 : Taille de la Liquidation (notre Doji personnalisé) & Force du S/R (sur 25 points max 🕯️)
-  let pointsTailleBougieEtZone = 5;
-  if (ratioTailleBougieATR >= 1.8 || (options.dureeVieBougiesSR !== undefined && options.dureeVieBougiesSR > 40)) {
-    pointsTailleBougieEtZone = 25; // Grand Doji de liquidation (>= 1.8x ATR) ou S/R majeur
-  } else if (ratioTailleBougieATR >= 1.2 || ratioEpaisseurZoneATR >= 0.4 || (options.dureeVieBougiesSR !== undefined && options.dureeVieBougiesSR >= 15)) {
-    pointsTailleBougieEtZone = 15; // Doji de liquidation moyen (1.2x à 1.8x ATR)
-  } else {
-    pointsTailleBougieEtZone = 5;  // Petit Doji de liquidation (< 1.2x ATR)
-  }
-
-  // 4️⃣ CRITÈRE 3 : Profondeur de la Mèche de Liquidation du Doji (sur 25 points max ⚡)
-  let pointsProfondeurCassure = 5;
-  if (ratioProfondeurATR > 1.0) {
-    pointsProfondeurCassure = 25; // Plongeon profond (> 1.0x ATR)
-  } else if (ratioProfondeurATR >= 0.4) {
-    pointsProfondeurCassure = 15; // Balayage franc (0.4x à 1.0x ATR)
-  } else {
-    pointsProfondeurCassure = 5;  // Effleurement léger (< 0.4x ATR)
-  }
-
-  // 5️⃣ Score Total sur 100 et Calcul de zigzagDepth (de 1 à 8) selon la taille de la liquidation
-  const scoreTotal = Math.min(
-    100,
-    Math.max(0, pointsRetestsSR + pointsTailleBougieEtZone + pointsProfondeurCassure)
-  );
-
-  // Variation directe et fluide de zigzagDepth entre depthMin (1) et depthMax (8)
-  const progressionDepth = Math.max(0, Math.min(1, (scoreTotal - 10) / 90));
+  // 2️⃣ CALCUL 100% BASÉ UNIQUEMENT SUR LA TAILLE DU DOJI (ratioTailleBougieATR)
+  // On ignore volontairement les retests du S/R et la mèche de cassure pour éviter de gonfler zigzagDepth :
+  // - Petit Doji (< 1.4x ATR)        ➔ zigzagDepth = 1
+  // - Doji standard (1.4x à 1.8x)    ➔ zigzagDepth = 2
+  // - Doji moyen (1.8x à 2.2x)       ➔ zigzagDepth = 3
+  // - Beau Doji (2.2x à 2.6x)        ➔ zigzagDepth = 4
+  // - Grand Doji (2.6x à 3.0x)       ➔ zigzagDepth = 5
+  // - Très grand Doji (3.0x à 3.4x)  ➔ zigzagDepth = 6
+  // - Doji massif (3.4x à 3.8x)      ➔ zigzagDepth = 7
+  // - Doji géant (>= 3.8x ATR)       ➔ zigzagDepth = 8
+  const progressionDepth = Math.max(0, Math.min(1, (ratioTailleBougieATR - 1.2) / 2.8));
   const zigzagDepthRetenu = Math.max(
     depthMin,
     Math.min(depthMax, Math.round(depthMin + progressionDepth * (depthMax - depthMin)))
   );
 
+  const scoreTotal = Math.round(10 + progressionDepth * 90);
+  const pointsTailleBougieEtZone = scoreTotal;
+  const pointsRetestsSR = 0;
+  const pointsProfondeurCassure = 0;
+
   let vitesseRetenue: 1 | 2 | 3 = 2;
   let categorieVagues: 'PETITES_VAGUES' | 'VAGUES_MOYENNES' | 'GRANDES_VAGUES' = 'VAGUES_MOYENNES';
   let zigzagBackstepRetenu = 2;
-  let nbVaguesSuperposeesRetenu = 3;
-  let plafondDerniereVagueActif = false;
+  // On superpose toujours les 10 dernières vagues (V1 à V10 lues de droite à gauche)
+  const nbVaguesSuperposeesRetenu = 10;
+  const plafondDerniereVagueActif = false;
 
-  if (scoreTotal < 40) {
-    // 🟢 VITESSE 1 : Petite Liquidation (0 à 39 pts) ➔ Micro-Vagues (depth 1 à 3, 2 vagues max)
+  if (zigzagDepthRetenu <= 3) {
+    // 🟢 VITESSE 1 : Petit / Moyen Doji (Depth 1 à 3) ➔ Micro-Vagues (10 vagues superposées)
     vitesseRetenue = 1;
     categorieVagues = 'PETITES_VAGUES';
     zigzagBackstepRetenu = 1;
-    nbVaguesSuperposeesRetenu = 2;
-    plafondDerniereVagueActif = true;
-  } else if (scoreTotal < 70) {
-    // 🟡 VITESSE 2 : Liquidation Moyenne (40 à 69 pts) ➔ Vagues Moyennes (depth 3 à 5, 3 vagues)
+  } else if (zigzagDepthRetenu <= 5) {
+    // 🟡 VITESSE 2 : Grand Doji (Depth 4 à 5) ➔ Vagues Moyennes (10 vagues superposées)
     vitesseRetenue = 2;
     categorieVagues = 'VAGUES_MOYENNES';
     zigzagBackstepRetenu = 2;
-    nbVaguesSuperposeesRetenu = 3;
-    plafondDerniereVagueActif = false;
   } else {
-    // 🔥 VITESSE 3 : Grosse Liquidation (70 à 100 pts) ➔ Grandes Vagues (depth 6 à 8, 4 vagues)
+    // 🔥 VITESSE 3 : Très Grand Doji (Depth 6 à 8) ➔ Grandes Vagues (10 vagues superposées)
     vitesseRetenue = 3;
     categorieVagues = 'GRANDES_VAGUES';
     zigzagBackstepRetenu = 3;
-    nbVaguesSuperposeesRetenu = 4;
-    plafondDerniereVagueActif = false;
   }
 
   const labelCategorie =
@@ -1208,7 +1353,7 @@ export function calculerScoreLiquidationZigZag(options: {
         ? 'Vitesse 2 : Vagues Moyennes'
         : 'Vitesse 1 : Micro-Vagues';
 
-  const resumeExplication = `Score Liq: ${scoreTotal}/100 (Collines: ${pointsRetestsSR}/50 | S/R: ${pointsTailleBougieEtZone}/25 | Mèche: ${pointsProfondeurCassure}/25) ➔ ${labelCategorie} (ZigZag Depth: ${zigzagDepthRetenu}, ${nbVaguesSuperposeesRetenu} vagues)`;
+  const resumeExplication = `Taille Doji: ${ratioTailleBougieATR}x ATR (Score: ${scoreTotal}/100) ➔ ${labelCategorie} (ZigZag Depth: ${zigzagDepthRetenu}, ${nbVaguesSuperposeesRetenu} vagues)`;
 
   return {
     scoreTotal,
@@ -1557,6 +1702,50 @@ export function calculerPorteeDynamiqueUOP(options: {
  * console.log('Setups actifs en cours :', res.statistiques.totalActifs);
  * ```
  */
+// Cache mémoire ultra-rapide pour le calcul Maître HTF en mode Cockpit Fractal LTF
+let cacheMaitreHTF: {
+  cle: string;
+  resultat: ResultatOrchestrateurSMC;
+} | null = null;
+
+/**
+ * Retourne la durée en secondes d'une unité de temps (ex: '4h' -> 14400, '1h' -> 3600)
+ * Exemple : obtenirDureeTimeframeSecondes('4h') -> 14400
+ */
+function obtenirDureeTimeframeSecondes(tf: string): number {
+  const clean = tf.trim().toLowerCase();
+  if (clean === '1m' || clean === 'm1') return 60;
+  if (clean === '5m' || clean === 'm5') return 300;
+  if (clean === '15m' || clean === 'm15') return 900;
+  if (clean === '30m' || clean === 'm30') return 1800;
+  if (clean === '1h' || clean === 'h1') return 3600;
+  if (clean === '4h' || clean === 'h4') return 14400;
+  if (clean === '1d' || clean === 'd1' || clean === 'daily') return 86400;
+  return 14400;
+}
+
+/**
+ * Recherche par dichotomie (O(log N)) le dernier index dont le timestamp (en ms) est <= tempsCibleMs.
+ * Évite de parcourir linéairement des centaines de milliers de bougies.
+ * Exemple : trouverDernierIndexAvantTempsMs(bougies, 1700000000000)
+ */
+function trouverDernierIndexAvantTempsMs(bougies: Bougie[], tempsCibleMs: number): number {
+  let gauche = 0;
+  let droite = bougies.length - 1;
+  let resultat = -1;
+  while (gauche <= droite) {
+    const milieu = (gauche + droite) >>> 1;
+    const tMs = convertirTempsEnMs(bougies[milieu].time);
+    if (tMs <= tempsCibleMs) {
+      resultat = milieu;
+      gauche = milieu + 1;
+    } else {
+      droite = milieu - 1;
+    }
+  }
+  return resultat;
+}
+
 export function calculerOrchestrateurSMC(
   bougies: Bougie[],
   parametres: ParametresOrchestrateurSMC = {}
@@ -1589,6 +1778,9 @@ export function calculerOrchestrateurSMC(
   // 1️⃣ Options et Réglages
   const nbBougiesConfirmation = Math.max(1, Number(parametres.nbBougiesConfirmation ?? 3));
   const afficherSetupsAnnules = Boolean(parametres.afficherSetupsAnnules);
+  const bornerRangeConfirmationParAmplitudeDoji = parametres.bornerRangeConfirmationParAmplitudeDoji !== false; // Actif par défaut !
+  const typeVerificationBorneRange = parametres.typeVerificationBorneRange || 'CLOTURE';
+  const multiplicateurAmplitudeBorneRange = Math.max(0.1, Number(parametres.multiplicateurAmplitudeBorneRange ?? 1.0));
   const masquerSetupsTermines = parametres.masquerSetupsTermines !== false; // Actif par défaut !
   const modeCalculTP = parametres.modeCalculTP || 'ENERGIE_FRICTION'; // Moteur d'énergie actif par défaut !
 
@@ -1631,21 +1823,40 @@ export function calculerOrchestrateurSMC(
   const afficherSegmentTP = parametres.afficherSegmentTP !== false;
   const dureeSegmentsCibles = Math.max(1, Number(parametres.dureeSegmentsCibles ?? nbBougiesConfirmation));
 
-  // 2️⃣ Extraction des Niveaux Shved Supply & Demand
-  // On analyse la totalité de l'historique fourni (lookbackShved) pour ne pas tronquer les opportunités
-  const resultatShved = calculerShvedSupplyDemand(bougies, {
-    timeframeSource: parametres.timeframeSource || 'M15',
-    donneesM1: parametres.donneesM1,
-    chartTimeframe: parametres.chartTimeframe,
-    supprimerZonesCassees: false,
-    afficherNonRetestees: true,
-    afficherFaibles: true,
-    minRetests: 0,
-    maxLookbackBars: lookbackShved,
-    afficherZones: false,
-    afficherLignes: false,
-    afficherEtiquettes: false,
-  });
+  // Détection anticipée du Mode Cockpit Fractal LTF (ex: graphique en M15/M30 avec Calque Maître H4 actif)
+  // En mode LTF, on ne recalcule PAS le lourd profil UOP à 10 vagues ni Shved sur chaque bougie M15 hors plage :
+  // l'autoroute UOP est déjà validée en H4 et on cherche uniquement les Dojis LTF + Range 3 bougies dans la Plage Protégée H4 !
+  const activerCalqueFractalHTF = parametres.activerCalqueFractalHTF !== false;
+  const tfMaitre = (parametres.timeframeMaitreFractal || '4h').toLowerCase();
+  const tfGraphique = (parametres.chartTimeframe || '').toLowerCase();
+  const estVueLTF =
+    tfGraphique !== '' &&
+    tfGraphique !== tfMaitre &&
+    ['1m', '5m', '15m', '30m', 'm1', 'm5', 'm15', 'm30', '1h', 'h1'].includes(tfGraphique) &&
+    !(tfMaitre === '1h' && (tfGraphique === '1h' || tfGraphique === 'h1'));
+  const estModeCockpitFractalLTF = Boolean(
+    activerCalqueFractalHTF &&
+    estVueLTF &&
+    parametres.donneesM1 &&
+    parametres.donneesM1.length > 30
+  );
+
+  // 2️⃣ Extraction des Niveaux Shved Supply & Demand (uniquement en vue Maître HTF / Standard)
+  const resultatShved = estModeCockpitFractalLTF
+    ? { supports: [], resistances: [], totalZones: 0, nearestSupport: null, nearestResistance: null, primitives: { boites: [], lignes: [], labels: [] } }
+    : calculerShvedSupplyDemand(bougies, {
+        timeframeSource: parametres.timeframeSource || 'M15',
+        donneesM1: parametres.donneesM1,
+        chartTimeframe: parametres.chartTimeframe,
+        supprimerZonesCassees: false,
+        afficherNonRetestees: true,
+        afficherFaibles: true,
+        minRetests: 0,
+        maxLookbackBars: lookbackShved,
+        afficherZones: false,
+        afficherLignes: false,
+        afficherEtiquettes: false,
+      });
 
   const toutesLesZonesShved: ZoneShved[] = [
     ...resultatShved.supports,
@@ -1653,18 +1864,18 @@ export function calculerOrchestrateurSMC(
   ];
 
   // 3️⃣ Extraction du Profil UOP (Chevauchement & TP Optimaux pilotés par zigzagDepth de 1 à 8)
-  const zigzagDepthDefaut = Number(parametres.zigzagDepth ?? 4);
+  const zigzagDepthDefaut = Math.max(1, Math.min(8, Number(parametres.zigzagDepth ?? 4)));
   const activerZigZagDynamique = parametres.activerZigZagDynamique !== false;
-  const zigzagDepthMinParam = Number(parametres.zigzagDepthMin ?? 1);
-  const zigzagDepthMaxParam = Number(parametres.zigzagDepthMax ?? 8);
+  const zigzagDepthMinParam = Math.max(1, Math.min(8, Number(parametres.zigzagDepthMin ?? 1)));
+  const zigzagDepthMaxParam = Math.max(zigzagDepthMinParam, Math.min(8, Number(parametres.zigzagDepthMax ?? 8)));
   const cacheUOPParDepthEtHorizon = new Map<string, ResultatUOP>();
 
-  // Calcule le profil UOP jusqu'à un horizon de bougies donné (verrouillé à la 3ème bougie)
+  // Calcule le profil UOP jusqu'à un horizon de bougies donné (verrouillé à la 3ème bougie, 10 dernières vagues superposées)
   const obtenirUOPPourDepthEtHorizon = (
     depthCible: number,
     horizon: number,
     backstepCible = 2,
-    nbVaguesCible = 3
+    nbVaguesCible = 10
   ): ResultatUOP => {
     const depthArrondi = Math.max(1, Math.round(depthCible));
     const cleCache = `${depthArrondi}_${backstepCible}_${nbVaguesCible}_${horizon}`;
@@ -1687,9 +1898,9 @@ export function calculerOrchestrateurSMC(
       zigzagBackstep: backstepCible,
       nbVaguesSuperposees: nbVaguesCible,
       seuilBougiesBleuFonce: seuilBleuAdapte,
-      typeChevauchementUOP: parametres.typeChevauchementUOP ?? 'PONDERE',
+      typeChevauchementUOP: parametres.typeChevauchementUOP ?? 'CORPS_ET_MECHES',
       poidsCorps: parametres.poidsCorpsUOP ?? 1.0,
-      poidsMeche: parametres.poidsMecheUOP ?? 0.25,
+      poidsMeche: parametres.poidsMecheUOP ?? 1.0,
       inclureVagueCourante: true,
       afficherTPOptimaux: true,
       afficherZigZag: false,
@@ -1716,8 +1927,9 @@ export function calculerOrchestrateurSMC(
   let totalVentesConfirmees = 0;
   let sommeRRConfirmes = 0;
 
-  // 5️⃣ Traitement et Orchestration de chaque signal
-  for (const doji of signauxDojis) {
+  // 5️⃣ Traitement et Orchestration de chaque signal (ignoré en vue Cockpit LTF où seule la Plage HTF fait foi)
+  const dojisPourBoucleStandard = estModeCockpitFractalLTF ? [] : signauxDojis;
+  for (const doji of dojisPourBoucleStandard) {
     const estAchat = doji.type === 'ACHAT';
     const indexDoji = doji.indexBougie;
     const prixEntree = doji.close2;
@@ -1797,9 +2009,7 @@ export function calculerOrchestrateurSMC(
     const backstepActif = activerZigZagDynamique
       ? detailsScoreLiquidationZigZag.zigzagBackstepRetenu
       : 3;
-    const nbVaguesActif = activerZigZagDynamique
-      ? detailsScoreLiquidationZigZag.nbVaguesSuperposeesRetenu
-      : Number(parametres.nbVaguesSuperposees ?? 4);
+    const nbVaguesActif = Number(parametres.nbVaguesSuperposees ?? 10);
 
     let uopActifPourSetup: ResultatUOP = obtenirUOPPourDepthEtHorizon(
       depthActif,
@@ -1811,7 +2021,7 @@ export function calculerOrchestrateurSMC(
       2,
       indexHorizonConfirmation,
       1,
-      2
+      10
     );
 
     // Extraction des candidats TP dans la direction du setup
@@ -2146,9 +2356,15 @@ export function calculerOrchestrateurSMC(
     totalDetectes++;
 
     // C. Vérification du RANGE DE CONFIRMATION (les N bougies suivantes)
+    // Chaque bougie du range doit rester dans la plage :
+    // - Achat : entre [prixSL] et [Close(B2) + AmplitudeDuDoji * multiplicateur]
+    // - Vente : entre [Close(B2) - AmplitudeDuDoji * multiplicateur] et [prixSL]
     let statut: StatutSetupSMC = 'CONFIRME';
     let bougiesObservees = 0;
     let bougieInvalidationIndex: number | undefined;
+    const borneRangeConfirmation = estAchat
+      ? prixEntree + amplitudeBougieSweep * multiplicateurAmplitudeBorneRange
+      : prixEntree - amplitudeBougieSweep * multiplicateurAmplitudeBorneRange;
 
     const indexFinVerification = Math.min(indexDoji + nbBougiesConfirmation, bougies.length - 1);
 
@@ -2157,15 +2373,31 @@ export function calculerOrchestrateurSMC(
       const bougieActuelle = bougies[k];
 
       if (estAchat) {
-        // En Achat : si une bougie passe SOUS le plus bas du Doji (prixSL), le setup est invalidé
-        if (bougieActuelle.low <= prixSL) {
+        // En Achat :
+        // 1. Borne basse : la bougie ne doit pas passer SOUS le plus bas du Doji (prixSL)
+        const casseSL = bougieActuelle.low <= prixSL;
+        // 2. Borne haute : la bougie ne doit pas dépasser Close(B2) + AmplitudeDuDoji
+        const prixHautTeste =
+          typeVerificationBorneRange === 'MECHE' ? bougieActuelle.high : bougieActuelle.close;
+        const depasseBorneHaute =
+          bornerRangeConfirmationParAmplitudeDoji && prixHautTeste > borneRangeConfirmation;
+
+        if (casseSL || depasseBorneHaute) {
           statut = 'ANNULE';
           bougieInvalidationIndex = k;
           break;
         }
       } else {
-        // En Vente : si une bougie passe AU-DESSUS du plus haut du Doji (prixSL), le setup est invalidé
-        if (bougieActuelle.high >= prixSL) {
+        // En Vente :
+        // 1. Borne haute : la bougie ne doit pas passer AU-DESSUS du plus haut du Doji (prixSL)
+        const casseSL = bougieActuelle.high >= prixSL;
+        // 2. Borne basse : la bougie ne doit pas descendre sous Close(B2) - AmplitudeDuDoji
+        const prixBasTeste =
+          typeVerificationBorneRange === 'MECHE' ? bougieActuelle.low : bougieActuelle.close;
+        const depasseBorneBasse =
+          bornerRangeConfirmationParAmplitudeDoji && prixBasTeste < borneRangeConfirmation;
+
+        if (casseSL || depasseBorneBasse) {
           statut = 'ANNULE';
           bougieInvalidationIndex = k;
           break;
@@ -2242,6 +2474,15 @@ export function calculerOrchestrateurSMC(
     }
 
     // Création de l'objet Setup complet (conservé en télémétrie pour les statistiques et diagnostic)
+    const orderBlocksProteges = detecterOrderBlocksClassiquesDansPlage({
+      bougies,
+      indexDebutScan: Math.max(0, doji.indexDebutPlage),
+      indexFinScan: indexHorizonConfirmation,
+      typeSetup: doji.type,
+      prixSL,
+      prixBorneOpposed: borneRangeConfirmation,
+    });
+
     const setup: SetupOrchestreSMC = {
       id: `smc-setup-${indexDoji}`,
       type: doji.type,
@@ -2258,6 +2499,7 @@ export function calculerOrchestrateurSMC(
       zonesShvedCandidates: zonesDansPlage,
       bougiesObservees,
       bougieInvalidationIndex,
+      borneRangeConfirmation,
       indexConfirmation: indexHorizonConfirmation,
       tempsConfirmation: bougies[indexHorizonConfirmation]?.time ?? doji.temps,
       prixTP,
@@ -2283,6 +2525,8 @@ export function calculerOrchestrateurSMC(
       infoPlageTP,
       cibleLiquiditeSR,
       toutesCiblesSRAnalysees,
+      profondeurZigZagOriginale: depthActif,
+      orderBlocksProteges,
       estTermine,
       resultatTrade,
       indexSortieTrade,
@@ -2329,14 +2573,14 @@ export function calculerOrchestrateurSMC(
       });
     }
 
-    // 1️⃣.bis ⚡ Badge Compact de Liquidation : Quantité de points de liquidité captés
-    // Affiche par exemple "⚡ 450 pts" de manière très discrète au niveau du Doji
+    // 1️⃣.bis ⚡ Badge Compact de Liquidation : Quantité de points de liquidité captés + Profondeur ZigZag
+    // Affiche par exemple "⚡ 450 pts · Prof: 4" de manière discrète au niveau du Doji
     if (afficherPointsLiquidation && carburantInitial && carburantInitial > 0 && (statut === 'CONFIRME' || statut === 'EN_COURS')) {
       labels.push({
         id: `orchestre-liq-pts-${indexDoji}`,
         prix: prixSL,
         date: dateDoji,
-        texte: `⚡ ${carburantInitial} pts`,
+        texte: `⚡ ${carburantInitial} pts · Prof: ${depthActif}`,
         couleur: couleurPrincipale,
         position: estAchat ? 'below' : 'above',
       });
@@ -2382,6 +2626,40 @@ export function calculerOrchestrateurSMC(
           epaisseur: 1,
           style: 'dotted',
           label: labelTexte,
+        });
+      }
+    }
+
+    // 2️⃣.ter 🟦 Rectangles des Order Blocks Classiques SMC Protégés dans la plage du setup
+    const afficherOrderBlocksProteges = parametres.afficherOrderBlocksProteges !== false;
+    if (
+      afficherOrderBlocksProteges &&
+      orderBlocksProteges.length > 0 &&
+      (statut === 'CONFIRME' || statut === 'EN_COURS')
+    ) {
+      for (const ob of orderBlocksProteges) {
+        const couleurFondOB = ob.estDernierOB
+          ? estAchat
+            ? 'rgba(0, 230, 118, 0.20)'
+            : 'rgba(242, 54, 69, 0.20)'
+          : 'rgba(56, 189, 248, 0.12)';
+        const couleurBordOB = ob.estDernierOB
+          ? estAchat
+            ? '#00E676'
+            : '#F23645'
+          : 'rgba(56, 189, 248, 0.55)';
+
+        boites.push({
+          id: `orchestre-ob-${indexDoji}-${ob.ordreHierarchie}`,
+          prixHaut: ob.prixHaut,
+          prixBas: ob.prixBas,
+          dateDebut: ob.tempsDebut,
+          dateFin: dateFinCible,
+          couleurFond: couleurFondOB,
+          couleurBordure: couleurBordOB,
+          label: ob.estDernierOB
+            ? `🛡️ Dernier OB #${ob.ordreHierarchie} (Protégé)`
+            : `📦 OB #${ob.ordreHierarchie}`,
         });
       }
     }
@@ -2446,6 +2724,360 @@ export function calculerOrchestrateurSMC(
     }
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // 🔬 6️⃣ ENVIRONNEMENT COCKPIT FRACTAL HTF ➔ LTF EN BACKTEST MANUEL (OPTIMISÉ O(log N))
+  // ────────────────────────────────────────────────────────────────────────────
+  // Lorsque le trader descend sur une petite unité de temps (ex: M15, M30, M5) en Backtest Manuel :
+  // 1. On conserve à l'écran le Calque du Setup Maître HTF (ex: H4) avec sa Grande Boîte de Plage Protégée,
+  //    la ligne d'aimant du GRAND TP H4 et les Rectangles des Order Blocks Classiques SMC protégés (détectés en LTF).
+  // 2. À l'intérieur de cette Plage Protégée H4, on détecte automatiquement les Seconds Setups LTF (Doji + Range 3 bougies)
+  //    SANS filtre de Taux de Chevauchement UOP, et on branche leur Petit SL LTF directement sur le Grand TP H4 !
+  if (estModeCockpitFractalLTF && parametres.donneesM1 && bougies.length > 0) {
+    const derniereBougieVisible = bougies[bougies.length - 1];
+    const tempsMaxVisibleMs = convertirTempsEnMs(derniereBougieVisible.time);
+    const tempsMinVisibleMs = convertirTempsEnMs(bougies[0].time);
+
+    // 🚀 Optimisation O(1) : agregerBougies sur le tableau complet donneesM1 utilise directement
+    // le cache mémoire global cacheAgregationMTF (aucun .filter() sur 370 000 bougies M1 à chaque tic !)
+    const toutesBougiesHTF = agregerBougies(parametres.donneesM1, tfMaitre);
+    const dureeHTFSec = obtenirDureeTimeframeSecondes(tfMaitre);
+    const dureeHTFMs = dureeHTFSec * 1000;
+    const bucketCourantStartMs = Math.floor(tempsMaxVisibleMs / dureeHTFMs) * dureeHTFMs;
+
+    // Recherche par dichotomie O(log N) de la dernière bougie HTF strictement antérieure au bucket en cours
+    const idxDerniereHTFComplete = trouverDernierIndexAvantTempsMs(
+      toutesBougiesHTF,
+      bucketCourantStartMs - 1
+    );
+
+    if (idxDerniereHTFComplete >= 14) {
+      // 🚀 Cache intelligent du calcul Maître HTF : un setup HTF confirmé ne dépend STRICTEMENT que des bougies
+      // HTF clôturées (idxDerniereHTFComplete). Ainsi le calcul H4 ne s'exécute qu'UNE FOIS toutes les 16 bougies M15
+      // (ou 48 bougies M5) et reste en cache à 0 ms pendant toutes les bougies intermédiaires !
+      const tempsPremiereHTF = toutesBougiesHTF[0]?.time ?? '';
+      const tempsDerniereHTF = toutesBougiesHTF[idxDerniereHTFComplete]?.time ?? '';
+      const cleCacheHTF = `${parametres.donneesM1.length}_${tempsPremiereHTF}_${tempsDerniereHTF}_${tfMaitre}_${idxDerniereHTFComplete}_${parametres.zigzagDepth ?? 4}_${parametres.activerZigZagDynamique ?? true}_${parametres.palierTPVise ?? 'TP1'}_${parametres.exigerAutorouteUOP ?? true}_${parametres.scoreMinimumShved ?? 0}`;
+
+      let resMaitreHTF: ResultatOrchestrateurSMC;
+      if (cacheMaitreHTF && cacheMaitreHTF.cle === cleCacheHTF) {
+        resMaitreHTF = cacheMaitreHTF.resultat;
+      } else {
+        // On ne prend que les 140 dernières bougies HTF clôturées (amplement suffisant pour 10 vagues ZigZag H4)
+        const debutFenetreHTF = Math.max(0, idxDerniereHTFComplete - 140);
+        const bougiesHTF = toutesBougiesHTF.slice(debutFenetreHTF, idxDerniereHTFComplete + 1);
+
+        resMaitreHTF = calculerOrchestrateurSMC(bougiesHTF, {
+          ...parametres,
+          donneesM1: undefined, // Crucial : évite une double agrégation M1 à l'intérieur du calcul H4 !
+          timeframeSource: 'ACTUEL',
+          activerCalqueFractalHTF: false, // Évite toute récursion
+          masquerSetupsTermines: false,
+          chartTimeframe: tfMaitre,
+        });
+        cacheMaitreHTF = { cle: cleCacheHTF, resultat: resMaitreHTF };
+      }
+
+      if (resMaitreHTF) {
+
+        const setupsHTFConfirmes = (resMaitreHTF.setups || []).filter(
+          (s) => s.statut === 'CONFIRME' && s.prixTP !== undefined
+        );
+
+        for (const setupHTF of setupsHTFConfirmes) {
+          if (setupHTF.prixTP === undefined) continue;
+          const estAchatHTF = setupHTF.type === 'ACHAT';
+          const prixSL_HTF = setupHTF.prixSL;
+          const prixTP_HTF = setupHTF.prixTP;
+          const borneRange_HTF =
+            setupHTF.borneRangeConfirmation ??
+            (estAchatHTF
+              ? setupHTF.prixEntree + setupHTF.distanceSL * 1.5
+              : setupHTF.prixEntree - setupHTF.distanceSL * 1.5);
+
+          const minPlageHTF = Math.min(prixSL_HTF, borneRange_HTF);
+          const maxPlageHTF = Math.max(prixSL_HTF, borneRange_HTF);
+          const tDebutHTFMs = convertirTempsEnMs(setupHTF.tempsDoji);
+
+          // Vérifier si le Setup HTF a déjà été clôturé (TP_HTF ou SL_HTF touché) avant la fenêtre visible
+          let tFinVieHTFMs = Infinity;
+          let dateFinZoneLTF: number | string = derniereBougieVisible.time;
+          for (const bL of bougies) {
+            const tMs = convertirTempsEnMs(bL.time);
+            if (tMs <= tDebutHTFMs) continue;
+            const tpTouche = estAchatHTF ? bL.high >= prixTP_HTF : bL.low <= prixTP_HTF;
+            const slCasse = estAchatHTF ? bL.low < prixSL_HTF : bL.high > prixSL_HTF;
+            if (tpTouche || slCasse) {
+              tFinVieHTFMs = tMs;
+              dateFinZoneLTF = bL.time;
+              break;
+            }
+          }
+
+          // Si le Setup HTF est déjà terminé et que masquerSetupsTermines est actif, on ne l'affiche que s'il est encore en vie
+          if (masquerSetupsTermines && tFinVieHTFMs < tempsMaxVisibleMs) {
+            continue;
+          }
+          if (tFinVieHTFMs < tempsMinVisibleMs) {
+            continue;
+          }
+
+          // Trouver la première bougie LTF correspondant au début du Setup HTF
+          const idxDebutLTF = Math.max(
+            0,
+            bougies.findIndex((b) => convertirTempsEnMs(b.time) >= tDebutHTFMs)
+          );
+          const dateDebutZoneLTF = bougies[idxDebutLTF]?.time ?? bougies[0].time;
+
+          // A. 📦 Grande Boîte de la Plage Protégée du Setup Maître HTF projetée sur le graphique LTF
+          boites.push({
+            id: `fractal-htf-plage-${setupHTF.indexDoji}`,
+            prixHaut: maxPlageHTF,
+            prixBas: minPlageHTF,
+            dateDebut: dateDebutZoneLTF,
+            dateFin: dateFinZoneLTF,
+            couleurFond: estAchatHTF
+              ? 'rgba(168, 85, 247, 0.08)'
+              : 'rgba(244, 63, 94, 0.08)',
+            couleurBordure: estAchatHTF ? '#A855F7' : '#FB7185',
+            label: `🏛️ PLAGE PROTÉGÉE ${tfMaitre.toUpperCase()} (${setupHTF.type}) | Grand TP: ${prixTP_HTF.toFixed(4)}`,
+          });
+
+          // B. 🎯 Ligne d'Aimant du GRAND TP HTF et du SL Maître HTF
+          lignes.push({
+            id: `fractal-htf-tp-${setupHTF.indexDoji}`,
+            prix: prixTP_HTF,
+            dateDebut: dateDebutZoneLTF,
+            dateFin: dateFinZoneLTF,
+            couleur: '#10B981',
+            epaisseur: 2,
+            style: 'solid',
+            label: `🎯 GRAND TP ${tfMaitre.toUpperCase()} : ${prixTP_HTF.toFixed(4)}`,
+          });
+
+          lignes.push({
+            id: `fractal-htf-sl-${setupHTF.indexDoji}`,
+            prix: prixSL_HTF,
+            dateDebut: dateDebutZoneLTF,
+            dateFin: dateFinZoneLTF,
+            couleur: '#EF4444',
+            epaisseur: 1.5,
+            style: 'dashed',
+            label: `🛑 SL MAÎTRE ${tfMaitre.toUpperCase()} : ${prixSL_HTF.toFixed(4)}`,
+          });
+
+          // C. 🟦 Rectangles des Order Blocks Classiques SMC protégés détectés sur les bougies LTF à l'intérieur de la plage HTF
+          const idxFinScanOB = bougies.findIndex(
+            (b) => convertirTempsEnMs(b.time) >= Math.min(tFinVieHTFMs, tempsMaxVisibleMs)
+          );
+          const obsInternesLTF = detecterOrderBlocksClassiquesDansPlage({
+            bougies,
+            indexDebutScan: idxDebutLTF,
+            indexFinScan: idxFinScanOB >= 0 ? idxFinScanOB : bougies.length - 1,
+            typeSetup: setupHTF.type,
+            prixSL: prixSL_HTF,
+            prixBorneOpposed: borneRange_HTF,
+          });
+
+          for (const ob of obsInternesLTF) {
+            boites.push({
+              id: `fractal-ltf-ob-${setupHTF.indexDoji}-${ob.ordreHierarchie}`,
+              prixHaut: ob.prixHaut,
+              prixBas: ob.prixBas,
+              dateDebut: ob.tempsDebut,
+              dateFin: dateFinZoneLTF,
+              couleurFond: ob.estDernierOB
+                ? estAchatHTF
+                  ? 'rgba(0, 230, 118, 0.24)'
+                  : 'rgba(242, 54, 69, 0.24)'
+                : 'rgba(56, 189, 248, 0.14)',
+              couleurBordure: ob.estDernierOB
+                ? estAchatHTF
+                  ? '#00E676'
+                  : '#F23645'
+                : '#38BDF8',
+              label: ob.estDernierOB
+                ? `🛡️ Dernier OB LTF #${ob.ordreHierarchie} (Rempart SL ${tfMaitre.toUpperCase()})`
+                : `📦 OB Protégé LTF #${ob.ordreHierarchie}`,
+            });
+          }
+
+          // D. 🔬 Détection des Seconds Setups en LTF à l'intérieur de la Plage HTF (SANS filtre de Taux de Chevauchement !)
+          for (const dLTF of signauxDojis) {
+            if (dLTF.type !== setupHTF.type) continue;
+            const tDojiLTFMs = convertirTempsEnMs(dLTF.temps);
+            if (tDojiLTFMs < tDebutHTFMs || tDojiLTFMs >= tFinVieHTFMs) continue;
+
+            // Vérifier si ce Doji LTF est déjà dans `setups` (auquel cas on le promeut en Second Setup Fractal connecté au Grand TP HTF)
+            const indexExistant = setups.findIndex((s) => s.indexDoji === dLTF.indexBougie);
+            const idxDojiL = dLTF.indexBougie;
+            const prixEntreeL = dLTF.close2;
+            const petitSLL = dLTF.prixExtreme;
+
+            // Doit être situé à l'intérieur de la Plage Protégée du Setup Maître HTF
+            const dansPlageHTF =
+              (petitSLL >= minPlageHTF && petitSLL <= maxPlageHTF) ||
+              (prixEntreeL >= minPlageHTF && prixEntreeL <= maxPlageHTF);
+            if (!dansPlageHTF) continue;
+            if (estAchatHTF && prixEntreeL >= prixTP_HTF) continue;
+            if (!estAchatHTF && prixEntreeL <= prixTP_HTF) continue;
+
+            // Vérification du Range de 3 bougies LTF [petitSLL ➔ Close(B2_LTF) ± AmplitudeDoji_LTF]
+            const b1L = bougies[Math.max(0, idxDojiL - 1)];
+            const b2L = bougies[idxDojiL];
+            const ampDojiL = Math.max(
+              b1L ? b1L.high - b1L.low : Math.abs(prixEntreeL - petitSLL),
+              b2L ? b2L.high - b2L.low : Math.abs(prixEntreeL - petitSLL)
+            );
+            const borneRangeL = estAchatHTF
+              ? prixEntreeL + ampDojiL * multiplicateurAmplitudeBorneRange
+              : prixEntreeL - ampDojiL * multiplicateurAmplitudeBorneRange;
+
+            let statutL: StatutSetupSMC = 'CONFIRME';
+            let bougiesObsL = 0;
+            const idxFinVerifL = Math.min(idxDojiL + nbBougiesConfirmation, bougies.length - 1);
+            for (let k = idxDojiL + 1; k <= idxFinVerifL; k++) {
+              bougiesObsL++;
+              const bk = bougies[k];
+              if (estAchatHTF) {
+                if (
+                  bk.low <= petitSLL ||
+                  (bornerRangeConfirmationParAmplitudeDoji && bk.close > borneRangeL)
+                ) {
+                  statutL = 'ANNULE';
+                  break;
+                }
+              } else {
+                if (
+                  bk.high >= petitSLL ||
+                  (bornerRangeConfirmationParAmplitudeDoji && bk.close < borneRangeL)
+                ) {
+                  statutL = 'ANNULE';
+                  break;
+                }
+              }
+            }
+            if (statutL === 'ANNULE') continue;
+            if (bougiesObsL < nbBougiesConfirmation) statutL = 'EN_COURS';
+
+            const distSLL = Math.max(0.0001, Math.abs(prixEntreeL - petitSLL));
+            const distGrandTP = Math.abs(prixTP_HTF - prixEntreeL);
+            const rrFractal = Number((distGrandTP / distSLL).toFixed(2));
+
+            // Suivi post-confirmation du Second Setup LTF vers le Grand TP HTF
+            let estTermL = false;
+            let resTradeL: ResultatTradeSMC = 'EN_COURS';
+            let idxSortieL: number | undefined;
+            let tSortieL: number | string | undefined;
+
+            if (statutL === 'CONFIRME') {
+              for (let m = idxDojiL + nbBougiesConfirmation + 1; m < bougies.length; m++) {
+                const bm = bougies[m];
+                const tpAtteint = estAchatHTF ? bm.high >= prixTP_HTF : bm.low <= prixTP_HTF;
+                const slAtteint = estAchatHTF ? bm.low <= petitSLL : bm.high >= petitSLL;
+                if (tpAtteint || slAtteint) {
+                  estTermL = true;
+                  resTradeL = tpAtteint ? 'TP_TOUCHE' : 'SL_TOUCHE';
+                  idxSortieL = m;
+                  tSortieL = bm.time;
+                  break;
+                }
+              }
+            }
+
+            const secondSetupFractal: SetupOrchestreSMC = {
+              id: `smc-fractal-ltf-${idxDojiL}`,
+              type: dLTF.type,
+              statut: statutL,
+              indexDoji: idxDojiL,
+              tempsDoji: dLTF.temps,
+              tempsDebutPlage: dLTF.tempsDebutPlage,
+              indexDebutPlage: dLTF.indexDebutPlage,
+              prixEntree: prixEntreeL,
+              prixSL: petitSLL,
+              distanceSL: distSLL,
+              scoreShved: setupHTF.scoreShved,
+              bougiesObservees: bougiesObsL,
+              borneRangeConfirmation: borneRangeL,
+              indexConfirmation: idxFinVerifL,
+              tempsConfirmation: bougies[idxFinVerifL]?.time ?? dLTF.temps,
+              prixTP: prixTP_HTF,
+              ordreTP: 1,
+              palierTPVise: 'TP1',
+              distanceTP: distGrandTP,
+              ratioRR: rrFractal,
+              orderBlocksProteges: obsInternesLTF,
+              estSecondSetupFractalLTF: true,
+              timeframeMaitreHTF: tfMaitre.toUpperCase(),
+              prixSLMaitreHTF: prixSL_HTF,
+              bornePlageMaitreHTF: borneRange_HTF,
+              estTermine: estTermL,
+              resultatTrade: resTradeL,
+              indexSortieTrade: idxSortieL,
+              tempsSortieTrade: tSortieL,
+            };
+
+            if (indexExistant >= 0) {
+              // Promouvoir le setup LTF existant pour le brancher sur le Grand TP du Setup Maître HTF
+              setups[indexExistant] = {
+                ...setups[indexExistant],
+                ...secondSetupFractal,
+              };
+            } else {
+              setups.push(secondSetupFractal);
+              totalDetectes++;
+              if (statutL === 'CONFIRME') {
+                totalConfirmes++;
+                sommeRRConfirmes += rrFractal;
+              }
+            }
+
+            // En mode Cockpit Fractal LTF, on garde visibles toutes les positions LTF prises dans la Plage H4 active
+            // afin que le trader visualise clairement chaque objet Position (style TradingView) et son résultat (TP / Petit SL / En cours)
+            const dateEntreeLTF = bougies[idxFinVerifL]?.time ?? dLTF.temps;
+            const idxFinBoiteLTF = idxSortieL !== undefined
+              ? idxSortieL
+              : Math.min(bougies.length - 1, idxFinVerifL + Math.max(12, dureeSegmentsCibles * 4));
+            const dateFinBoiteLTF = tSortieL ?? bougies[idxFinBoiteLTF]?.time ?? derniereBougieVisible.time;
+
+            // 🟩 Boîte de Gain (Zone TP style TradingView : Entrée LTF ➔ Grand TP H4)
+            boites.push({
+              id: `fractal-ltf-tv-tp-${idxDojiL}`,
+              prixHaut: Math.max(prixEntreeL, prixTP_HTF),
+              prixBas: Math.min(prixEntreeL, prixTP_HTF),
+              dateDebut: dateEntreeLTF,
+              dateFin: dateFinBoiteLTF,
+              couleurFond: 'rgba(8, 153, 129, 0.24)',
+              couleurBordure: '#089981',
+              label: `🎯 TP ${tfMaitre.toUpperCase()} (${rrFractal}R)`,
+            });
+
+            // 🟥 Boîte de Risque (Zone SL style TradingView : Entrée LTF ➔ Petit SL LTF)
+            boites.push({
+              id: `fractal-ltf-tv-sl-${idxDojiL}`,
+              prixHaut: Math.max(prixEntreeL, petitSLL),
+              prixBas: Math.min(prixEntreeL, petitSLL),
+              dateDebut: dateEntreeLTF,
+              dateFin: dateFinBoiteLTF,
+              couleurFond: 'rgba(242, 54, 69, 0.30)',
+              couleurBordure: '#F23645',
+              label: `🛑 Petit SL (${tfGraphique.toUpperCase()})`,
+            });
+
+            // Point repère sur la mèche du Doji déclencheur LTF
+            points.push({
+              id: `fractal-ltf-pt-${idxDojiL}`,
+              prix: petitSLL,
+              date: dLTF.temps,
+              couleur: '#F59E0B',
+              rayon: 4,
+              style: 'plein',
+            });
+          }
+        }
+      }
+    }
+  }
+
   const ratioMoyenRR = totalConfirmes > 0
     ? Number((sommeRRConfirmes / totalConfirmes).toFixed(2))
     : 0;
@@ -2471,5 +3103,254 @@ export function calculerOrchestrateurSMC(
       ratioMoyenRR,
       tauxReussiteTP,
     },
+  };
+}
+
+/**
+ * 🧪 Recalcule en temps réel un setup individuel avec une nouvelle valeur de la variable « Profondeur » (zigzagDepth).
+ * Permet à l'utilisateur de modifier la profondeur ZigZag d'un setup spécifique en direct sur le graphique
+ * pour observer instantanément :
+ *  - Les nouvelles vagues de ZigZag (section V1, V2...)
+ *  - Le nouvel histogramme Volume Profile de chevauchement UOP (verrouillé à la 3ème bougie)
+ *  - Le nouveau Take Profit (TP), le nouveau ratio R:R
+ *  - Et si ce trade aurait touché son TP ou son SL avec cette valeur de profondeur !
+ *
+ * Exemple :
+ * const setupTeste = recalculerSetupAvecProfondeurZigZag(setupActuel, bougies, 6);
+ */
+export function recalculerSetupAvecProfondeurZigZag(
+  setup: SetupOrchestreSMC,
+  bougies: Bougie[],
+  nouvelleProfondeur: number,
+  nouveauNbVagues?: number
+): SetupOrchestreSMC {
+  if (!bougies || bougies.length === 0) return setup;
+
+  const estAchat = setup.type === 'ACHAT';
+  const depthCible = Math.max(1, Math.min(20, Math.round(nouvelleProfondeur)));
+  const profondeurOriginale =
+    setup.profondeurZigZagOriginale ??
+    setup.detailsScoreLiquidationZigZag?.zigzagDepthRetenu ??
+    4;
+
+  // Détermination automatique cohérente du backstep et superposition des 10 dernières vagues
+  const vitesseSimulee: 1 | 2 | 3 = depthCible <= 3 ? 1 : depthCible <= 5 ? 2 : 3;
+  const backstepCible = vitesseSimulee === 1 ? 1 : vitesseSimulee === 2 ? 2 : 3;
+  const nbVaguesCible =
+    nouveauNbVagues !== undefined
+      ? Math.max(2, Math.min(20, Math.round(nouveauNbVagues)))
+      : 10;
+
+  // 1️⃣ Verrouillage à la 3ème bougie de confirmation du setup
+  // On retrouve la bougie exacte dans le tableau par son horodatage (tempsConfirmation / tempsDoji) !
+  // Cela évite tout décalage d'index si `bougies` est l'historique complet (> 350 bougies) au lieu de la fenêtre glissante.
+  let indexDojiReel = bougies.findIndex((b) => String(b.time) === String(setup.tempsDoji));
+  if (indexDojiReel === -1) {
+    indexDojiReel = Math.min(setup.indexDoji, bougies.length - 1);
+  }
+
+  let indexHorizon =
+    setup.tempsConfirmation !== undefined
+      ? bougies.findIndex((b) => String(b.time) === String(setup.tempsConfirmation))
+      : -1;
+  if (indexHorizon === -1) {
+    indexHorizon = Math.min(indexDojiReel + 3, bougies.length - 1);
+  }
+
+  // On découpe la fenêtre menant exactement jusqu'à la 3ème bougie de confirmation (max 350 bougies comme en mode Auto)
+  const indexDebutFenetre = Math.max(0, indexHorizon - 350 + 1);
+  const bougiesHorizon = bougies.slice(indexDebutFenetre, indexHorizon + 1);
+
+  const seuilBleuAdapte = nbVaguesCible <= 2 ? 2 : 3;
+
+  // 2️⃣ Recalcul du profil de chevauchement UOP avec cette profondeur
+  // Si l'historique avant ce setup est trop court pour une grande profondeur (ex: < 2 pivots),
+  // on redescend progressivement le depth effectif pour garantir au moins 2 pivots et 1 vague visible.
+  let depthEffectif = depthCible;
+  let uopSimule = calculerUnmitigatedOverlapProfile(bougiesHorizon, {
+    zigzagDepth: depthEffectif,
+    zigzagBackstep: backstepCible,
+    nbVaguesSuperposees: nbVaguesCible,
+    seuilBougiesBleuFonce: seuilBleuAdapte,
+    typeChevauchementUOP: 'CORPS_ET_MECHES',
+    poidsCorps: 1.0,
+    poidsMeche: 1.0,
+    inclureVagueCourante: true,
+    afficherTPOptimaux: true,
+    afficherZigZag: false,
+    afficherBarresProfil: false,
+    afficherProlongation: false,
+    afficherDebugTP: true,
+  });
+
+  while (
+    depthEffectif > 1 &&
+    (!uopSimule.pivots || uopSimule.pivots.length < 2 || !uopSimule.paliersSuperposition || uopSimule.paliersSuperposition.length === 0)
+  ) {
+    depthEffectif--;
+    uopSimule = calculerUnmitigatedOverlapProfile(bougiesHorizon, {
+      zigzagDepth: depthEffectif,
+      zigzagBackstep: Math.max(1, Math.min(backstepCible, depthEffectif)),
+      nbVaguesSuperposees: nbVaguesCible,
+      seuilBougiesBleuFonce: seuilBleuAdapte,
+      typeChevauchementUOP: 'CORPS_ET_MECHES',
+      poidsCorps: 1.0,
+      poidsMeche: 1.0,
+      inclureVagueCourante: true,
+      afficherTPOptimaux: true,
+      afficherZigZag: false,
+      afficherBarresProfil: false,
+      afficherProlongation: false,
+      afficherDebugTP: true,
+    });
+  }
+
+  // 3️⃣ Extraction de la section de ZigZag (N + 1 pivots) correspondant à cette profondeur
+  const tousPivots = uopSimule.pivots || [];
+  const nbPivotsSection = Math.max(2, nbVaguesCible + 1);
+  const pivotsPertinents = tousPivots.slice(-nbPivotsSection);
+  const pivotsZigZagFinaux =
+    pivotsPertinents.length >= 2
+      ? pivotsPertinents.map((p) => ({
+          index: p.index,
+          temps: p.temps,
+          prix: p.prix,
+          type: (p.estHaut ? 'HIGH' : 'LOW') as 'HIGH' | 'LOW',
+        }))
+      : setup.detailsScoreLiquidationZigZag?.pivotsZigZag || [];
+
+  // 4️⃣ Extraction des nouveaux paliers TP candidats dans la direction du setup
+  const tpsCandidats = estAchat
+    ? (uopSimule.tpOptimauxAchat || []).filter((tp) => tp.prixCible > setup.prixEntree)
+    : (uopSimule.tpOptimauxVente || []).filter((tp) => tp.prixCible < setup.prixEntree);
+
+  const paliersTries = [...tpsCandidats].sort(
+    (a, b) => Math.abs(a.prixCible - setup.prixEntree) - Math.abs(b.prixCible - setup.prixEntree)
+  );
+
+  const palierTPVise = setup.palierTPVise || 'TP1';
+  let indexVise = 0;
+  if (palierTPVise === 'TP2') indexVise = 1;
+  else if (palierTPVise === 'TP3') indexVise = 2;
+
+  let nouveauTpSelectionne = setup.tpSelectionne;
+  let nouveauPrixTP = setup.prixTP;
+  let nouvelOrdreTP = setup.ordreTP ?? 1;
+  let nouveauxPaliersAnalyses = setup.paliersAnalyses || [];
+
+  if (paliersTries.length > 0) {
+    const idxEff = Math.min(indexVise, paliersTries.length - 1);
+    nouveauTpSelectionne = paliersTries[idxEff];
+    nouvelOrdreTP = idxEff + 1;
+    nouveauPrixTP = nouveauTpSelectionne.prixCible;
+    nouveauxPaliersAnalyses = paliersTries.slice(0, nouvelOrdreTP).map((tp, idx) => ({
+      prix: tp.prixCible,
+      ordre: idx + 1,
+      estPerce: idx < nouvelOrdreTP - 1,
+      estBloquant: idx === nouvelOrdreTP - 1,
+      tauxChevauchement: tp.tauxMoyenChevauchement,
+    }));
+  } else {
+    const multSecours = indexVise === 2 ? 3.5 : indexVise === 1 ? 2.5 : 1.5;
+    nouveauPrixTP = estAchat
+      ? setup.prixEntree + setup.distanceSL * multSecours
+      : setup.prixEntree - setup.distanceSL * multSecours;
+    nouvelOrdreTP = indexVise + 1;
+    nouveauTpSelectionne = undefined;
+  }
+
+  const nouvelleDistanceTP =
+    nouveauPrixTP !== undefined ? Math.abs(nouveauPrixTP - setup.prixEntree) : setup.distanceTP;
+  const nouveauRatioRR =
+    nouvelleDistanceTP !== undefined
+      ? Number((nouvelleDistanceTP / Math.max(0.0001, setup.distanceSL)).toFixed(2))
+      : setup.ratioRR;
+
+  // 5️⃣ Simulation en temps réel de l'issue du trade sur la suite des bougies (TP touché ou SL touché ?)
+  let estTermine = false;
+  let resultatTrade: ResultatTradeSMC = 'EN_COURS';
+  let indexSortieTrade: number | undefined;
+  let tempsSortieTrade: number | string | undefined;
+
+  if (setup.statut === 'CONFIRME' && nouveauPrixTP !== undefined) {
+    const indexDebutSuivi = indexHorizon + 1;
+    for (let k = indexDebutSuivi; k < bougies.length; k++) {
+      const b = bougies[k];
+      if (!b) continue;
+      if (estAchat) {
+        const tpTouche = b.high >= nouveauPrixTP;
+        const slTouche = b.low <= setup.prixSL;
+        if (tpTouche || slTouche) {
+          estTermine = true;
+          resultatTrade = tpTouche ? 'TP_TOUCHE' : 'SL_TOUCHE';
+          indexSortieTrade = k;
+          tempsSortieTrade = b.time;
+          break;
+        }
+      } else {
+        const tpTouche = b.low <= nouveauPrixTP;
+        const slTouche = b.high >= setup.prixSL;
+        if (tpTouche || slTouche) {
+          estTermine = true;
+          resultatTrade = tpTouche ? 'TP_TOUCHE' : 'SL_TOUCHE';
+          indexSortieTrade = k;
+          tempsSortieTrade = b.time;
+          break;
+        }
+      }
+    }
+  }
+
+  // 6️⃣ Mise à jour des détails ZigZag du setup avec la profondeur testée
+  const detailsZZOrig = setup.detailsScoreLiquidationZigZag;
+  const categorieVagues =
+    vitesseSimulee === 1
+      ? 'PETITES_VAGUES'
+      : vitesseSimulee === 2
+        ? 'VAGUES_MOYENNES'
+        : 'GRANDES_VAGUES';
+
+  const nouveauxDetailsZZ: DetailsScoreLiquidationZigZag | undefined = detailsZZOrig
+    ? {
+        ...detailsZZOrig,
+        vitesseRetenue: vitesseSimulee,
+        zigzagDepthRetenu: depthCible,
+        zigzagBackstepRetenu: backstepCible,
+        nbVaguesSuperposeesRetenu: nbVaguesCible,
+        categorieVagues,
+        resumeExplication:
+          depthCible !== profondeurOriginale
+            ? `🧪 Profondeur testée : ${depthCible} (Auto: ${profondeurOriginale}) ➔ ${nbVaguesCible} vagues (Vitesse ${vitesseSimulee})`
+            : detailsZZOrig.resumeExplication,
+        pivotsZigZag: pivotsZigZagFinaux,
+      }
+    : undefined;
+
+  return {
+    ...setup,
+    prixTP: nouveauPrixTP,
+    ordreTP: nouvelOrdreTP,
+    distanceTP: nouvelleDistanceTP,
+    ratioRR: nouveauRatioRR,
+    tpSelectionne: nouveauTpSelectionne,
+    paliersAnalyses: nouveauxPaliersAnalyses,
+    tousPaliersUOPCandidats: tpsCandidats,
+    detailsScoreLiquidationZigZag: nouveauxDetailsZZ,
+    stepUOP: uopSimule.step || setup.stepUOP,
+    seuilBleuFonceUOP: seuilBleuAdapte,
+    paliersSuperpositionUOP:
+      uopSimule.paliersSuperposition && uopSimule.paliersSuperposition.length > 0
+        ? uopSimule.paliersSuperposition
+        : setup.paliersSuperpositionUOP,
+    vaguesSuperposeesUOP:
+      uopSimule.vaguesSuperposees && uopSimule.vaguesSuperposees.length > 0
+        ? uopSimule.vaguesSuperposees
+        : setup.vaguesSuperposeesUOP,
+    profondeurZigZagOriginale: profondeurOriginale,
+    profondeurZigZagPersonnalisee: depthCible,
+    estTermine,
+    resultatTrade,
+    indexSortieTrade,
+    tempsSortieTrade,
   };
 }
